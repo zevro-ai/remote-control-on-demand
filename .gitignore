@@ -1,0 +1,19 @@
+# Binaries
+/bot
+/rcod
+/remote-control-on-demand
+*.exe
+dist/
+
+# Config with secrets
+config.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

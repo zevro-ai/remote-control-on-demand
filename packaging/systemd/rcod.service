@@ -1,0 +1,14 @@
+[Unit]
+Description=RCOD - Remote Control On Demand
+After=network.target
+
+[Service]
+Type=simple
+User=<YOUR_USER>
+WorkingDirectory=<REPO_PATH>
+ExecStart=<REPO_PATH>/rcod --config <CONFIG_PATH>
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

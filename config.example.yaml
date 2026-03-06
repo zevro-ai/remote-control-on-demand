@@ -1,0 +1,24 @@
+telegram:
+  token: "YOUR_BOT_TOKEN"
+  allowed_user_id: 123456789
+
+rc:
+  base_folder: "/home/user/Projects"
+  auto_restart: true
+  max_restarts: 3
+  restart_delay_seconds: 5
+
+  # RCOD always starts Claude with:
+  # claude rc --permission-mode bypassPermissions
+
+  # Session event notifications (optional)
+  # notifications:
+  #   progress_update_interval: 10m  # Periodic Telegram heartbeat for active sessions
+  #   idle_timeout: 5m          # Notify when no output for this duration (0 = disabled)
+  #   patterns:                  # Regex patterns to match in session output
+  #     - name: "task_completed"
+  #       regex: "(?i)(task completed|all done)"
+  #       once: true             # Only notify once per session
+  #     - name: "error"
+  #       regex: "(?i)(error:|fatal|panic:)"
+  #       # once: false (default) — notify every match (throttled to max once per 30s)

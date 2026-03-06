@@ -1,0 +1,78 @@
+# This is a GoReleaser configuration file.
+# See https://goreleaser.com for more information.
+
+version: 2
+
+project_name: remote-control-on-demand
+
+builds:
+  - main: ./cmd/bot
+    binary: rcod
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+      - CONTRIBUTING.md
+      - SECURITY.md
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: '🚀 Features'
+      regexp: '^feat(\(.*\))??!?:'
+      order: 0
+    - title: '🐛 Bug Fixes'
+      regexp: '^fix(\(.*\))??!?:'
+      order: 1
+    - title: '⚙️ Maintenance'
+      regexp: '^(chore|ci|build)(\(.*\))??!?:'
+      order: 2
+    - title: '📚 Documentation'
+      regexp: '^docs(\(.*\))??!?:'
+      order: 3
+    - title: '♻️ Refactor'
+      regexp: '^refactor(\(.*\))??!?:'
+      order: 4
+    - title: '🧪 Testing'
+      regexp: '^test(\(.*\))??!?:'
+      order: 5
+    - title: '💎 Style'
+      regexp: '^style(\(.*\))??!?:'
+      order: 6
+    - title: '⚡ Performance'
+      regexp: '^perf(\(.*\))??!?:'
+      order: 7
+    - title: '🧹 Others'
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore\(deps\):'
+      - '^chore\(release\):'
+      - 'merge branch'
+      - 'Merge pull request'
+  # Note: template and replacements moved out of changelog in v2 or changed structure.
+  # For now, let's go back to basic groups which GoReleaser v2 handles well by default.
