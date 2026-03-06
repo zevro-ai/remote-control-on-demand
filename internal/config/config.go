@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,11 +23,20 @@ type TelegramConfig struct {
 
 type RCConfig struct {
 	BaseFolder          string               `yaml:"base_folder"`
+	PermissionMode      string               `yaml:"permission_mode,omitempty"`
 	AutoRestart         bool                 `yaml:"auto_restart"`
 	MaxRestarts         int                  `yaml:"max_restarts"`
 	RestartDelaySeconds int                  `yaml:"restart_delay_seconds"`
 	Notifications       *NotificationsConfig `yaml:"notifications,omitempty"`
 }
+
+const (
+	DefaultCodexPermissionMode = "workspace-write"
+	PermissionModeBypass       = "bypassPermissions"
+	PermissionModeReadOnly     = "read-only"
+	PermissionModeWorkspace    = "workspace-write"
+	PermissionModeDangerFull   = "danger-full-access"
+)
 
 // ProjectConfig represents per-project settings in .rcod.yaml
 type ProjectConfig struct {
@@ -128,6 +138,9 @@ func (c *Config) Validate() error {
 	if c.RC.RestartDelaySeconds < 0 {
 		return fmt.Errorf("rc.restart_delay_seconds must be >= 0")
 	}
+	if err := ValidateCodexPermissionMode(c.RC.PermissionMode); err != nil {
+		return fmt.Errorf("rc.permission_mode: %w", err)
+	}
 
 	if c.RC.Notifications != nil {
 		if err := c.RC.Notifications.Validate(); err != nil {
@@ -136,6 +149,23 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func NormalizeCodexPermissionMode(permissionMode string) string {
+	permissionMode = strings.TrimSpace(permissionMode)
+	if permissionMode == "" {
+		return DefaultCodexPermissionMode
+	}
+	return permissionMode
+}
+
+func ValidateCodexPermissionMode(permissionMode string) error {
+	switch NormalizeCodexPermissionMode(permissionMode) {
+	case PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull:
+		return nil
+	default:
+		return fmt.Errorf("must be one of %q, %q, %q, or %q", PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull)
+	}
 }
 
 func (c *Config) Save(path string) error {

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -231,4 +232,62 @@ func TestRedactToken(t *testing.T) {
 			t.Fatalf("expected redacted token, got %q", got)
 		}
 	})
+}
+
+func TestValidateCodexPermissionMode(t *testing.T) {
+	validModes := []string{
+		"",
+		PermissionModeBypass,
+		PermissionModeReadOnly,
+		PermissionModeWorkspace,
+		PermissionModeDangerFull,
+	}
+
+	for _, mode := range validModes {
+		t.Run("valid "+NormalizeCodexPermissionMode(mode), func(t *testing.T) {
+			if err := ValidateCodexPermissionMode(mode); err != nil {
+				t.Fatalf("expected mode %q to be valid, got %v", mode, err)
+			}
+		})
+	}
+
+	t.Run("invalid mode", func(t *testing.T) {
+		err := ValidateCodexPermissionMode("plan")
+		if err == nil {
+			t.Fatal("expected invalid mode error")
+		}
+		if !strings.Contains(err.Error(), PermissionModeWorkspace) {
+			t.Fatalf("expected allowed values in error, got %v", err)
+		}
+	})
+}
+
+func TestConfigValidatePermissionMode(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "rcod-config-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := &Config{
+		Telegram: TelegramConfig{
+			Token:         "token",
+			AllowedUserID: 123,
+		},
+		RC: RCConfig{
+			BaseFolder:          tmpDir,
+			PermissionMode:      "plan",
+			AutoRestart:         true,
+			MaxRestarts:         3,
+			RestartDelaySeconds: 5,
+		},
+	}
+
+	err = cfg.Validate()
+	if err == nil {
+		t.Fatal("expected invalid permission mode error")
+	}
+	if !strings.Contains(err.Error(), "rc.permission_mode") {
+		t.Fatalf("expected rc.permission_mode error, got %v", err)
+	}
 }

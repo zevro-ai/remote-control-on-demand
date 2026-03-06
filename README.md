@@ -6,6 +6,8 @@
 
 Manage [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions remotely via Telegram. RCOD runs on your machine or server, starts `claude rc` inside selected git repositories, and sends status, logs, crashes, and Claude session links back to your phone.
 
+This repo also includes a Codex-focused Telegram bot that lets you chat with Codex directly inside a selected repository.
+
 Built by [zevro.ai](https://zevro.ai).
 
 ![RCOD demo](./docs/assets/rcod-demo.gif)
@@ -22,6 +24,32 @@ Built by [zevro.ai](https://zevro.ai).
 - Paginates repository pickers and supports unique partial project matches
 - Always launches Claude with `--permission-mode bypassPermissions`
 
+## Codex Telegram Chat
+
+The `cmd/codexbot` entrypoint exposes Telegram as a chat interface for Codex:
+
+- create a Codex chat session for a repo with `/new` or `/folders`
+- switch between chat sessions with `/sessions` and `/use`
+- send a normal Telegram message to talk to Codex in the active repo
+- close old chat threads with `/close`
+- Codex respects `rc.permission_mode` from `config.yaml`; default is `workspace-write`, `bypassPermissions` opts into full local access, and other accepted values map to Codex sandbox modes
+
+Build and run it with:
+
+```bash
+go build -o codexbot ./cmd/codexbot
+./codexbot -config config.yaml
+```
+
+For local native control helpers:
+
+```bash
+scripts/start-codexbot-native.sh config.yaml
+scripts/status-codexbot-native.sh
+scripts/reset-codexbot-native.sh config.yaml
+scripts/install-codexbot-native-launchd.sh config.yaml
+```
+
 ## How It Works
 
 ```text
@@ -35,10 +63,12 @@ You (Telegram) -> RCOD bot -> claude rc (inside your git repo)
 | --- | --- |
 | Go 1.25+ | Needed only when building from source |
 | Claude Code CLI | Install with `npm install -g @anthropic-ai/claude-code` |
+| Codex CLI | Needed for `cmd/codexbot`; install it and keep `codex` in your `PATH` |
 | Telegram bot token | Create one via [@BotFather](https://t.me/BotFather) |
 | Telegram user ID | Get it from [@userinfobot](https://t.me/userinfobot) |
 
 `claude` must be available in your `PATH`.
+For `codexbot`, `codex` must also be available in your `PATH`.
 
 ## Quick Start
 
@@ -69,6 +99,7 @@ telegram:
 
 rc:
   base_folder: "/home/user/Projects"
+  permission_mode: "workspace-write"
   auto_restart: true
   max_restarts: 3
   restart_delay_seconds: 5
@@ -83,6 +114,7 @@ See [config.example.yaml](./config.example.yaml) for a fuller example with notif
 | `telegram.token` | Bot token from @BotFather |
 | `telegram.allowed_user_id` | Only this Telegram user can control the bot |
 | `rc.base_folder` | Directory RCOD scans for git repositories |
+| `rc.permission_mode` | Codex bot access mode: `workspace-write` (default), `read-only`, `danger-full-access`, or `bypassPermissions` |
 | `rc.auto_restart` | Enables automatic restart for crashed sessions |
 | `rc.max_restarts` | Maximum restart attempts before giving up |
 | `rc.restart_delay_seconds` | Delay between restart attempts |

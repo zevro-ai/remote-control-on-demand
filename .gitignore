@@ -1,12 +1,18 @@
 # Binaries
 /bot
 /rcod
+/codexbot
 /remote-control-on-demand
 *.exe
 dist/
 
 # Config with secrets
 config.yaml
+codex_sessions.json
+.gocache/
+.gomodcache/
+.gotmp/
+.codexbot/
 
 # IDE
 .idea/
