@@ -295,6 +295,7 @@ func RunOnboarding(configPath string) (*Config, error) {
 		},
 		RC: RCConfig{
 			BaseFolder:          baseFolder,
+			PermissionMode:      DefaultCodexPermissionMode,
 			AutoRestart:         autoRestart,
 			MaxRestarts:         maxRestarts,
 			RestartDelaySeconds: restartDelay,
@@ -309,6 +310,7 @@ func RunOnboarding(configPath string) (*Config, error) {
 	fmt.Printf("    %s  %s\n", summaryLabel("Token          "), tokenPreview)
 	fmt.Printf("    %s  %d\n", summaryLabel("User ID        "), userID)
 	fmt.Printf("    %s  %s\n", summaryLabel("Projects folder"), baseFolder)
+	fmt.Printf("    %s  %s\n", summaryLabel("Codex access   "), cfg.RC.PermissionMode)
 	if autoRestart {
 		fmt.Printf("    %s  enabled (%d max, %ds delay)\n", summaryLabel("Auto-restart   "), maxRestarts, restartDelay)
 	} else {

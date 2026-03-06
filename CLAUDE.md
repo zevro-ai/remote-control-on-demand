@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Git Conventions
 
-**Commits:** [Conventional Commits](https://www.conventionalcommits.org/) — enforced by commitlint in CI. Prefixes: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `style:`, `ci:`, `build:`.
+**Commits:** [Conventional Commits](https://www.conventionalcommits.org/) — enforced by commitlint in CI.
+
+- AI-generated commits must always pass commitlint.
+- AI-generated commits may only use the prefixes `feat:` or `fix:`.
+- Prefer `feat:` for new behavior and `fix:` for regressions, bugs, and repair work.
 
 **Branches:** `{type}/{issue-number}-short-description` when working on a GitHub issue, e.g. `feat/42-session-auto-cleanup`. Without an issue: `{type}/short-description`, e.g. `fix/crash-on-empty-config`.
 
