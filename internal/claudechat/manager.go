@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/bashcmd"
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 )
 
@@ -28,88 +29,21 @@ const (
 
 var runClaudeFn = runClaude
 
-type EventType int
-
-const (
-	EventSessionCreated EventType = iota
-	EventSessionClosed
-	EventMessageReceived
-	EventMessageDelta
-	EventBusyChanged
-	EventToolUseStart
-	EventToolUseDelta
-	EventToolUseFinish
-)
-
-type ToolCallEvent struct {
-	Index       int    `json:"index"`
-	ID          string `json:"id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	PartialJSON string `json:"partial_json,omitempty"`
-}
-
-type Event struct {
-	Type      EventType
-	SessionID string
-	Session   *Session
-	Message   *Message
-	Delta     string
-	Busy      bool
-	ToolCall  *ToolCallEvent
-}
-
-type Message struct {
-	Role        string       `json:"role"`
-	Kind        string       `json:"kind,omitempty"`
-	Content     string       `json:"content"`
-	Timestamp   time.Time    `json:"timestamp"`
-	Attachments []Attachment `json:"attachments,omitempty"`
-	Command     *CommandMeta `json:"command,omitempty"`
-}
-
-type Attachment struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	ContentType string `json:"content_type,omitempty"`
-	Size        int64  `json:"size,omitempty"`
-	URL         string `json:"url,omitempty"`
-	Path        string `json:"path,omitempty"`
-}
-
-type CommandMeta struct {
-	Command    string `json:"command"`
-	ExitCode   int    `json:"exit_code,omitempty"`
-	DurationMs int64  `json:"duration_ms,omitempty"`
-	TimedOut   bool   `json:"timed_out,omitempty"`
-	Truncated  bool   `json:"truncated,omitempty"`
-}
-
-type Session struct {
-	ID        string    `json:"id"`
-	Folder    string    `json:"folder"`
-	RelName   string    `json:"rel_name"`
-	ThreadID  string    `json:"thread_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Busy      bool      `json:"-"`
-	Messages  []Message `json:"messages,omitempty"`
-}
-
 type state struct {
-	ActiveSessionID string     `json:"active_session_id"`
-	Sessions        []*Session `json:"sessions"`
+	ActiveSessionID string          `json:"active_session_id"`
+	Sessions        []*chat.Session `json:"sessions"`
 }
 
 type Manager struct {
 	mu              sync.Mutex
 	baseFolder      string
 	statePath       string
-	sessions        map[string]*Session
+	sessions        map[string]*chat.Session
 	activeSessionID string
 	model           string
 	permissionMode  string
 	subMu           sync.Mutex
-	subscribers     []func(Event)
+	subscribers     []func(chat.Event)
 	wg              sync.WaitGroup
 }
 
@@ -117,7 +51,7 @@ func NewManager(baseFolder, statePath string) *Manager {
 	return &Manager{
 		baseFolder:     baseFolder,
 		statePath:      statePath,
-		sessions:       make(map[string]*Session),
+		sessions:       make(map[string]*chat.Session),
 		permissionMode: defaultPermissionMode,
 	}
 }
@@ -144,7 +78,7 @@ func (m *Manager) Restore() error {
 	defer m.mu.Unlock()
 
 	m.activeSessionID = saved.ActiveSessionID
-	m.sessions = make(map[string]*Session, len(saved.Sessions))
+	m.sessions = make(map[string]*chat.Session, len(saved.Sessions))
 	for _, sess := range saved.Sessions {
 		if sess == nil || sess.ID == "" {
 			continue
@@ -182,7 +116,7 @@ func normalizePermissionMode(mode string) string {
 	}
 }
 
-func (m *Manager) Subscribe(fn func(Event)) func() {
+func (m *Manager) Subscribe(fn func(chat.Event)) func() {
 	m.subMu.Lock()
 	defer m.subMu.Unlock()
 	m.subscribers = append(m.subscribers, fn)
@@ -194,9 +128,9 @@ func (m *Manager) Subscribe(fn func(Event)) func() {
 	}
 }
 
-func (m *Manager) emit(e Event) {
+func (m *Manager) emit(e chat.Event) {
 	m.subMu.Lock()
-	subs := make([]func(Event), len(m.subscribers))
+	subs := make([]func(chat.Event), len(m.subscribers))
 	copy(subs, m.subscribers)
 	m.subMu.Unlock()
 	for _, fn := range subs {
@@ -210,7 +144,11 @@ func (m *Manager) Shutdown() {
 	m.wg.Wait()
 }
 
-func (m *Manager) Create(folder string) (*Session, error) {
+func (m *Manager) ID() string {
+	return "claude"
+}
+
+func (m *Manager) CreateSession(folder string) (*chat.Session, error) {
 	fullPath, relName, err := resolveProjectPath(m.baseFolder, folder)
 	if err != nil {
 		return nil, err
@@ -239,7 +177,7 @@ func (m *Manager) Create(folder string) (*Session, error) {
 	}
 
 	now := time.Now()
-	sess := &Session{
+	sess := &chat.Session{
 		ID:        id,
 		Folder:    fullPath,
 		RelName:   relName,
@@ -257,15 +195,15 @@ func (m *Manager) Create(folder string) (*Session, error) {
 	clone := cloneSession(sess)
 	m.mu.Unlock()
 
-	m.emit(Event{Type: EventSessionCreated, SessionID: id, Session: clone})
+	m.emit(chat.Event{Type: chat.EventSessionCreated, SessionID: id, Session: clone})
 	return clone, nil
 }
 
-func (m *Manager) List() []*Session {
+func (m *Manager) ListSessions() []*chat.Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	list := make([]*Session, 0, len(m.sessions))
+	list := make([]*chat.Session, 0, len(m.sessions))
 	for _, sess := range m.sessions {
 		list = append(list, cloneSession(sess))
 	}
@@ -283,7 +221,7 @@ func (m *Manager) List() []*Session {
 	return list
 }
 
-func (m *Manager) Get(id string) (*Session, bool) {
+func (m *Manager) GetSession(id string) (*chat.Session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -294,7 +232,7 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return cloneSession(sess), true
 }
 
-func (m *Manager) Close(id string) error {
+func (m *Manager) DeleteSession(id string) error {
 	m.mu.Lock()
 
 	if _, ok := m.sessions[id]; !ok {
@@ -311,12 +249,12 @@ func (m *Manager) Close(id string) error {
 	m.mu.Unlock()
 
 	if err == nil {
-		m.emit(Event{Type: EventSessionClosed, SessionID: id})
+		m.emit(chat.Event{Type: chat.EventSessionClosed, SessionID: id})
 	}
 	return err
 }
 
-func latestSessionIDLocked(sessions map[string]*Session) string {
+func latestSessionIDLocked(sessions map[string]*chat.Session) string {
 	var latestID string
 	var latestTime time.Time
 
@@ -330,7 +268,102 @@ func latestSessionIDLocked(sessions map[string]*Session) string {
 	return latestID
 }
 
-func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Attachment) (*Session, string, error) {
+func (m *Manager) SendMessage(ctx context.Context, id, prompt string) error {
+	_, _, err := m.Send(ctx, id, prompt, nil)
+	return err
+}
+
+func (m *Manager) RunCommand(ctx context.Context, id, command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return fmt.Errorf("command cannot be empty")
+	}
+
+	m.mu.Lock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session %q not found", id)
+	}
+	if sess.Busy {
+		m.mu.Unlock()
+		return fmt.Errorf("session %q is already processing another request", id)
+	}
+
+	now := time.Now()
+	userMessage := chat.Message{
+		Role:      "user",
+		Kind:      "bash",
+		Content:   command,
+		Timestamp: now,
+		Command:   &chat.CommandMeta{Command: command},
+	}
+	sess.Busy = true
+	sess.Messages = append(sess.Messages, userMessage)
+	if len(sess.Messages) > maxMessages {
+		sess.Messages = sess.Messages[len(sess.Messages)-maxMessages:]
+	}
+	snapshot := cloneSession(sess)
+	m.mu.Unlock()
+
+	m.emit(chat.Event{Type: chat.EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
+	m.emit(chat.Event{Type: chat.EventBusyChanged, SessionID: id, Busy: true})
+	m.wg.Add(1)
+	defer m.wg.Done()
+
+	result, err := bashcmd.Run(ctx, snapshot.Folder, command)
+
+	m.mu.Lock()
+	current, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		m.emit(chat.Event{Type: chat.EventBusyChanged, SessionID: id, Busy: false})
+		return fmt.Errorf("session %q disappeared while processing", id)
+	}
+
+	current.Busy = false
+	current.UpdatedAt = time.Now()
+
+	var emitted *chat.Message
+	if err == nil {
+		reply := chat.Message{
+			Role:      "assistant",
+			Kind:      "bash_result",
+			Content:   result.Output,
+			Timestamp: time.Now(),
+			Command: &chat.CommandMeta{
+				Command:    result.Command,
+				ExitCode:   result.ExitCode,
+				DurationMs: result.DurationMs,
+				TimedOut:   result.TimedOut,
+				Truncated:  result.Truncated,
+			},
+		}
+		current.Messages = append(current.Messages, reply)
+		if len(current.Messages) > maxMessages {
+			current.Messages = current.Messages[len(current.Messages)-maxMessages:]
+		}
+		emitted = &reply
+	}
+
+	saveErr := m.saveLocked()
+	m.mu.Unlock()
+
+	m.emit(chat.Event{Type: chat.EventBusyChanged, SessionID: id, Busy: false})
+	if emitted != nil {
+		m.emit(chat.Event{Type: chat.EventMessageReceived, SessionID: id, Message: emitted})
+	}
+
+	if err != nil {
+		if saveErr != nil {
+			return fmt.Errorf("%w (state save failed: %v)", err, saveErr)
+		}
+		return err
+	}
+	return saveErr
+}
+
+func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []chat.Attachment) (*chat.Session, string, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" && len(attachments) == 0 {
 		return nil, "", fmt.Errorf("message cannot be empty")
@@ -351,7 +384,7 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	}
 
 	now := time.Now()
-	userMessage := Message{
+	userMessage := chat.Message{
 		Role:        "user",
 		Kind:        "text",
 		Content:     prompt,
@@ -368,23 +401,23 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	snapshot := cloneSession(sess)
 	m.mu.Unlock()
 
-	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
-	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
+	m.emit(chat.Event{Type: chat.EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
+	m.emit(chat.Event{Type: chat.EventBusyChanged, SessionID: id, Busy: true})
 	m.wg.Add(1)
 	defer m.wg.Done()
 
 	reply, err := runClaudeFn(ctx, snapshot, prompt, permissionMode, model, StreamCallback{
 		OnTextDelta: func(delta string) {
-			m.emit(Event{Type: EventMessageDelta, SessionID: id, Delta: delta})
+			m.emit(chat.Event{Type: chat.EventMessageDelta, SessionID: id, Delta: delta})
 		},
 		OnToolStart: func(index int, toolID, name string) {
-			m.emit(Event{Type: EventToolUseStart, SessionID: id, ToolCall: &ToolCallEvent{Index: index, ID: toolID, Name: name}})
+			m.emit(chat.Event{Type: chat.EventToolUseStart, SessionID: id, ToolCall: &chat.ToolCallEvent{Index: index, ID: toolID, Name: name}})
 		},
 		OnToolDelta: func(index int, partialJSON string) {
-			m.emit(Event{Type: EventToolUseDelta, SessionID: id, ToolCall: &ToolCallEvent{Index: index, PartialJSON: partialJSON}})
+			m.emit(chat.Event{Type: chat.EventToolUseDelta, SessionID: id, ToolCall: &chat.ToolCallEvent{Index: index, PartialJSON: partialJSON}})
 		},
 		OnToolFinish: func(index int) {
-			m.emit(Event{Type: EventToolUseFinish, SessionID: id, ToolCall: &ToolCallEvent{Index: index}})
+			m.emit(chat.Event{Type: chat.EventToolUseFinish, SessionID: id, ToolCall: &chat.ToolCallEvent{Index: index}})
 		},
 	})
 
@@ -392,15 +425,15 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	current, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
-		m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
+		m.emit(chat.Event{Type: chat.EventBusyChanged, SessionID: id, Busy: false})
 		return nil, "", fmt.Errorf("session %q disappeared while processing", id)
 	}
 
 	current.Busy = false
 	current.UpdatedAt = time.Now()
-	var emitted *Message
+	var emitted *chat.Message
 	if err == nil && reply != "" {
-		assistantMessage := Message{Role: "assistant", Kind: "text", Content: reply, Timestamp: time.Now()}
+		assistantMessage := chat.Message{Role: "assistant", Kind: "text", Content: reply, Timestamp: time.Now()}
 		current.Messages = append(current.Messages, assistantMessage)
 		if len(current.Messages) > maxMessages {
 			current.Messages = current.Messages[len(current.Messages)-maxMessages:]
@@ -411,9 +444,9 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	clone := cloneSession(current)
 	m.mu.Unlock()
 
-	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
+	m.emit(chat.Event{Type: chat.EventBusyChanged, SessionID: id, Busy: false})
 	if emitted != nil {
-		m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: emitted})
+		m.emit(chat.Event{Type: chat.EventMessageReceived, SessionID: id, Message: emitted})
 	}
 
 	if err != nil {
@@ -429,102 +462,7 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	return clone, reply, nil
 }
 
-func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session, bashcmd.Result, error) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return nil, bashcmd.Result{}, fmt.Errorf("command cannot be empty")
-	}
-
-	m.mu.Lock()
-	sess, ok := m.sessions[id]
-	if !ok {
-		m.mu.Unlock()
-		return nil, bashcmd.Result{}, fmt.Errorf("session %q not found", id)
-	}
-	if sess.Busy {
-		m.mu.Unlock()
-		return nil, bashcmd.Result{}, fmt.Errorf("session %q is already processing another request", id)
-	}
-
-	now := time.Now()
-	userMessage := Message{
-		Role:      "user",
-		Kind:      "bash",
-		Content:   command,
-		Timestamp: now,
-		Command:   &CommandMeta{Command: command},
-	}
-	sess.Busy = true
-	sess.Messages = append(sess.Messages, userMessage)
-	if len(sess.Messages) > maxMessages {
-		sess.Messages = sess.Messages[len(sess.Messages)-maxMessages:]
-	}
-	snapshot := cloneSession(sess)
-	m.mu.Unlock()
-
-	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
-	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
-	m.wg.Add(1)
-	defer m.wg.Done()
-
-	result, err := bashcmd.Run(ctx, snapshot.Folder, command)
-
-	m.mu.Lock()
-	current, ok := m.sessions[id]
-	if !ok {
-		m.mu.Unlock()
-		m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
-		return nil, bashcmd.Result{}, fmt.Errorf("session %q disappeared while processing", id)
-	}
-
-	current.Busy = false
-	current.UpdatedAt = time.Now()
-
-	var emitted *Message
-	if err == nil {
-		reply := Message{
-			Role:      "assistant",
-			Kind:      "bash_result",
-			Content:   result.Output,
-			Timestamp: time.Now(),
-			Command: &CommandMeta{
-				Command:    result.Command,
-				ExitCode:   result.ExitCode,
-				DurationMs: result.DurationMs,
-				TimedOut:   result.TimedOut,
-				Truncated:  result.Truncated,
-			},
-		}
-		current.Messages = append(current.Messages, reply)
-		if len(current.Messages) > maxMessages {
-			current.Messages = current.Messages[len(current.Messages)-maxMessages:]
-		}
-		emitted = &reply
-	}
-
-	saveErr := m.saveLocked()
-	clone := cloneSession(current)
-	m.mu.Unlock()
-
-	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
-	if emitted != nil {
-		m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: emitted})
-	}
-
-	if err != nil {
-		if saveErr != nil {
-			return nil, bashcmd.Result{}, fmt.Errorf("%w (state save failed: %v)", err, saveErr)
-		}
-		return nil, bashcmd.Result{}, err
-	}
-	if saveErr != nil {
-		return nil, bashcmd.Result{}, saveErr
-	}
-
-	return clone, result, nil
-}
-
-func runClaude(ctx context.Context, sess *Session, prompt, permissionMode, model string, cb StreamCallback) (string, error) {
+func runClaude(ctx context.Context, sess *chat.Session, prompt, permissionMode, model string, cb StreamCallback) (string, error) {
 	claudeBin, cmdEnv, err := resolveClaudeCommandEnv()
 	if err != nil {
 		return "", fmt.Errorf("starting claude: %w", err)
@@ -588,7 +526,7 @@ func runClaude(ctx context.Context, sess *Session, prompt, permissionMode, model
 	return reply, nil
 }
 
-func buildClaudeArgs(sess *Session, prompt, permissionMode, model string) []string {
+func buildClaudeArgs(sess *chat.Session, prompt, permissionMode, model string) []string {
 	args := []string{
 		"-p",
 		"--verbose",
@@ -612,7 +550,7 @@ func buildClaudeArgs(sess *Session, prompt, permissionMode, model string) []stri
 	return args
 }
 
-func hasAssistantReply(sess *Session) bool {
+func hasAssistantReply(sess *chat.Session) bool {
 	for _, msg := range sess.Messages {
 		if msg.Role == "assistant" && msg.Kind == "text" {
 			return true
@@ -621,7 +559,7 @@ func hasAssistantReply(sess *Session) bool {
 	return false
 }
 
-func systemPrompt(sess *Session) string {
+func systemPrompt(sess *chat.Session) string {
 	return fmt.Sprintf(
 		"You are Claude helping a developer through the RCOD dashboard.\nAdapt the level of detail to the user's request.\nThis chat session is attached to repository %q.",
 		sess.RelName,
@@ -749,7 +687,7 @@ func (m *Manager) saveLocked() error {
 		return nil
 	}
 
-	sessions := make([]*Session, 0, len(m.sessions))
+	sessions := make([]*chat.Session, 0, len(m.sessions))
 	for _, sess := range m.sessions {
 		copy := cloneSession(sess)
 		copy.Busy = false
@@ -775,13 +713,13 @@ func (m *Manager) saveLocked() error {
 	return nil
 }
 
-func cloneSession(sess *Session) *Session {
+func cloneSession(sess *chat.Session) *chat.Session {
 	if sess == nil {
 		return nil
 	}
 	c := *sess
 	if sess.Messages != nil {
-		c.Messages = make([]Message, len(sess.Messages))
+		c.Messages = make([]chat.Message, len(sess.Messages))
 		for i, msg := range sess.Messages {
 			c.Messages[i] = msg
 			c.Messages[i].Attachments = cloneAttachments(msg.Attachments)
@@ -791,16 +729,16 @@ func cloneSession(sess *Session) *Session {
 	return &c
 }
 
-func cloneAttachments(attachments []Attachment) []Attachment {
+func cloneAttachments(attachments []chat.Attachment) []chat.Attachment {
 	if attachments == nil {
 		return nil
 	}
-	cloned := make([]Attachment, len(attachments))
+	cloned := make([]chat.Attachment, len(attachments))
 	copy(cloned, attachments)
 	return cloned
 }
 
-func cloneCommand(command *CommandMeta) *CommandMeta {
+func cloneCommand(command *chat.CommandMeta) *chat.CommandMeta {
 	if command == nil {
 		return nil
 	}
@@ -808,7 +746,7 @@ func cloneCommand(command *CommandMeta) *CommandMeta {
 	return &cloned
 }
 
-func cloneMessage(message *Message) *Message {
+func cloneMessage(message *chat.Message) *chat.Message {
 	if message == nil {
 		return nil
 	}

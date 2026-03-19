@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,12 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
-	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 )
-
-const claudeAttachmentsUnsupportedMessage = "image attachments are not supported for Claude sessions in the current CLI mode"
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := s.sessionMgr.List()
@@ -81,83 +79,58 @@ func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
 }
 
-// Codex handlers
+// Generic Chat Provider Handlers
 
-func (s *Server) handleListClaudeSessions(w http.ResponseWriter, r *http.Request) {
-	sessions := s.claudeMgr.List()
-	resp := make([]claudeSessionResponse, 0, len(sessions))
+func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
+	providers := make([]string, 0, len(s.providers))
+	for id := range s.providers {
+		providers = append(providers, id)
+	}
+	writeJSON(w, http.StatusOK, providers)
+}
+
+func (s *Server) handleListChatSessions(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+
+	sessions := p.ListSessions()
+	resp := make([]chatSessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
-		resp = append(resp, toClaudeSessionResponse(sess))
+		resp = append(resp, toChatSessionResponse(sess, p.ID()))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) handleCreateClaudeSession(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+
 	var req createSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
-	sess, err := s.claudeMgr.Create(req.Folder)
+
+	sess, err := p.CreateSession(req.Folder)
 	if err != nil {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toClaudeSessionResponse(sess))
+	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, p.ID()))
 }
 
-func (s *Server) handleSendClaudeMessage(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGetChatMessages(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+
 	id := r.PathValue("id")
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		if _, ok := s.claudeMgr.Get(id); !ok {
-			writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
-			return
-		}
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: claudeAttachmentsUnsupportedMessage})
-		return
-	}
-
-	message, attachments, err := s.parseSendMessageRequest(r, id)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
-		return
-	}
-	sess, reply, err := s.claudeMgr.Send(r.Context(), id, message, toClaudeAttachments(attachments))
-	if err != nil {
-		cleanupStoredAttachments(attachments)
-		writeManagerError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toClaudeSessionResponse(sess),
-		"reply":   reply,
-	})
-}
-
-func (s *Server) handleRunClaudeCommand(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-
-	var req runCommandRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
-		return
-	}
-
-	sess, result, err := s.claudeMgr.RunCommand(r.Context(), id, req.Command)
-	if err != nil {
-		writeManagerError(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toClaudeSessionResponse(sess),
-		"result":  toCommandPayload(result.Command, result.ExitCode, result.DurationMs, result.TimedOut, result.Truncated),
-	})
-}
-
-func (s *Server) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	sess, ok := s.claudeMgr.Get(id)
+	sess, ok := p.GetSession(id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
@@ -165,116 +138,93 @@ func (s *Server) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 
 	msgs := make([]messagePayload, 0, len(sess.Messages))
 	for _, m := range sess.Messages {
-		msgs = append(msgs, messagePayload{
-			Role:        m.Role,
-			Kind:        m.Kind,
-			Content:     m.Content,
-			Timestamp:   formatTime(m.Timestamp),
-			Attachments: toClaudeAttachmentPayloads(m.Attachments),
-			Command:     toClaudeCommandPayload(m.Command),
-		})
+		msgs = append(msgs, toMessagePayload(m))
 	}
 	writeJSON(w, http.StatusOK, msgs)
 }
 
-func (s *Server) handleDeleteClaudeSession(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	attachments := sessionAttachmentFilesFromClaudeSession(s.claudeMgr, id)
-	if err := s.claudeMgr.Close(id); err != nil {
-		writeManagerError(w, err)
+func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
 		return
 	}
-	cleanupStoredAttachments(attachments)
-	w.WriteHeader(http.StatusNoContent)
-}
 
-func (s *Server) handleListCodexSessions(w http.ResponseWriter, r *http.Request) {
-	sessions := s.codexMgr.List()
-	resp := make([]codexSessionResponse, 0, len(sessions))
-	for _, sess := range sessions {
-		resp = append(resp, toCodexSessionResponse(sess))
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) handleCreateCodexSession(w http.ResponseWriter, r *http.Request) {
-	var req createSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
-		return
-	}
-	sess, err := s.codexMgr.Create(req.Folder)
-	if err != nil {
-		writeManagerError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, toCodexSessionResponse(sess))
-}
-
-func (s *Server) handleSendCodexMessage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	message, attachments, err := s.parseSendMessageRequest(r, id)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
 		return
 	}
-	sess, reply, err := s.codexMgr.Send(r.Context(), id, message, toCodexAttachments(attachments))
+
+	// Currently SendMessage in Provider interface doesn't support attachments directly in the generic call,
+	// but we can cast or extend it later. For PoC, we handle text.
+	err = p.SendMessage(r.Context(), id, message)
 	if err != nil {
 		cleanupStoredAttachments(attachments)
 		writeManagerError(w, err)
 		return
 	}
+
+	sess, _ := p.GetSession(id)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toCodexSessionResponse(sess),
-		"reply":   reply,
+		"session": toChatSessionResponse(sess, p.ID()),
 	})
 }
 
-func (s *Server) handleRunCodexCommand(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+func (s *Server) handleRunChatCommand(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
 
+	id := r.PathValue("id")
 	var req runCommandRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
 
-	sess, result, err := s.codexMgr.RunCommand(r.Context(), id, req.Command)
+	err := p.RunCommand(r.Context(), id, req.Command)
 	if err != nil {
 		writeManagerError(w, err)
 		return
 	}
 
+	sess, _ := p.GetSession(id)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toCodexSessionResponse(sess),
-		"result":  toCommandPayload(result.Command, result.ExitCode, result.DurationMs, result.TimedOut, result.Truncated),
+		"session": toChatSessionResponse(sess, p.ID()),
 	})
 }
 
-func (s *Server) handleCodexMessages(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	sess, ok := s.codexMgr.Get(id)
+func (s *Server) handleDeleteChatSession(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
 	}
 
-	msgs := make([]messagePayload, 0, len(sess.Messages))
-	for _, m := range sess.Messages {
-		msgs = append(msgs, toCodexMessagePayload(m))
-	}
-	writeJSON(w, http.StatusOK, msgs)
-}
-
-func (s *Server) handleDeleteCodexSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	attachments := sessionAttachmentFilesFromCodexSession(s.codexMgr, id)
-	if err := s.codexMgr.Close(id); err != nil {
+	// Cleanup attachments before deleting
+	sess, ok := p.GetSession(id)
+	if ok {
+		attachments := storedAttachmentsFromMessages(sess.Messages)
+		cleanupStoredAttachments(attachments)
+	}
+
+	if err := p.DeleteSession(id); err != nil {
 		writeManagerError(w, err)
 		return
 	}
-	cleanupStoredAttachments(attachments)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) getProvider(w http.ResponseWriter, r *http.Request) (chat.Provider, bool) {
+	id := r.PathValue("provider")
+	p, ok := s.providers[id]
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q not found", id)})
+		return nil, false
+	}
+	return p, true
 }
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
@@ -328,33 +278,7 @@ func cleanupStoredAttachments(attachments []storedAttachment) {
 	}
 }
 
-func sessionAttachmentFilesFromClaudeSession(manager *claudechat.Manager, id string) []storedAttachment {
-	sess, ok := manager.Get(id)
-	if !ok {
-		return nil
-	}
-	return storedAttachmentsFromClaudeMessages(sess.Messages)
-}
-
-func sessionAttachmentFilesFromCodexSession(manager *codex.Manager, id string) []storedAttachment {
-	sess, ok := manager.Get(id)
-	if !ok {
-		return nil
-	}
-	return storedAttachmentsFromCodexMessages(sess.Messages)
-}
-
-func storedAttachmentsFromClaudeMessages(messages []claudechat.Message) []storedAttachment {
-	attachments := make([]storedAttachment, 0)
-	for _, message := range messages {
-		for _, attachment := range message.Attachments {
-			attachments = append(attachments, storedAttachment{Path: attachment.Path})
-		}
-	}
-	return attachments
-}
-
-func storedAttachmentsFromCodexMessages(messages []codex.Message) []storedAttachment {
+func storedAttachmentsFromMessages(messages []chat.Message) []storedAttachment {
 	attachments := make([]storedAttachment, 0)
 	for _, message := range messages {
 		for _, attachment := range message.Attachments {
@@ -389,16 +313,19 @@ func toSessionResponse(sess *session.Session) sessionResponse {
 	}
 }
 
-func toCodexSessionResponse(sess *codex.Session) codexSessionResponse {
+func toChatSessionResponse(sess *chat.Session, provider string) chatSessionResponse {
+	if sess == nil {
+		return chatSessionResponse{}
+	}
 	msgs := make([]messagePayload, 0, len(sess.Messages))
 	for _, m := range sess.Messages {
-		msgs = append(msgs, toCodexMessagePayload(m))
+		msgs = append(msgs, toMessagePayload(m))
 	}
-	return codexSessionResponse{
+	return chatSessionResponse{
 		ID:        sess.ID,
 		Folder:    sess.Folder,
 		RelName:   sess.RelName,
-		Agent:     "codex",
+		Agent:     provider,
 		ThreadID:  sess.ThreadID,
 		Busy:      sess.Busy,
 		CreatedAt: formatTime(sess.CreatedAt),
@@ -407,43 +334,14 @@ func toCodexSessionResponse(sess *codex.Session) codexSessionResponse {
 	}
 }
 
-func toClaudeSessionResponse(sess *claudechat.Session) claudeSessionResponse {
-	msgs := make([]messagePayload, 0, len(sess.Messages))
-	for _, m := range sess.Messages {
-		msgs = append(msgs, toClaudeMessagePayload(m))
-	}
-	return claudeSessionResponse{
-		ID:        sess.ID,
-		Folder:    sess.Folder,
-		RelName:   sess.RelName,
-		Agent:     "claude",
-		ThreadID:  sess.ThreadID,
-		Busy:      sess.Busy,
-		CreatedAt: formatTime(sess.CreatedAt),
-		UpdatedAt: formatTime(sess.UpdatedAt),
-		Messages:  msgs,
-	}
-}
-
-func toCodexMessagePayload(message codex.Message) messagePayload {
+func toMessagePayload(message chat.Message) messagePayload {
 	return messagePayload{
 		Role:        message.Role,
 		Kind:        message.Kind,
 		Content:     message.Content,
 		Timestamp:   formatTime(message.Timestamp),
-		Attachments: toCodexAttachmentPayloads(message.Attachments),
-		Command:     toCodexCommandPayload(message.Command),
-	}
-}
-
-func toClaudeMessagePayload(message claudechat.Message) messagePayload {
-	return messagePayload{
-		Role:        message.Role,
-		Kind:        message.Kind,
-		Content:     message.Content,
-		Timestamp:   formatTime(message.Timestamp),
-		Attachments: toClaudeAttachmentPayloads(message.Attachments),
-		Command:     toClaudeCommandPayload(message.Command),
+		Attachments: toAttachmentPayloads(message.Attachments),
+		Command:     toCommandMetaPayload(message.Command),
 	}
 }
 
@@ -453,43 +351,7 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func toCodexAttachments(attachments []storedAttachment) []codex.Attachment {
-	if attachments == nil {
-		return nil
-	}
-	out := make([]codex.Attachment, len(attachments))
-	for i, attachment := range attachments {
-		out[i] = codex.Attachment{
-			ID:          attachment.ID,
-			Name:        attachment.Name,
-			ContentType: attachment.ContentType,
-			Size:        attachment.Size,
-			URL:         attachment.URL,
-			Path:        attachment.Path,
-		}
-	}
-	return out
-}
-
-func toClaudeAttachments(attachments []storedAttachment) []claudechat.Attachment {
-	if attachments == nil {
-		return nil
-	}
-	out := make([]claudechat.Attachment, len(attachments))
-	for i, attachment := range attachments {
-		out[i] = claudechat.Attachment{
-			ID:          attachment.ID,
-			Name:        attachment.Name,
-			ContentType: attachment.ContentType,
-			Size:        attachment.Size,
-			URL:         attachment.URL,
-			Path:        attachment.Path,
-		}
-	}
-	return out
-}
-
-func toCodexAttachmentPayloads(attachments []codex.Attachment) []attachmentPayload {
+func toAttachmentPayloads(attachments []chat.Attachment) []attachmentPayload {
 	if attachments == nil {
 		return nil
 	}
@@ -506,43 +368,22 @@ func toCodexAttachmentPayloads(attachments []codex.Attachment) []attachmentPaylo
 	return out
 }
 
-func toClaudeAttachmentPayloads(attachments []claudechat.Attachment) []attachmentPayload {
-	if attachments == nil {
-		return nil
-	}
-	out := make([]attachmentPayload, len(attachments))
-	for i, attachment := range attachments {
-		out[i] = attachmentPayload{
-			ID:          attachment.ID,
-			Name:        attachment.Name,
-			ContentType: attachment.ContentType,
-			Size:        attachment.Size,
-			URL:         attachment.URL,
-		}
-	}
-	return out
-}
-
-func toCodexCommandPayload(command *codex.CommandMeta) *commandPayload {
+func toCommandMetaPayload(command *chat.CommandMeta) *commandPayload {
 	if command == nil {
 		return nil
 	}
-	return toCommandPayload(command.Command, command.ExitCode, command.DurationMs, command.TimedOut, command.Truncated)
-}
-
-func toClaudeCommandPayload(command *claudechat.CommandMeta) *commandPayload {
-	if command == nil {
-		return nil
-	}
-	return toCommandPayload(command.Command, command.ExitCode, command.DurationMs, command.TimedOut, command.Truncated)
-}
-
-func toCommandPayload(command string, exitCode int, durationMs int64, timedOut, truncated bool) *commandPayload {
 	return &commandPayload{
-		Command:    command,
-		ExitCode:   exitCode,
-		DurationMs: durationMs,
-		TimedOut:   timedOut,
-		Truncated:  truncated,
+		Command:    command.Command,
+		ExitCode:   command.ExitCode,
+		DurationMs: command.DurationMs,
+		TimedOut:   command.TimedOut,
+		Truncated:  command.Truncated,
 	}
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }

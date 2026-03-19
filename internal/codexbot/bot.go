@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/botutil"
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
@@ -216,7 +217,7 @@ func (b *Bot) handleFolders(c tele.Context) error {
 }
 
 func (b *Bot) handleSessions(c tele.Context) error {
-	sessions := b.codexMgr.List()
+	sessions := b.codexMgr.ListSessions()
 	if len(sessions) == 0 {
 		return c.Send("No Codex sessions yet. Use /new.")
 	}
@@ -269,7 +270,7 @@ func (b *Bot) handleClose(c tele.Context) error {
 		return b.sendCodexSessionPicker(c, "cclose", "<b>Select a session to close</b>")
 	}
 
-	if err := b.codexMgr.Close(id); err != nil {
+	if err := b.codexMgr.DeleteSession(id); err != nil {
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
 	return c.Send(fmt.Sprintf("Closed session <code>%s</code>.", html.EscapeString(id)), tele.ModeHTML)
@@ -361,7 +362,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		if len(parts) != 2 {
 			return nil
 		}
-		if err := b.codexMgr.Close(parts[1]); err != nil {
+		if err := b.codexMgr.DeleteSession(parts[1]); err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
 		return c.Send(fmt.Sprintf("Closed session <code>%s</code>.", html.EscapeString(parts[1])), tele.ModeHTML)
@@ -387,7 +388,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 }
 
 func (b *Bot) createSession(c tele.Context, folder string) error {
-	sess, err := b.codexMgr.Create(folder)
+	sess, err := b.codexMgr.CreateSession(folder)
 	if err != nil {
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
@@ -435,7 +436,7 @@ func (b *Bot) sendCodexFolderPicker(c tele.Context, page int, text string) error
 }
 
 func (b *Bot) sendCodexSessionPicker(c tele.Context, action, text string) error {
-	sessions := b.codexMgr.List()
+	sessions := b.codexMgr.ListSessions()
 	if len(sessions) == 0 {
 		return c.Send("No Codex sessions yet. Use /new.")
 	}
@@ -506,7 +507,7 @@ func (b *Bot) handleCodexNavigation(c tele.Context, pageStr string) error {
 	return b.sendCodexFolderPicker(c, page, "<b>Available repositories</b>\nTap to create a Codex session.")
 }
 
-func (b *Bot) codexSessionActions(sess *codex.Session) *tele.ReplyMarkup {
+func (b *Bot) codexSessionActions(sess *chat.Session) *tele.ReplyMarkup {
 	markup := &tele.ReplyMarkup{}
 	markup.InlineKeyboard = [][]tele.InlineButton{
 		{
@@ -517,7 +518,7 @@ func (b *Bot) codexSessionActions(sess *codex.Session) *tele.ReplyMarkup {
 	return markup
 }
 
-func (b *Bot) codexSessionPickerMarkup(sessions []*codex.Session) *tele.ReplyMarkup {
+func (b *Bot) codexSessionPickerMarkup(sessions []*chat.Session) *tele.ReplyMarkup {
 	markup := &tele.ReplyMarkup{}
 	var rows [][]tele.InlineButton
 	for _, sess := range sessions {
