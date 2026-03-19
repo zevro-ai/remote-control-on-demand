@@ -29,7 +29,10 @@ const (
 	clearLine  = esc + "2K"
 )
 
-const defaultDashboardPort = 3001
+const (
+	defaultDashboardPort         = 3001
+	minDashboardTokenLengthChars = 32
+)
 
 var (
 	onboardingSelectOption  = selectFromList
@@ -328,6 +331,9 @@ func RunOnboarding(configPath string) (*Config, error) {
 		if apiCfg.Port <= 0 || apiCfg.Port > 65535 {
 			return nil, fmt.Errorf("dashboard port must be between 1 and 65535")
 		}
+		if apiCfg.Port < 1024 {
+			fmt.Println(stepHint(fmt.Sprintf("Warning: port %d is privileged and may require root on Linux/macOS.", apiCfg.Port)))
+		}
 
 		fmt.Println()
 		fmt.Println(stepHint("Protect the dashboard with a bearer token?"))
@@ -350,6 +356,8 @@ func RunOnboarding(configPath string) (*Config, error) {
 				if err != nil {
 					return nil, fmt.Errorf("generating dashboard token: %w", err)
 				}
+			} else if len(apiToken) < minDashboardTokenLengthChars {
+				return nil, fmt.Errorf("dashboard token must be at least %d characters", minDashboardTokenLengthChars)
 			}
 			apiCfg.Token = apiToken
 			fmt.Println(stepOK("Dashboard enabled at " + dashboardURL(apiCfg.Port) + " (token protected)"))
@@ -431,6 +439,7 @@ func RunOnboarding(configPath string) (*Config, error) {
 		fmt.Println(styled(fDim, "  OK, start later with: go run ./cmd/codexbot"))
 		fmt.Println()
 		onboardingExit(0)
+		// Unreachable in production because onboardingExit defaults to os.Exit.
 		return nil, nil
 	}
 

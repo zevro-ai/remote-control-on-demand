@@ -64,6 +64,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("Onboarding failed: %v", err)
 		}
+		if cfg == nil {
+			return
+		}
 	} else {
 		cfg, err = config.Load(*configPath)
 		if err != nil {

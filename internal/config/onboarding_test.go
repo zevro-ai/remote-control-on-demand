@@ -141,6 +141,60 @@ func TestRunOnboardingEnablesDashboardWithoutToken(t *testing.T) {
 	}
 }
 
+func TestRunOnboardingRejectsShortManualDashboardToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	cfg, output, exitCode, err := runOnboardingForTest(t, onboardingTestCase{
+		configPath: configPath,
+		cwd:        tmpDir,
+		stdin:      "telegram-token\n123456\n\n\nshort-token\n",
+		selections: []int{1, 1, 0, 0},
+	})
+	if err == nil {
+		t.Fatal("expected onboarding to reject short manual dashboard token")
+	}
+	if !strings.Contains(err.Error(), "dashboard token must be at least 32 characters") {
+		t.Fatalf("expected dashboard token validation error, got %v", err)
+	}
+	if cfg != nil {
+		t.Fatalf("expected nil config on validation error, got %#v", cfg)
+	}
+	if exitCode != -1 {
+		t.Fatalf("expected onboarding not to exit, got exit code %d", exitCode)
+	}
+	if strings.Contains(output, "Config saved to") {
+		t.Fatalf("did not expect config to be saved on validation error, got %q", output)
+	}
+	if _, statErr := os.Stat(configPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected config file not to be created, got stat err %v", statErr)
+	}
+}
+
+func TestRunOnboardingWarnsForPrivilegedDashboardPort(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	cfg, output, exitCode, err := runOnboardingForTest(t, onboardingTestCase{
+		configPath: configPath,
+		cwd:        tmpDir,
+		stdin:      "telegram-token\n123456\n\n80\n\n",
+		selections: []int{1, 1, 0, 1, 0},
+	})
+	if err != nil {
+		t.Fatalf("RunOnboarding returned error: %v", err)
+	}
+	if exitCode != -1 {
+		t.Fatalf("expected onboarding not to exit, got exit code %d", exitCode)
+	}
+	if cfg.API.Port != 80 {
+		t.Fatalf("expected dashboard port 80, got %d", cfg.API.Port)
+	}
+	if !strings.Contains(output, "Warning: port 80 is privileged and may require root on Linux/macOS.") {
+		t.Fatalf("expected privileged port warning, got %q", output)
+	}
+}
+
 type onboardingTestCase struct {
 	configPath     string
 	cwd            string
