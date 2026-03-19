@@ -5,14 +5,29 @@
 /remote-control-on-demand
 *.exe
 dist/
+/internal/httpapi/dashboard/dist/*
+!/internal/httpapi/dashboard/dist/.keep
 
 # Config with secrets
 config.yaml
 codex_sessions.json
+claude_sessions.json
+sessions.json
 .gocache/
 .gomodcache/
 .gotmp/
 .codexbot/
+
+# Frontend
+node_modules/
+.vite/
+
+# AI tools
+.agent/
+.agents/
+.claude/
+.playwright-cli/
+skills-lock.json
 
 # IDE
 .idea/

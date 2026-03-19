@@ -11,9 +11,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type APIConfig struct {
+	Port  int    `yaml:"port"`  // default 0 = disabled
+	Token string `yaml:"token"` // optional bearer token
+}
+
 type Config struct {
 	Telegram TelegramConfig `yaml:"telegram"`
 	RC       RCConfig       `yaml:"rc"`
+	API      APIConfig      `yaml:"api,omitempty"`
 }
 
 type TelegramConfig struct {
@@ -114,11 +120,17 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) Validate() error {
-	if c.Telegram.Token == "" {
-		return fmt.Errorf("telegram.token is required")
+	hasTelegram := c.Telegram.Token != "" && c.Telegram.AllowedUserID != 0
+	hasAPI := c.API.Port > 0
+
+	if !hasTelegram && !hasAPI {
+		return fmt.Errorf("at least one of telegram or api must be configured")
 	}
-	if c.Telegram.AllowedUserID == 0 {
-		return fmt.Errorf("telegram.allowed_user_id is required")
+	if c.Telegram.Token != "" && c.Telegram.AllowedUserID == 0 {
+		return fmt.Errorf("telegram.allowed_user_id is required when telegram.token is set")
+	}
+	if c.Telegram.AllowedUserID != 0 && c.Telegram.Token == "" {
+		return fmt.Errorf("telegram.token is required when telegram.allowed_user_id is set")
 	}
 	if c.RC.BaseFolder == "" {
 		return fmt.Errorf("rc.base_folder is required")

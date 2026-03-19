@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -10,9 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codexbot"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
+	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi"
 	"github.com/zevro-ai/remote-control-on-demand/internal/process"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 )
@@ -88,9 +91,28 @@ func main() {
 		log.Fatalf("Restoring Codex sessions: %v", err)
 	}
 
-	bt, err := codexbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr)
-	if err != nil {
-		log.Fatalf("Creating bot: %v", err)
+	claudeStatePath := filepath.Join(filepath.Dir(*configPath), "claude_sessions.json")
+	claudeMgr := claudechat.NewManager(cfg.RC.BaseFolder, claudeStatePath)
+	claudeMgr.ConfigurePermissionMode(cfg.RC.PermissionMode)
+	if err := claudeMgr.Restore(); err != nil {
+		log.Fatalf("Restoring Claude chat sessions: %v", err)
+	}
+
+	var notifier codexbot.Notifier
+	if cfg.Telegram.Token != "" {
+		bt, err := codexbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr)
+		if err != nil {
+			log.Fatalf("Creating bot: %v", err)
+		}
+		notifier = bt
+	} else {
+		notifier = codexbot.NopBot()
+	}
+
+	var httpSrv *httpapi.Server
+	if cfg.API.Port > 0 {
+		httpSrv = httpapi.NewServer(cfg.API, sessionMgr, claudeMgr, codexMgr)
+		go httpSrv.Start()
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -100,11 +122,16 @@ func main() {
 		<-sigCh
 		fmt.Println()
 		fmt.Println(dim + "    Shutting down..." + r)
+		if httpSrv != nil {
+			httpSrv.Shutdown(context.Background())
+		}
+		claudeMgr.Shutdown()
+		codexMgr.Shutdown()
 		stopped := sessionMgr.StopAll()
-		bt.SendMessage(fmt.Sprintf("<b>RCOD + Codex bot stopped.</b>\nClosed Claude sessions: <code>%d</code>", stopped))
-		bt.Stop()
+		notifier.SendMessage(fmt.Sprintf("<b>RCOD + Codex bot stopped.</b>\nClosed Claude sessions: <code>%d</code>", stopped))
+		notifier.Stop()
 	}()
 
 	printBanner()
-	bt.Start()
+	notifier.Start()
 }

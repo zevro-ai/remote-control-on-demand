@@ -17,6 +17,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: app
+
+      - name: Test frontend
+        run: npm test
+        working-directory: app
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: app
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -32,8 +51,8 @@ jobs:
           fi
         if: matrix.os == 'ubuntu-latest'
 
-      - name: Build
-        run: go build -v -o rcod ./cmd/bot
+      - name: Build worker binary
+        run: go build -v -o rcod ./cmd/codexbot
 
       - name: Test
         run: go test -v ./...

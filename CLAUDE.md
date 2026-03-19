@@ -20,7 +20,8 @@ Remote Control On Demand (RCOD) — a Go application that manages `claude rc` se
 
 ```bash
 # Build
-go build -o rcod ./cmd/bot
+cd app && npm ci && npm run build && cd ..
+go build -o rcod ./cmd/codexbot
 
 # Run (auto-detects config.yaml in current directory)
 ./rcod
@@ -29,7 +30,8 @@ go build -o rcod ./cmd/bot
 ./rcod --config /path/to/config.yaml
 
 # Development run
-go run ./cmd/bot
+cd app && npm ci && npm run build && cd ..
+go run ./cmd/codexbot
 
 # Run all tests
 go test ./...
@@ -49,7 +51,7 @@ The app follows a layered architecture with four core packages under `internal/`
 - **`session/`** — Session lifecycle management (start/stop/crash/auto-restart), ring buffer for output capture (500 lines), URL scanner that detects `claude.ai` URLs in process output
 - **`process/`** — Spawns `claude rc` subprocesses with process group isolation (`Setpgid=true`), always using `--permission-mode bypassPermissions`, and handles graceful shutdown
 
-**Entry point:** `cmd/bot/main.go` — parses flags, loads config (or runs wizard), wires up all components, handles OS signals for graceful shutdown.
+**Entry point:** `cmd/codexbot/main.go` — parses flags, loads config (or runs wizard), wires up the worker managers plus HTTP dashboard, and handles OS signals for graceful shutdown.
 
 **Key data flow:** Process output → ring buffer + URL scanner → notification channel (buffered, cap 100) → bot goroutine → Telegram message.
 
@@ -78,3 +80,12 @@ YAML format in `config.yaml` (gitignored). See `config.example.yaml` for templat
 ## Dependencies
 
 Go 1.21+. Key libraries: `gopkg.in/telebot.v4` (Telegram API), `gopkg.in/yaml.v3` (config), `golang.org/x/sys` + `golang.org/x/term` (process/terminal control).
+
+## Planning
+
+When producing an implementation plan:
+
+- Keep it concrete and executable against the current repository state.
+- Include verification steps alongside the implementation steps.
+- If you write a plan into `plans/`, treat that file as the source of truth. Do not assume there is a generated or "hardened" variant elsewhere in the repo.
+- Before implementing from a saved plan, re-read the latest version of that exact file and call out any stale assumptions or obvious risks first.

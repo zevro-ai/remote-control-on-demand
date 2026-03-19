@@ -1,4 +1,4 @@
-package bot
+package botutil
 
 import (
 	"os"
@@ -34,18 +34,17 @@ func TestListGitFolders_TopLevel(t *testing.T) {
 	mkGitRepo(t, base, "alpha")
 	mkGitRepo(t, base, "beta")
 
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	want := []string{"alpha", "beta"}
 	assertSliceEqual(t, got, want)
 }
 
 func TestListGitFolders_AggregatingFolder(t *testing.T) {
 	base := t.TempDir()
-	// "work" is an aggregating folder: no .git, contains only subdirs
 	mkGitRepo(t, base, "work", "api")
 	mkGitRepo(t, base, "work", "frontend")
 
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	want := []string{filepath.Join("work", "api"), filepath.Join("work", "frontend")}
 	assertSliceEqual(t, got, want)
 }
@@ -57,7 +56,7 @@ func TestListGitFolders_MixedStructure(t *testing.T) {
 	mkGitRepo(t, base, "personal", "blog")
 	mkDir(t, base, "personal", "notes")
 
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	want := []string{filepath.Join("personal", "blog"), "standalone", filepath.Join("work", "api")}
 	assertSliceEqual(t, got, want)
 }
@@ -67,7 +66,7 @@ func TestListGitFolders_SkipsPlainFoldersWithFiles(t *testing.T) {
 	mkDir(t, base, "docs", "guide")
 	mkFile(t, filepath.Join(base, "docs", "README.md"))
 
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	if len(got) != 0 {
 		t.Errorf("expected no folders, got %v", got)
 	}
@@ -78,21 +77,21 @@ func TestListGitFolders_HiddenDirsSkipped(t *testing.T) {
 	mkGitRepo(t, base, ".hidden")
 	mkGitRepo(t, base, "visible")
 
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	want := []string{"visible"}
 	assertSliceEqual(t, got, want)
 }
 
 func TestListGitFolders_EmptyBase(t *testing.T) {
 	base := t.TempDir()
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	if len(got) != 0 {
 		t.Errorf("expected no folders, got %v", got)
 	}
 }
 
 func TestListGitFolders_NonExistentBase(t *testing.T) {
-	got := listGitFolders("/nonexistent/path/that/does/not/exist")
+	got := ListGitFolders("/nonexistent/path/that/does/not/exist")
 	if got != nil {
 		t.Errorf("expected nil, got %v", got)
 	}
@@ -104,7 +103,7 @@ func TestListGitFolders_RecursiveDiscovery(t *testing.T) {
 	mkGitRepo(t, base, "clients", "acme", "frontend")
 	mkGitRepo(t, base, "labs", "experiments", "agent")
 
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	want := []string{
 		filepath.Join("clients", "acme", "api"),
 		filepath.Join("clients", "acme", "frontend"),
@@ -118,7 +117,7 @@ func TestListGitFolders_SkipsNestedReposInsideRepo(t *testing.T) {
 	mkGitRepo(t, base, "platform")
 	mkGitRepo(t, base, "platform", "nested")
 
-	got := listGitFolders(base)
+	got := ListGitFolders(base)
 	want := []string{"platform"}
 	assertSliceEqual(t, got, want)
 }
@@ -131,7 +130,7 @@ func TestMatchFolderQuery(t *testing.T) {
 	}
 
 	t.Run("exact match wins", func(t *testing.T) {
-		got, matches := matchFolderQuery(folders, "client/api")
+		got, matches := MatchFolderQuery(folders, "client/api")
 		if got != "client/api" {
 			t.Fatalf("expected exact match, got %q", got)
 		}
@@ -141,7 +140,7 @@ func TestMatchFolderQuery(t *testing.T) {
 	})
 
 	t.Run("unique partial match resolves", func(t *testing.T) {
-		got, matches := matchFolderQuery(folders, "tools")
+		got, matches := MatchFolderQuery(folders, "tools")
 		if got != "ops/tools" {
 			t.Fatalf("expected unique partial match, got %q", got)
 		}
@@ -151,7 +150,7 @@ func TestMatchFolderQuery(t *testing.T) {
 	})
 
 	t.Run("ambiguous query returns suggestions", func(t *testing.T) {
-		got, matches := matchFolderQuery(folders, "client")
+		got, matches := MatchFolderQuery(folders, "client")
 		if got != "" {
 			t.Fatalf("expected no resolved match, got %q", got)
 		}

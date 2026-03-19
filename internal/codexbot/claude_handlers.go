@@ -10,16 +10,6 @@ import (
 	tele "gopkg.in/telebot.v4"
 )
 
-func (b *Bot) forwardNotifications() {
-	if b.sessionMgr == nil {
-		return
-	}
-
-	for n := range b.sessionMgr.Notifications() {
-		b.SendMessage(n.Message)
-	}
-}
-
 func (b *Bot) handleList(c tele.Context) error {
 	sessions := b.sessionMgr.List()
 	if len(sessions) == 0 {
@@ -151,87 +141,6 @@ func (b *Bot) restartSession(c tele.Context, id string) error {
 		return c.Send(fmt.Sprintf("Claude session <code>%s</code> restarted.", html.EscapeString(id)), tele.ModeHTML)
 	}
 	return c.Send(fmt.Sprintf("Claude session <code>%s</code> restarted.", html.EscapeString(id)), b.claudeSessionActions(sess), tele.ModeHTML)
-}
-
-func (b *Bot) sendClaudeFolderPicker(c tele.Context, action string, page int, text string) error {
-	folders := b.listGitFolders()
-	if len(folders) == 0 {
-		return c.Send("No git repositories found in the projects folder.", tele.ModeHTML)
-	}
-
-	if page < 0 {
-		page = 0
-	}
-	lastPage := (len(folders) - 1) / folderPageSize
-	if page > lastPage {
-		page = lastPage
-	}
-
-	start := page * folderPageSize
-	end := min(start+folderPageSize, len(folders))
-
-	markup := &tele.ReplyMarkup{}
-	var rows [][]tele.InlineButton
-	for i, folder := range folders[start:end] {
-		rows = append(rows, []tele.InlineButton{{
-			Text: "📂 " + folder,
-			Data: fmt.Sprintf("pick:%s:%d", action, start+i),
-		}})
-	}
-
-	if lastPage > 0 {
-		var navRow []tele.InlineButton
-		if page > 0 {
-			navRow = append(navRow, tele.InlineButton{Text: "◀ Prev", Data: fmt.Sprintf("nav:%s:%d", action, page-1)})
-		}
-		navRow = append(navRow, tele.InlineButton{Text: fmt.Sprintf("%d/%d", page+1, lastPage+1), Data: "noop:0"})
-		if page < lastPage {
-			navRow = append(navRow, tele.InlineButton{Text: "Next ▶", Data: fmt.Sprintf("nav:%s:%d", action, page+1)})
-		}
-		rows = append(rows, navRow)
-	}
-
-	markup.InlineKeyboard = rows
-	return c.Send(text, markup, tele.ModeHTML)
-}
-
-func (b *Bot) sendClaudeSessionPicker(c tele.Context, action, text string) error {
-	sessions := b.sessionMgr.List()
-	var running []*session.Session
-	for _, s := range sessions {
-		if s.Status == session.StatusRunning {
-			running = append(running, s)
-		}
-	}
-	if len(running) == 0 {
-		return c.Send("No active Claude sessions.")
-	}
-
-	markup := &tele.ReplyMarkup{}
-	var rows [][]tele.InlineButton
-	for _, s := range running {
-		label := fmt.Sprintf("%s - %s", s.ID, s.RelName)
-		rows = append(rows, []tele.InlineButton{{
-			Text: label,
-			Data: action + ":" + s.ID,
-		}})
-	}
-	markup.InlineKeyboard = rows
-	return c.Send(text, markup, tele.ModeHTML)
-}
-
-func (b *Bot) handleClaudeFolderPick(c tele.Context, action string, index int) error {
-	folders := b.listGitFolders()
-	if index < 0 || index >= len(folders) {
-		return c.Send("That project is no longer available. Refresh with <code>/folders</code>.", tele.ModeHTML)
-	}
-
-	switch action {
-	case "start":
-		return b.startSession(c, folders[index])
-	default:
-		return nil
-	}
 }
 
 func (b *Bot) claudeSessionActions(sess *session.Session) *tele.ReplyMarkup {

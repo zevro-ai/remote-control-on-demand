@@ -6,11 +6,13 @@ import (
 )
 
 type RingBuffer struct {
-	mu    sync.Mutex
-	lines []string
-	size  int
-	pos   int
-	full  bool
+	mu          sync.Mutex
+	lines       []string
+	size        int
+	pos         int
+	full        bool
+	subMu       sync.Mutex
+	subscribers []func(line string)
 }
 
 func NewRingBuffer(size int) *RingBuffer {
@@ -20,11 +22,26 @@ func NewRingBuffer(size int) *RingBuffer {
 	}
 }
 
+// Subscribe registers a callback for each line written to the buffer.
+// fn MUST be non-blocking (push to channel or buffer).
+// Returns an unsubscribe function.
+func (rb *RingBuffer) Subscribe(fn func(line string)) func() {
+	rb.subMu.Lock()
+	defer rb.subMu.Unlock()
+	rb.subscribers = append(rb.subscribers, fn)
+	idx := len(rb.subscribers) - 1
+	return func() {
+		rb.subMu.Lock()
+		defer rb.subMu.Unlock()
+		rb.subscribers[idx] = nil
+	}
+}
+
 func (rb *RingBuffer) Write(p []byte) (n int, err error) {
 	rb.mu.Lock()
-	defer rb.mu.Unlock()
 
 	text := string(p)
+	var written []string
 	for _, line := range strings.Split(text, "\n") {
 		if line == "" {
 			continue
@@ -34,7 +51,25 @@ func (rb *RingBuffer) Write(p []byte) (n int, err error) {
 		if rb.pos == 0 {
 			rb.full = true
 		}
+		written = append(written, line)
 	}
+	rb.mu.Unlock()
+
+	if len(written) > 0 {
+		rb.subMu.Lock()
+		subs := make([]func(string), len(rb.subscribers))
+		copy(subs, rb.subscribers)
+		rb.subMu.Unlock()
+
+		for _, line := range written {
+			for _, fn := range subs {
+				if fn != nil {
+					fn(line)
+				}
+			}
+		}
+	}
+
 	return len(p), nil
 }
 

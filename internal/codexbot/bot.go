@@ -1,29 +1,43 @@
 package codexbot
 
 import (
+	"context"
 	"fmt"
 	"html"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zevro-ai/remote-control-on-demand/internal/botutil"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
 )
 
-const folderPageSize = 8
+// Notifier abstracts the Telegram bot for HTTP-only mode.
+type Notifier interface {
+	Start()
+	Stop()
+	SendMessage(msg string)
+}
 
 type Bot struct {
 	tb            *tele.Bot
 	sessionMgr    *session.Manager
 	codexMgr      *codex.Manager
 	allowedUserID int64
+	unsubSession  func()
 }
+
+// NopBot returns a no-op Notifier for HTTP-only mode.
+func NopBot() Notifier {
+	return &nopBot{}
+}
+
+type nopBot struct{}
+
+func (n *nopBot) Start()               {}
+func (n *nopBot) Stop()                {}
+func (n *nopBot) SendMessage(_ string) {}
 
 func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMgr *codex.Manager) (*Bot, error) {
 	tb, err := tele.NewBot(tele.Settings{
@@ -46,18 +60,29 @@ func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMg
 }
 
 func (b *Bot) Start() {
-	go b.forwardNotifications()
+	if b.sessionMgr != nil {
+		b.unsubSession = b.sessionMgr.Subscribe(func(n session.Notification) {
+			go b.SendMessage(n.Message)
+		})
+	}
 	b.sendWelcome()
 	b.tb.Start()
 }
 
 func (b *Bot) Stop() {
+	if b.unsubSession != nil {
+		b.unsubSession()
+	}
 	b.tb.Stop()
 }
 
 func (b *Bot) SendMessage(msg string) {
-	recipient := &user{id: b.allowedUserID}
+	recipient := &botutil.User{ID: b.allowedUserID}
 	b.tb.Send(recipient, msg, tele.ModeHTML)
+}
+
+func (b *Bot) auth(next tele.HandlerFunc) tele.HandlerFunc {
+	return botutil.Auth(b.allowedUserID, next)
 }
 
 func (b *Bot) registerHandlers() {
@@ -96,18 +121,6 @@ func (b *Bot) registerCommands() {
 	})
 }
 
-func (b *Bot) auth(next tele.HandlerFunc) tele.HandlerFunc {
-	return func(c tele.Context) error {
-		if c.Sender().ID != b.allowedUserID {
-			if c.Callback() != nil {
-				return c.Respond(&tele.CallbackResponse{Text: "Access denied."})
-			}
-			return c.Send("Access denied.")
-		}
-		return next(c)
-	}
-}
-
 func (b *Bot) sendWelcome() {
 	var sb strings.Builder
 	sb.WriteString("<b>RCOD + Codex bot is online</b>\n\n")
@@ -133,7 +146,7 @@ func (b *Bot) handleStart(c tele.Context) error {
 		return b.sendClaudeFolderPicker(c, "start", 0, "<b>Select a project to start in Claude</b>")
 	}
 
-	resolved, matches := matchFolderQuery(b.listGitFolders(), folder)
+	resolved, matches := botutil.MatchFolderQuery(b.listGitFolders(), folder)
 	switch {
 	case resolved != "":
 		return b.startSession(c, resolved)
@@ -144,7 +157,7 @@ func (b *Bot) handleStart(c tele.Context) error {
 			fmt.Sprintf(
 				"Multiple projects matched <code>%s</code>:\n%s\n\nUse <code>/start exact-name</code> or browse with <code>/folders</code>.",
 				html.EscapeString(folder),
-				formatCodeList(matches, 8),
+				botutil.FormatCodeList(matches, 8),
 			),
 			tele.ModeHTML,
 		)
@@ -177,10 +190,10 @@ After creating a Codex session, send a normal text message and it will go to Cod
 func (b *Bot) handleNew(c tele.Context) error {
 	folder := strings.TrimSpace(c.Message().Payload)
 	if folder == "" {
-		return b.sendFolderPicker(c, 0, "<b>Select a repository for a new Codex session</b>")
+		return b.sendCodexFolderPicker(c, 0, "<b>Select a repository for a new Codex session</b>")
 	}
 
-	resolved, matches := matchFolderQuery(b.listGitFolders(), folder)
+	resolved, matches := botutil.MatchFolderQuery(b.listGitFolders(), folder)
 	switch {
 	case resolved != "":
 		return b.createSession(c, resolved)
@@ -191,7 +204,7 @@ func (b *Bot) handleNew(c tele.Context) error {
 			fmt.Sprintf(
 				"Multiple projects matched <code>%s</code>:\n%s\n\nUse <code>/new exact-name</code> or run <code>/new</code> to browse.",
 				html.EscapeString(folder),
-				formatCodeList(matches, 8),
+				botutil.FormatCodeList(matches, 8),
 			),
 			tele.ModeHTML,
 		)
@@ -229,13 +242,13 @@ func (b *Bot) handleSessions(c tele.Context) error {
 		))
 	}
 
-	return c.Send(sb.String(), b.sessionPickerMarkup(sessions), tele.ModeHTML)
+	return c.Send(sb.String(), b.codexSessionPickerMarkup(sessions), tele.ModeHTML)
 }
 
 func (b *Bot) handleUse(c tele.Context) error {
 	id := strings.TrimSpace(c.Message().Payload)
 	if id == "" {
-		return b.sendSessionPicker(c, "cuse", "<b>Select the active session</b>")
+		return b.sendCodexSessionPicker(c, "cuse", "<b>Select the active session</b>")
 	}
 
 	sess, err := b.codexMgr.SetActive(id)
@@ -245,7 +258,7 @@ func (b *Bot) handleUse(c tele.Context) error {
 
 	return c.Send(
 		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)),
-		b.sessionActions(sess),
+		b.codexSessionActions(sess),
 		tele.ModeHTML,
 	)
 }
@@ -253,7 +266,7 @@ func (b *Bot) handleUse(c tele.Context) error {
 func (b *Bot) handleClose(c tele.Context) error {
 	id := strings.TrimSpace(c.Message().Payload)
 	if id == "" {
-		return b.sendSessionPicker(c, "cclose", "<b>Select a session to close</b>")
+		return b.sendCodexSessionPicker(c, "cclose", "<b>Select a session to close</b>")
 	}
 
 	if err := b.codexMgr.Close(id); err != nil {
@@ -278,7 +291,7 @@ func (b *Bot) handleCurrent(c tele.Context) error {
 		html.EscapeString(sess.RelName),
 		html.EscapeString(thread),
 	)
-	return c.Send(msg, b.sessionActions(sess), tele.ModeHTML)
+	return c.Send(msg, b.codexSessionActions(sess), tele.ModeHTML)
 }
 
 func (b *Bot) handleChat(c tele.Context) error {
@@ -296,7 +309,7 @@ func (b *Bot) handleChat(c tele.Context) error {
 	}
 
 	_ = c.Notify(tele.Typing)
-	replySession, response, err := b.codexMgr.Send(sess.ID, msg.Text)
+	replySession, response, err := b.codexMgr.Send(context.Background(), sess.ID, msg.Text, nil)
 	if err != nil {
 		return c.Send(err.Error())
 	}
@@ -319,38 +332,22 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		if len(parts) != 3 {
 			return nil
 		}
-		index, err := strconv.Atoi(parts[2])
-		if err != nil {
-			return nil
-		}
-		return b.handleClaudeFolderPick(c, parts[1], index)
+		return b.handleClaudeFolderPick(c, parts[1], parts[2])
 	case "nav":
 		if len(parts) != 3 {
 			return nil
 		}
-		page, err := strconv.Atoi(parts[2])
-		if err != nil {
-			return nil
-		}
-		return b.sendClaudeFolderPicker(c, parts[1], page, "<b>Available projects</b>\nTap to start a Claude session.")
+		return b.handleClaudeNavigation(c, parts[1], parts[2])
 	case "cpick":
 		if len(parts) != 2 {
 			return nil
 		}
-		index, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return nil
-		}
-		return b.handleFolderPick(c, index)
+		return b.handleCodexFolderPick(c, parts[1])
 	case "cnav":
 		if len(parts) != 2 {
 			return nil
 		}
-		page, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return nil
-		}
-		return b.sendFolderPicker(c, page, "<b>Available repositories</b>\nTap to create a Codex session.")
+		return b.handleCodexNavigation(c, parts[1])
 	case "cuse":
 		if len(parts) != 2 {
 			return nil
@@ -359,7 +356,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
-		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.sessionActions(sess), tele.ModeHTML)
+		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.codexSessionActions(sess), tele.ModeHTML)
 	case "cclose":
 		if len(parts) != 2 {
 			return nil
@@ -400,78 +397,116 @@ func (b *Bot) createSession(c tele.Context, folder string) error {
 		html.EscapeString(sess.ID),
 		html.EscapeString(sess.RelName),
 	)
-	return c.Send(msg, b.sessionActions(sess), tele.ModeHTML)
+	return c.Send(msg, b.codexSessionActions(sess), tele.ModeHTML)
 }
 
-func (b *Bot) sendFolderPicker(c tele.Context, page int, text string) error {
+// Claude folder picker — uses pick:{action}:{index} / nav:{action}:{page} callbacks.
+func (b *Bot) sendClaudeFolderPicker(c tele.Context, action string, page int, text string) error {
+	folders := b.listGitFolders()
+	if len(folders) == 0 {
+		return c.Send("No git repositories found in the projects folder.", tele.ModeHTML)
+	}
+
+	markup := botutil.FolderPickerMarkup(botutil.FolderPickerConfig{
+		Folders:  folders,
+		Page:     page,
+		PickData: func(index int) string { return fmt.Sprintf("pick:%s:%d", action, index) },
+		NavData:  func(p int) string { return fmt.Sprintf("nav:%s:%d", action, p) },
+		Label:    func(folder string) string { return "📂 " + folder },
+	})
+	return c.Send(text, markup, tele.ModeHTML)
+}
+
+// Codex folder picker — uses cpick:{index} / cnav:{page} callbacks.
+func (b *Bot) sendCodexFolderPicker(c tele.Context, page int, text string) error {
 	folders := b.listGitFolders()
 	if len(folders) == 0 {
 		return c.Send("No git repositories found in the projects folder.")
 	}
 
-	if page < 0 {
-		page = 0
-	}
-	lastPage := (len(folders) - 1) / folderPageSize
-	if page > lastPage {
-		page = lastPage
-	}
-
-	start := page * folderPageSize
-	end := min(start+folderPageSize, len(folders))
-
-	markup := &tele.ReplyMarkup{}
-	var rows [][]tele.InlineButton
-	for i, folder := range folders[start:end] {
-		rows = append(rows, []tele.InlineButton{{
-			Text: "Repo " + folder,
-			Data: fmt.Sprintf("cpick:%d", start+i),
-		}})
-	}
-
-	if lastPage > 0 {
-		var navRow []tele.InlineButton
-		if page > 0 {
-			navRow = append(navRow, tele.InlineButton{Text: "Prev", Data: fmt.Sprintf("cnav:%d", page-1)})
-		}
-		navRow = append(navRow, tele.InlineButton{Text: fmt.Sprintf("%d/%d", page+1, lastPage+1), Data: "noop:0"})
-		if page < lastPage {
-			navRow = append(navRow, tele.InlineButton{Text: "Next", Data: fmt.Sprintf("cnav:%d", page+1)})
-		}
-		rows = append(rows, navRow)
-	}
-
-	markup.InlineKeyboard = rows
+	markup := botutil.FolderPickerMarkup(botutil.FolderPickerConfig{
+		Folders:  folders,
+		Page:     page,
+		PickData: func(index int) string { return fmt.Sprintf("cpick:%d", index) },
+		NavData:  func(p int) string { return fmt.Sprintf("cnav:%d", p) },
+		Label:    func(folder string) string { return "Repo " + folder },
+	})
 	return c.Send(text, markup, tele.ModeHTML)
 }
 
-func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {
+func (b *Bot) sendCodexSessionPicker(c tele.Context, action, text string) error {
 	sessions := b.codexMgr.List()
 	if len(sessions) == 0 {
 		return c.Send("No Codex sessions yet. Use /new.")
 	}
 
-	markup := &tele.ReplyMarkup{}
-	var rows [][]tele.InlineButton
+	var items []botutil.PickerItem
 	for _, sess := range sessions {
-		rows = append(rows, []tele.InlineButton{{
-			Text: fmt.Sprintf("%s - %s", sess.ID, sess.RelName),
-			Data: action + ":" + sess.ID,
-		}})
+		items = append(items, botutil.PickerItem{
+			Label: fmt.Sprintf("%s - %s", sess.ID, sess.RelName),
+			Data:  action + ":" + sess.ID,
+		})
 	}
-	markup.InlineKeyboard = rows
-	return c.Send(text, markup, tele.ModeHTML)
+	return c.Send(text, botutil.PickerMarkup(items), tele.ModeHTML)
 }
 
-func (b *Bot) handleFolderPick(c tele.Context, index int) error {
+func (b *Bot) sendClaudeSessionPicker(c tele.Context, action, text string) error {
+	sessions := b.sessionMgr.List()
+	var items []botutil.PickerItem
+	for _, s := range sessions {
+		if s.Status == session.StatusRunning {
+			items = append(items, botutil.PickerItem{
+				Label: fmt.Sprintf("%s - %s", s.ID, s.RelName),
+				Data:  action + ":" + s.ID,
+			})
+		}
+	}
+	if len(items) == 0 {
+		return c.Send("No active Claude sessions.")
+	}
+
+	return c.Send(text, botutil.PickerMarkup(items), tele.ModeHTML)
+}
+
+func (b *Bot) handleClaudeFolderPick(c tele.Context, action string, indexStr string) error {
 	folders := b.listGitFolders()
+	index := 0
+	fmt.Sscanf(indexStr, "%d", &index)
+	if index < 0 || index >= len(folders) {
+		return c.Send("That project is no longer available. Refresh with <code>/folders</code>.", tele.ModeHTML)
+	}
+
+	switch action {
+	case "start":
+		return b.startSession(c, folders[index])
+	default:
+		return nil
+	}
+}
+
+func (b *Bot) handleClaudeNavigation(c tele.Context, action string, pageStr string) error {
+	page := 0
+	fmt.Sscanf(pageStr, "%d", &page)
+	return b.sendClaudeFolderPicker(c, action, page, "<b>Available projects</b>\nTap to start a Claude session.")
+}
+
+func (b *Bot) handleCodexFolderPick(c tele.Context, indexStr string) error {
+	folders := b.listGitFolders()
+	index := 0
+	fmt.Sscanf(indexStr, "%d", &index)
 	if index < 0 || index >= len(folders) {
 		return c.Send("That repository is no longer available. Refresh with /new.")
 	}
 	return b.createSession(c, folders[index])
 }
 
-func (b *Bot) sessionActions(sess *codex.Session) *tele.ReplyMarkup {
+func (b *Bot) handleCodexNavigation(c tele.Context, pageStr string) error {
+	page := 0
+	fmt.Sscanf(pageStr, "%d", &page)
+	return b.sendCodexFolderPicker(c, page, "<b>Available repositories</b>\nTap to create a Codex session.")
+}
+
+func (b *Bot) codexSessionActions(sess *codex.Session) *tele.ReplyMarkup {
 	markup := &tele.ReplyMarkup{}
 	markup.InlineKeyboard = [][]tele.InlineButton{
 		{
@@ -482,7 +517,7 @@ func (b *Bot) sessionActions(sess *codex.Session) *tele.ReplyMarkup {
 	return markup
 }
 
-func (b *Bot) sessionPickerMarkup(sessions []*codex.Session) *tele.ReplyMarkup {
+func (b *Bot) codexSessionPickerMarkup(sessions []*codex.Session) *tele.ReplyMarkup {
 	markup := &tele.ReplyMarkup{}
 	var rows [][]tele.InlineButton
 	for _, sess := range sessions {
@@ -510,36 +545,8 @@ func (b *Bot) sendTextChunks(c tele.Context, text string) error {
 	return nil
 }
 
-func splitChunks(text string, maxLen int) []string {
-	runes := []rune(text)
-	if len(runes) <= maxLen {
-		return []string{text}
-	}
-
-	var chunks []string
-	for len(runes) > 0 {
-		if len(runes) <= maxLen {
-			chunks = append(chunks, string(runes))
-			break
-		}
-
-		cut := maxLen
-		for i := maxLen - 1; i >= maxLen/2; i-- {
-			if runes[i] == '\n' || runes[i] == ' ' {
-				cut = i + 1
-				break
-			}
-		}
-
-		chunks = append(chunks, string(runes[:cut]))
-		runes = runes[cut:]
-	}
-
-	return chunks
-}
-
 func (b *Bot) listGitFolders() []string {
-	return listGitFolders(b.baseFolder())
+	return botutil.ListGitFolders(b.baseFolder())
 }
 
 func (b *Bot) baseFolder() string {
@@ -550,120 +557,4 @@ func (b *Bot) baseFolder() string {
 		return b.sessionMgr.BaseFolder()
 	}
 	return ""
-}
-
-func listGitFolders(baseFolder string) []string {
-	info, err := os.Stat(baseFolder)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-
-	var folders []string
-	err = filepath.WalkDir(baseFolder, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if path == baseFolder {
-			return nil
-		}
-
-		if d.IsDir() {
-			if shouldSkipScanDir(d.Name()) {
-				return filepath.SkipDir
-			}
-			if hasGitMetadata(path) {
-				rel, err := filepath.Rel(baseFolder, path)
-				if err == nil && rel != "." {
-					folders = append(folders, rel)
-				}
-				return filepath.SkipDir
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil
-	}
-
-	sort.Strings(folders)
-	return folders
-}
-
-func shouldSkipScanDir(name string) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-
-	switch name {
-	case "node_modules", "vendor", "dist", "build", "tmp":
-		return true
-	default:
-		return false
-	}
-}
-
-func hasGitMetadata(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".git"))
-	return err == nil
-}
-
-func matchFolderQuery(folders []string, query string) (string, []string) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return "", nil
-	}
-
-	normalizedQuery := normalizeFolderQuery(query)
-	for _, folder := range folders {
-		if normalizeFolderQuery(folder) == normalizedQuery {
-			return folder, nil
-		}
-	}
-
-	var matches []string
-	for _, folder := range folders {
-		if strings.Contains(strings.ToLower(filepath.ToSlash(folder)), normalizedQuery) {
-			matches = append(matches, folder)
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0], nil
-	}
-	return "", matches
-}
-
-func normalizeFolderQuery(value string) string {
-	return strings.ToLower(filepath.ToSlash(filepath.Clean(value)))
-}
-
-func formatCodeList(items []string, limit int) string {
-	if len(items) == 0 {
-		return ""
-	}
-
-	maxItems := min(len(items), limit)
-	lines := make([]string, 0, maxItems+1)
-	for _, item := range items[:maxItems] {
-		lines = append(lines, "• <code>"+html.EscapeString(item)+"</code>")
-	}
-	if len(items) > maxItems {
-		lines = append(lines, fmt.Sprintf("• and %d more", len(items)-maxItems))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-type user struct {
-	id int64
-}
-
-func (u *user) Recipient() string {
-	return fmt.Sprintf("%d", u.id)
 }

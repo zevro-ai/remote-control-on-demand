@@ -3,24 +3,19 @@ package bot
 import (
 	"fmt"
 	"html"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zevro-ai/remote-control-on-demand/internal/botutil"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
 )
-
-const folderPageSize = 8
 
 type Bot struct {
 	tb            *tele.Bot
 	mgr           *session.Manager
 	allowedUserID int64
+	unsubNotif    func()
 }
 
 func New(token string, allowedUserID int64, mgr *session.Manager) (*Bot, error) {
@@ -46,24 +41,27 @@ func New(token string, allowedUserID int64, mgr *session.Manager) (*Bot, error) 
 }
 
 func (b *Bot) Start() {
-	go b.forwardNotifications()
+	b.unsubNotif = b.mgr.Subscribe(func(n session.Notification) {
+		go b.SendMessage(n.Message)
+	})
 	b.sendWelcome()
 	b.tb.Start()
 }
 
 func (b *Bot) Stop() {
+	if b.unsubNotif != nil {
+		b.unsubNotif()
+	}
 	b.tb.Stop()
 }
 
 func (b *Bot) SendMessage(msg string) {
-	recipient := &user{id: b.allowedUserID}
+	recipient := &botutil.User{ID: b.allowedUserID}
 	b.tb.Send(recipient, msg, tele.ModeHTML)
 }
 
-func (b *Bot) forwardNotifications() {
-	for n := range b.mgr.Notifications() {
-		b.SendMessage(n.Message)
-	}
+func (b *Bot) auth(next tele.HandlerFunc) tele.HandlerFunc {
+	return botutil.Auth(b.allowedUserID, next)
 }
 
 func (b *Bot) registerHandlers() {
@@ -89,18 +87,6 @@ func (b *Bot) registerCommands() {
 		{Text: "folders", Description: "List available git repos"},
 		{Text: "help", Description: "Show available commands"},
 	})
-}
-
-func (b *Bot) auth(next tele.HandlerFunc) tele.HandlerFunc {
-	return func(c tele.Context) error {
-		if c.Sender().ID != b.allowedUserID {
-			if c.Callback() != nil {
-				return c.Respond(&tele.CallbackResponse{Text: "Access denied."})
-			}
-			return c.Send("Access denied.")
-		}
-		return next(c)
-	}
 }
 
 func (b *Bot) sendWelcome() {
@@ -137,7 +123,7 @@ func (b *Bot) handleStart(c tele.Context) error {
 		return b.sendFolderPicker(c, "start", 0, "<b>Select a project to start</b>")
 	}
 
-	resolved, matches := matchFolderQuery(b.listGitFolders(), folder)
+	resolved, matches := botutil.MatchFolderQuery(b.listGitFolders(), folder)
 	switch {
 	case resolved != "":
 		return b.startSession(c, resolved)
@@ -148,7 +134,7 @@ func (b *Bot) handleStart(c tele.Context) error {
 			fmt.Sprintf(
 				"Multiple projects matched <code>%s</code>:\n%s\n\nUse <code>/start exact-name</code> or browse with <code>/folders</code>.",
 				html.EscapeString(folder),
-				formatCodeList(matches, 8),
+				botutil.FormatCodeList(matches, 8),
 			),
 			tele.ModeHTML,
 		)
@@ -240,20 +226,12 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		if len(parts) != 3 {
 			return nil
 		}
-		index, err := strconv.Atoi(parts[2])
-		if err != nil {
-			return nil
-		}
-		return b.handleFolderPick(c, parts[1], index)
+		return b.handleFolderPick(c, parts[1], parts[2])
 	case "nav":
 		if len(parts) != 3 {
 			return nil
 		}
-		page, err := strconv.Atoi(parts[2])
-		if err != nil {
-			return nil
-		}
-		return b.sendFolderPicker(c, parts[1], page, "<b>Available projects</b>\nTap to start a session.")
+		return b.handleNavigation(c, parts[1], parts[2])
 	case "start", "kill", "status", "logs", "restart":
 		if len(parts) != 2 {
 			return nil
@@ -361,69 +339,38 @@ func (b *Bot) sendFolderPicker(c tele.Context, action string, page int, text str
 		return c.Send("No git repositories found in the projects folder.", tele.ModeHTML)
 	}
 
-	if page < 0 {
-		page = 0
-	}
-	lastPage := (len(folders) - 1) / folderPageSize
-	if page > lastPage {
-		page = lastPage
-	}
-
-	start := page * folderPageSize
-	end := min(start+folderPageSize, len(folders))
-
-	markup := &tele.ReplyMarkup{}
-	var rows [][]tele.InlineButton
-	for i, folder := range folders[start:end] {
-		rows = append(rows, []tele.InlineButton{{
-			Text: "📂 " + folder,
-			Data: fmt.Sprintf("pick:%s:%d", action, start+i),
-		}})
-	}
-
-	if lastPage > 0 {
-		var navRow []tele.InlineButton
-		if page > 0 {
-			navRow = append(navRow, tele.InlineButton{Text: "◀ Prev", Data: fmt.Sprintf("nav:%s:%d", action, page-1)})
-		}
-		navRow = append(navRow, tele.InlineButton{Text: fmt.Sprintf("%d/%d", page+1, lastPage+1), Data: "noop:0"})
-		if page < lastPage {
-			navRow = append(navRow, tele.InlineButton{Text: "Next ▶", Data: fmt.Sprintf("nav:%s:%d", action, page+1)})
-		}
-		rows = append(rows, navRow)
-	}
-
-	markup.InlineKeyboard = rows
+	markup := botutil.FolderPickerMarkup(botutil.FolderPickerConfig{
+		Folders:  folders,
+		Page:     page,
+		PickData: func(index int) string { return fmt.Sprintf("pick:%s:%d", action, index) },
+		NavData:  func(p int) string { return fmt.Sprintf("nav:%s:%d", action, p) },
+		Label:    func(folder string) string { return "📂 " + folder },
+	})
 	return c.Send(text, markup, tele.ModeHTML)
 }
 
 func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {
 	sessions := b.mgr.List()
-	var running []*session.Session
+	var items []botutil.PickerItem
 	for _, s := range sessions {
 		if s.Status == session.StatusRunning {
-			running = append(running, s)
+			items = append(items, botutil.PickerItem{
+				Label: fmt.Sprintf("%s — %s", s.ID, s.RelName),
+				Data:  action + ":" + s.ID,
+			})
 		}
 	}
-	if len(running) == 0 {
+	if len(items) == 0 {
 		return c.Send("No active sessions.")
 	}
 
-	markup := &tele.ReplyMarkup{}
-	var rows [][]tele.InlineButton
-	for _, s := range running {
-		label := fmt.Sprintf("%s — %s", s.ID, s.RelName)
-		rows = append(rows, []tele.InlineButton{{
-			Text: label,
-			Data: action + ":" + s.ID,
-		}})
-	}
-	markup.InlineKeyboard = rows
-	return c.Send(text, markup, tele.ModeHTML)
+	return c.Send(text, botutil.PickerMarkup(items), tele.ModeHTML)
 }
 
-func (b *Bot) handleFolderPick(c tele.Context, action string, index int) error {
+func (b *Bot) handleFolderPick(c tele.Context, action string, indexStr string) error {
 	folders := b.listGitFolders()
+	index := 0
+	fmt.Sscanf(indexStr, "%d", &index)
 	if index < 0 || index >= len(folders) {
 		return c.Send("That project is no longer available. Refresh with <code>/folders</code>.", tele.ModeHTML)
 	}
@@ -434,6 +381,12 @@ func (b *Bot) handleFolderPick(c tele.Context, action string, index int) error {
 	default:
 		return nil
 	}
+}
+
+func (b *Bot) handleNavigation(c tele.Context, action string, pageStr string) error {
+	page := 0
+	fmt.Sscanf(pageStr, "%d", &page)
+	return b.sendFolderPicker(c, action, page, "<b>Available projects</b>\nTap to start a session.")
 }
 
 func (b *Bot) sessionActions(sess *session.Session) *tele.ReplyMarkup {
@@ -456,121 +409,5 @@ func (b *Bot) sessionActions(sess *session.Session) *tele.ReplyMarkup {
 }
 
 func (b *Bot) listGitFolders() []string {
-	return listGitFolders(b.mgr.BaseFolder())
-}
-
-func listGitFolders(baseFolder string) []string {
-	info, err := os.Stat(baseFolder)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-
-	var folders []string
-	err = filepath.WalkDir(baseFolder, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if path == baseFolder {
-			return nil
-		}
-
-		if d.IsDir() {
-			if shouldSkipScanDir(d.Name()) {
-				return filepath.SkipDir
-			}
-			if hasGitMetadata(path) {
-				rel, err := filepath.Rel(baseFolder, path)
-				if err == nil && rel != "." {
-					folders = append(folders, rel)
-				}
-				return filepath.SkipDir
-			}
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil
-	}
-
-	sort.Strings(folders)
-	return folders
-}
-
-func shouldSkipScanDir(name string) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-
-	switch name {
-	case "node_modules", "vendor", "dist", "build", "tmp":
-		return true
-	default:
-		return false
-	}
-}
-
-func hasGitMetadata(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, ".git"))
-	return err == nil
-}
-
-func matchFolderQuery(folders []string, query string) (string, []string) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return "", nil
-	}
-
-	normalizedQuery := normalizeFolderQuery(query)
-	for _, folder := range folders {
-		if normalizeFolderQuery(folder) == normalizedQuery {
-			return folder, nil
-		}
-	}
-
-	var matches []string
-	for _, folder := range folders {
-		if strings.Contains(strings.ToLower(filepath.ToSlash(folder)), normalizedQuery) {
-			matches = append(matches, folder)
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0], nil
-	}
-	return "", matches
-}
-
-func normalizeFolderQuery(value string) string {
-	return strings.ToLower(filepath.ToSlash(filepath.Clean(value)))
-}
-
-func formatCodeList(items []string, limit int) string {
-	if len(items) == 0 {
-		return ""
-	}
-
-	maxItems := min(len(items), limit)
-	lines := make([]string, 0, maxItems+1)
-	for _, item := range items[:maxItems] {
-		lines = append(lines, "• <code>"+html.EscapeString(item)+"</code>")
-	}
-	if len(items) > maxItems {
-		lines = append(lines, fmt.Sprintf("• and %d more", len(items)-maxItems))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-type user struct {
-	id int64
-}
-
-func (u *user) Recipient() string {
-	return fmt.Sprintf("%d", u.id)
+	return botutil.ListGitFolders(b.mgr.BaseFolder())
 }
