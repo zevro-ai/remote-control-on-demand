@@ -8,8 +8,7 @@ import {
 } from "react";
 import type {
   Session,
-  ClaudeSession,
-  CodexSession,
+  ChatSession,
   DraftAttachment,
   Message,
   MessageAttachment,
@@ -23,8 +22,7 @@ import { isUnauthorizedError } from "../lib/requestErrors";
 
 interface State {
   sessions: Session[];
-  claudeSessions: ClaudeSession[];
-  codexSessions: CodexSession[];
+  chatSessions: Record<string, ChatSession[]>; // provider -> sessions
   logs: Record<string, string[]>;
   streamBlocks: Record<string, StreamBlock[]>;
   loading: boolean;
@@ -34,33 +32,26 @@ interface State {
 
 interface BootstrapData {
   sessions: Session[];
-  claudeSessions: ClaudeSession[];
-  codexSessions: CodexSession[];
+  chatSessions: Record<string, ChatSession[]>;
   authRequired: boolean;
   loadError: string | null;
 }
 
 type Action =
   | { type: "SET_SESSIONS"; sessions: Session[] }
-  | { type: "SET_CLAUDE_SESSIONS"; sessions: ClaudeSession[] }
-  | { type: "SET_CODEX_SESSIONS"; sessions: CodexSession[] }
+  | { type: "SET_CHAT_SESSIONS"; provider: string; sessions: ChatSession[] }
   | { type: "UPDATE_SESSION"; session: Session }
   | { type: "ADD_LOG"; sessionId: string; line: string }
   | { type: "UPDATE_STATUS"; sessionId: string; status: string; restarts: number }
   | { type: "ADD_SESSION"; session: Session }
   | { type: "REMOVE_SESSION"; sessionId: string }
-  | { type: "ADD_CLAUDE_SESSION"; session: ClaudeSession }
-  | { type: "REMOVE_CLAUDE_SESSION"; sessionId: string }
-  | { type: "ADD_CODEX_SESSION"; session: CodexSession }
-  | { type: "REMOVE_CODEX_SESSION"; sessionId: string }
-  | { type: "ADD_CLAUDE_MESSAGE"; sessionId: string; message: Message }
-  | { type: "ADD_CODEX_MESSAGE"; sessionId: string; message: Message }
-  | { type: "REMOVE_CLAUDE_OPTIMISTIC_MESSAGE"; sessionId: string; optimisticId: string }
-  | { type: "REMOVE_CODEX_OPTIMISTIC_MESSAGE"; sessionId: string; optimisticId: string }
+  | { type: "ADD_CHAT_SESSION"; provider: string; session: ChatSession }
+  | { type: "REMOVE_CHAT_SESSION"; provider: string; sessionId: string }
+  | { type: "ADD_CHAT_MESSAGE"; provider: string; sessionId: string; message: Message }
+  | { type: "REMOVE_OPTIMISTIC_MESSAGE"; provider: string; sessionId: string; optimisticId: string }
   | { type: "APPEND_STREAMING"; sessionId: string; delta: string }
   | { type: "CLEAR_STREAMING"; sessionId: string }
-  | { type: "SET_CLAUDE_BUSY"; sessionId: string; busy: boolean }
-  | { type: "SET_CODEX_BUSY"; sessionId: string; busy: boolean }
+  | { type: "SET_CHAT_BUSY"; provider: string; sessionId: string; busy: boolean }
   | { type: "SET_LOADING"; loading: boolean }
   | { type: "SET_AUTH_REQUIRED"; authRequired: boolean }
   | { type: "SET_LOAD_ERROR"; error: string | null }
@@ -75,10 +66,11 @@ export function reduceSessionsState(state: State, action: Action): State {
   switch (action.type) {
     case "SET_SESSIONS":
       return { ...state, sessions: action.sessions };
-    case "SET_CLAUDE_SESSIONS":
-      return { ...state, claudeSessions: action.sessions };
-    case "SET_CODEX_SESSIONS":
-      return { ...state, codexSessions: action.sessions };
+    case "SET_CHAT_SESSIONS":
+      return {
+        ...state,
+        chatSessions: { ...state.chatSessions, [action.provider]: action.sessions },
+      };
     case "UPDATE_SESSION":
       return {
         ...state,
@@ -103,21 +95,24 @@ export function reduceSessionsState(state: State, action: Action): State {
       return { ...state, sessions: [...state.sessions, action.session] };
     case "REMOVE_SESSION":
       return { ...state, sessions: state.sessions.filter((s) => s.id !== action.sessionId) };
-    case "ADD_CLAUDE_SESSION":
-      if (state.claudeSessions.some((s) => s.id === action.session.id)) return state;
-      return { ...state, claudeSessions: [action.session, ...state.claudeSessions] };
-    case "REMOVE_CLAUDE_SESSION":
+    case "ADD_CHAT_SESSION": {
+      const current = state.chatSessions[action.provider] || [];
+      if (current.some((s) => s.id === action.session.id)) return state;
       return {
         ...state,
-        claudeSessions: state.claudeSessions.filter((s) => s.id !== action.sessionId),
+        chatSessions: { ...state.chatSessions, [action.provider]: [action.session, ...current] },
+      };
+    }
+    case "REMOVE_CHAT_SESSION":
+      return {
+        ...state,
+        chatSessions: {
+          ...state.chatSessions,
+          [action.provider]: (state.chatSessions[action.provider] || []).filter((s) => s.id !== action.sessionId),
+        },
         streamBlocks: omitKey(state.streamBlocks, action.sessionId),
       };
-    case "ADD_CODEX_SESSION":
-      if (state.codexSessions.some((s) => s.id === action.session.id)) return state;
-      return { ...state, codexSessions: [action.session, ...state.codexSessions] };
-    case "REMOVE_CODEX_SESSION":
-      return { ...state, codexSessions: state.codexSessions.filter((s) => s.id !== action.sessionId) };
-    case "ADD_CLAUDE_MESSAGE": {
+    case "ADD_CHAT_MESSAGE": {
       const currentBlocks = state.streamBlocks[action.sessionId] || [];
       const enrichedMessage =
         action.message.role === "assistant" && currentBlocks.length > 0
@@ -125,60 +120,38 @@ export function reduceSessionsState(state: State, action: Action): State {
           : action.message;
       return {
         ...state,
-        claudeSessions: state.claudeSessions.map((s) =>
-          s.id === action.sessionId
-            ? {
-                ...s,
-                busy: enrichedMessage.role === "assistant" ? false : s.busy,
-                updated_at: enrichedMessage.timestamp,
-                messages: action.message.optimistic
-                  ? [...(s.messages || []), enrichedMessage]
-                  : mergeIncomingMessage(s.messages || [], enrichedMessage),
-              }
-            : s
-        ),
+        chatSessions: {
+          ...state.chatSessions,
+          [action.provider]: (state.chatSessions[action.provider] || []).map((s) =>
+            s.id === action.sessionId
+              ? {
+                  ...s,
+                  busy: enrichedMessage.role === "assistant" ? false : s.busy,
+                  updated_at: enrichedMessage.timestamp,
+                  messages: action.message.optimistic
+                    ? [...(s.messages || []), enrichedMessage]
+                    : mergeIncomingMessage(s.messages || [], enrichedMessage),
+                }
+              : s
+          ),
+        },
         streamBlocks: omitKey(state.streamBlocks, action.sessionId),
       };
     }
-    case "ADD_CODEX_MESSAGE":
+    case "REMOVE_OPTIMISTIC_MESSAGE":
       return {
         ...state,
-        codexSessions: state.codexSessions.map((s) =>
-          s.id === action.sessionId
-            ? {
-                ...s,
-                busy: action.message.role === "assistant" ? false : s.busy,
-                updated_at: action.message.timestamp,
-                messages: action.message.optimistic
-                  ? [...(s.messages || []), action.message]
-                  : mergeIncomingMessage(s.messages || [], action.message),
-              }
-            : s
-        ),
-      };
-    case "REMOVE_CLAUDE_OPTIMISTIC_MESSAGE":
-      return {
-        ...state,
-        claudeSessions: state.claudeSessions.map((s) =>
-          s.id === action.sessionId
-            ? {
-                ...s,
-                messages: removeOptimisticMessage(s.messages || [], action.optimisticId),
-              }
-            : s
-        ),
-      };
-    case "REMOVE_CODEX_OPTIMISTIC_MESSAGE":
-      return {
-        ...state,
-        codexSessions: state.codexSessions.map((s) =>
-          s.id === action.sessionId
-            ? {
-                ...s,
-                messages: removeOptimisticMessage(s.messages || [], action.optimisticId),
-              }
-            : s
-        ),
+        chatSessions: {
+          ...state.chatSessions,
+          [action.provider]: (state.chatSessions[action.provider] || []).map((s) =>
+            s.id === action.sessionId
+              ? {
+                  ...s,
+                  messages: removeOptimisticMessage(s.messages || [], action.optimisticId),
+                }
+              : s
+          ),
+        },
       };
     case "APPEND_STREAMING": {
       const blocks = [...(state.streamBlocks[action.sessionId] || [])];
@@ -192,20 +165,16 @@ export function reduceSessionsState(state: State, action: Action): State {
     }
     case "CLEAR_STREAMING":
       return { ...state, streamBlocks: omitKey(state.streamBlocks, action.sessionId) };
-    case "SET_CLAUDE_BUSY":
+    case "SET_CHAT_BUSY":
       return {
         ...state,
-        claudeSessions: state.claudeSessions.map((s) =>
-          s.id === action.sessionId ? { ...s, busy: action.busy } : s
-        ),
+        chatSessions: {
+          ...state.chatSessions,
+          [action.provider]: (state.chatSessions[action.provider] || []).map((s) =>
+            s.id === action.sessionId ? { ...s, busy: action.busy } : s
+          ),
+        },
         streamBlocks: action.busy ? state.streamBlocks : omitKey(state.streamBlocks, action.sessionId),
-      };
-    case "SET_CODEX_BUSY":
-      return {
-        ...state,
-        codexSessions: state.codexSessions.map((s) =>
-          s.id === action.sessionId ? { ...s, busy: action.busy } : s
-        ),
       };
     case "SET_LOADING":
       return { ...state, loading: action.loading };
@@ -254,8 +223,7 @@ function omitKey<T>(input: Record<string, T>, key: string) {
 
 export const sessionsInitialState: State = {
   sessions: [],
-  claudeSessions: [],
-  codexSessions: [],
+  chatSessions: {},
   logs: {},
   streamBlocks: {},
   loading: true,
@@ -263,70 +231,44 @@ export const sessionsInitialState: State = {
   loadError: null,
 };
 
-type BootstrapSettledResults = [
-  PromiseSettledResult<Session[]>,
-  PromiseSettledResult<ClaudeSession[]>,
-  PromiseSettledResult<CodexSession[]>,
-];
+async function fetchBootstrapData(): Promise<BootstrapData> {
+  const providers = await api.get<string[]>("/api/chat/providers").catch(() => ["claude", "codex"]);
+  
+  const chatPromises = providers.map(async (p) => {
+    const sessions = await api.get<ChatSession[]>(`/api/chat/${p}/sessions`);
+    return { provider: p, sessions };
+  });
 
-function toBootstrapErrorMessage(reason: unknown) {
-  if (reason instanceof Error && reason.message.trim() !== "") {
-    return reason.message;
+  const [sessionsResult, ...chatResults] = await Promise.allSettled([
+    api.get<Session[]>("/api/sessions"),
+    ...chatPromises,
+  ]);
+
+  const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
+  const chatSessions: Record<string, ChatSession[]> = {};
+  let authRequired = false;
+  const errors: string[] = [];
+
+  if (sessionsResult.status === "rejected") {
+    if (isUnauthorizedError(sessionsResult.reason)) authRequired = true;
+    else errors.push(`RC: ${sessionsResult.reason}`);
   }
 
-  return "unknown error";
-}
-
-export function resolveBootstrapResults(results: BootstrapSettledResults): BootstrapData {
-  const [sessionsResult, claudeResult, codexResult] = results;
-  const anySuccess = results.some((result) => result.status === "fulfilled");
-  const partialFailures = [
-    { label: "RC", result: sessionsResult },
-    { label: "Claude", result: claudeResult },
-    { label: "Codex", result: codexResult },
-  ]
-    .filter(
-      (
-        entry
-      ): entry is {
-        label: string;
-        result: PromiseRejectedResult;
-      } => entry.result.status === "rejected"
-    )
-    .map(({ label, result }) => `${label}: ${toBootstrapErrorMessage(result.reason)}`);
-
-  const loadError =
-    partialFailures.length > 0
-      ? `Some services failed to load: ${partialFailures.join("; ")}`
-      : null;
-
-  if (anySuccess) {
-    return {
-      sessions: sessionsResult.status === "fulfilled" ? sessionsResult.value : [],
-      claudeSessions: claudeResult.status === "fulfilled" ? claudeResult.value : [],
-      codexSessions: codexResult.status === "fulfilled" ? codexResult.value : [],
-      authRequired: false,
-      loadError,
-    };
-  }
-
-  const firstError = results.find((result) => result.status === "rejected");
-  if (firstError?.status === "rejected" && isUnauthorizedError(firstError.reason)) {
-    return {
-      sessions: [],
-      claudeSessions: [],
-      codexSessions: [],
-      authRequired: true,
-      loadError: null,
-    };
-  }
+  chatResults.forEach((res, idx) => {
+    const provider = providers[idx];
+    if (res.status === "fulfilled") {
+      chatSessions[provider] = res.value.sessions;
+    } else {
+      if (isUnauthorizedError(res.reason)) authRequired = true;
+      else errors.push(`${provider}: ${res.reason}`);
+    }
+  });
 
   return {
-    sessions: [],
-    claudeSessions: [],
-    codexSessions: [],
-    authRequired: false,
-    loadError: loadError || "Failed to load dashboard data.",
+    sessions,
+    chatSessions,
+    authRequired,
+    loadError: errors.length > 0 ? `Some services failed to load: ${errors.join("; ")}` : null,
   };
 }
 
@@ -334,14 +276,14 @@ type Actions = {
   startSession: (folder: string) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
   restartSession: (id: string) => Promise<void>;
-  createClaudeSession: (folder: string) => Promise<ClaudeSession>;
+  createChatSession: (provider: string, folder: string) => Promise<ChatSession>;
+  closeChatSession: (provider: string, id: string) => Promise<void>;
+  sendChatMessage: (provider: string, id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
+  runChatCommand: (provider: string, id: string, command: string) => Promise<void>;
+  // Legacy aliases for components not yet fully updated
+  createClaudeSession: (folder: string) => Promise<ChatSession>;
   closeClaudeSession: (id: string) => Promise<void>;
   sendClaudeMessage: (id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
-  sendClaudeCommand: (id: string, command: string) => Promise<void>;
-  createCodexSession: (folder: string) => Promise<CodexSession>;
-  closeCodexSession: (id: string) => Promise<void>;
-  sendCodexMessage: (id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
-  sendCodexCommand: (id: string, command: string) => Promise<void>;
 };
 
 export const SessionsContext = createContext<{
@@ -355,14 +297,13 @@ export const SessionsContext = createContext<{
     startSession: async () => Promise.reject(new Error("not ready")),
     killSession: async () => {},
     restartSession: async () => {},
+    createChatSession: async () => Promise.reject(new Error("not ready")),
+    closeChatSession: async () => {},
+    sendChatMessage: async () => {},
+    runChatCommand: async () => {},
     createClaudeSession: async () => Promise.reject(new Error("not ready")),
     closeClaudeSession: async () => {},
     sendClaudeMessage: async () => {},
-    sendClaudeCommand: async () => {},
-    createCodexSession: async () => Promise.reject(new Error("not ready")),
-    closeCodexSession: async () => {},
-    sendCodexMessage: async () => {},
-    sendCodexCommand: async () => {},
   },
 });
 
@@ -399,16 +340,6 @@ async function runCommand(path: string, command: string) {
   await api.post(path, { command });
 }
 
-async function fetchBootstrapData() {
-  const results = (await Promise.allSettled([
-    api.get<Session[]>("/api/sessions"),
-    api.get<ClaudeSession[]>("/api/claude/sessions"),
-    api.get<CodexSession[]>("/api/codex/sessions"),
-  ])) as BootstrapSettledResults;
-
-  return resolveBootstrapResults(results);
-}
-
 export function useSessionsReducer() {
   const [state, dispatch] = useReducer(reduceSessionsState, sessionsInitialState);
   const { onMessage, subscribe, unsubscribe } = useWs();
@@ -416,8 +347,9 @@ export function useSessionsReducer() {
 
   const applyBootstrapData = (data: BootstrapData) => {
     dispatch({ type: "SET_SESSIONS", sessions: data.sessions });
-    dispatch({ type: "SET_CLAUDE_SESSIONS", sessions: data.claudeSessions });
-    dispatch({ type: "SET_CODEX_SESSIONS", sessions: data.codexSessions });
+    Object.entries(data.chatSessions).forEach(([provider, sessions]) => {
+      dispatch({ type: "SET_CHAT_SESSIONS", provider, sessions });
+    });
     dispatch({ type: "SET_AUTH_REQUIRED", authRequired: data.authRequired });
     dispatch({ type: "SET_LOAD_ERROR", error: data.loadError });
   };
@@ -481,49 +413,37 @@ export function useSessionsReducer() {
       }
     });
 
-    const unsubSessionAdded = onMessage("session_added", (msg: WsMessage) => {
-      if (msg.session) {
-        dispatch({ type: "ADD_SESSION", session: msg.session as Session });
+    const unsubChatAdded = onMessage("chat_session_added", (msg: WsMessage) => {
+      if (msg.session && msg.provider) {
+        dispatch({ type: "ADD_CHAT_SESSION", provider: msg.provider, session: msg.session as ChatSession });
       }
     });
 
-    const unsubSessionRemoved = onMessage("session_removed", (msg: WsMessage) => {
-      if (msg.session_id) {
-        dispatch({ type: "REMOVE_SESSION", sessionId: msg.session_id });
+    const unsubChatRemoved = onMessage("chat_session_removed", (msg: WsMessage) => {
+      if (msg.session_id && msg.provider) {
+        dispatch({ type: "REMOVE_CHAT_SESSION", provider: msg.provider, sessionId: msg.session_id });
       }
     });
 
-    const unsubClaudeAdded = onMessage("claude_session_added", (msg: WsMessage) => {
-      if (msg.session) {
-        dispatch({ type: "ADD_CLAUDE_SESSION", session: msg.session as ClaudeSession });
-      }
-    });
-
-    const unsubClaudeRemoved = onMessage("claude_session_removed", (msg: WsMessage) => {
-      if (msg.session_id) {
-        dispatch({ type: "REMOVE_CLAUDE_SESSION", sessionId: msg.session_id });
-      }
-    });
-
-    const unsubClaudeDelta = onMessage("claude_message_delta", (msg: WsMessage) => {
+    const unsubChatDelta = onMessage("chat_message_delta", (msg: WsMessage) => {
       if (msg.session_id && msg.delta) {
         dispatch({ type: "APPEND_STREAMING", sessionId: msg.session_id, delta: msg.delta });
       }
     });
 
-    const unsubClaudeMsg = onMessage("claude_message", (msg: WsMessage) => {
-      if (msg.session_id && msg.message) {
-        dispatch({ type: "ADD_CLAUDE_MESSAGE", sessionId: msg.session_id, message: msg.message });
+    const unsubChatMsg = onMessage("chat_message", (msg: WsMessage) => {
+      if (msg.session_id && msg.message && msg.provider) {
+        dispatch({ type: "ADD_CHAT_MESSAGE", provider: msg.provider, sessionId: msg.session_id, message: msg.message });
       }
     });
 
-    const unsubClaudeBusy = onMessage("claude_busy", (msg: WsMessage) => {
-      if (msg.session_id && msg.busy !== undefined) {
-        dispatch({ type: "SET_CLAUDE_BUSY", sessionId: msg.session_id, busy: msg.busy });
+    const unsubChatBusy = onMessage("chat_busy", (msg: WsMessage) => {
+      if (msg.session_id && msg.busy !== undefined && msg.provider) {
+        dispatch({ type: "SET_CHAT_BUSY", provider: msg.provider, sessionId: msg.session_id, busy: msg.busy });
       }
     });
 
-    const unsubToolStart = onMessage("claude_tool_start", (msg: WsMessage) => {
+    const unsubToolStart = onMessage("chat_tool_start", (msg: WsMessage) => {
       if (msg.session_id && msg.tool_call) {
         dispatch({
           type: "TOOL_START",
@@ -535,7 +455,7 @@ export function useSessionsReducer() {
       }
     });
 
-    const unsubToolDelta = onMessage("claude_tool_delta", (msg: WsMessage) => {
+    const unsubToolDelta = onMessage("chat_tool_delta", (msg: WsMessage) => {
       if (msg.session_id && msg.tool_call) {
         dispatch({
           type: "TOOL_DELTA",
@@ -546,7 +466,7 @@ export function useSessionsReducer() {
       }
     });
 
-    const unsubToolFinish = onMessage("claude_tool_finish", (msg: WsMessage) => {
+    const unsubToolFinish = onMessage("chat_tool_finish", (msg: WsMessage) => {
       if (msg.session_id && msg.tool_call) {
         dispatch({
           type: "TOOL_FINISH",
@@ -556,48 +476,18 @@ export function useSessionsReducer() {
       }
     });
 
-    const unsubCodexAdded = onMessage("codex_session_added", (msg: WsMessage) => {
-      if (msg.session) {
-        dispatch({ type: "ADD_CODEX_SESSION", session: msg.session as CodexSession });
-      }
-    });
-
-    const unsubCodexRemoved = onMessage("codex_session_removed", (msg: WsMessage) => {
-      if (msg.session_id) {
-        dispatch({ type: "REMOVE_CODEX_SESSION", sessionId: msg.session_id });
-      }
-    });
-
-    const unsubCodexMsg = onMessage("codex_message", (msg: WsMessage) => {
-      if (msg.session_id && msg.message) {
-        dispatch({ type: "ADD_CODEX_MESSAGE", sessionId: msg.session_id, message: msg.message });
-      }
-    });
-
-    const unsubCodexBusy = onMessage("codex_busy", (msg: WsMessage) => {
-      if (msg.session_id && msg.busy !== undefined) {
-        dispatch({ type: "SET_CODEX_BUSY", sessionId: msg.session_id, busy: msg.busy });
-      }
-    });
-
     return () => {
       unsubConnected();
       unsubLog();
       unsubStatus();
-      unsubSessionAdded();
-      unsubSessionRemoved();
-      unsubClaudeAdded();
-      unsubClaudeRemoved();
-      unsubClaudeDelta();
-      unsubClaudeMsg();
-      unsubClaudeBusy();
+      unsubChatAdded();
+      unsubChatRemoved();
+      unsubChatDelta();
+      unsubChatMsg();
+      unsubChatBusy();
       unsubToolStart();
       unsubToolDelta();
       unsubToolFinish();
-      unsubCodexAdded();
-      unsubCodexRemoved();
-      unsubCodexMsg();
-      unsubCodexBusy();
     };
   }, [onMessage]);
 
@@ -620,22 +510,23 @@ export function useSessionsReducer() {
       const sess = await api.post<Session>(`/api/sessions/${id}/restart`);
       dispatch({ type: "UPDATE_SESSION", session: sess });
     },
-    createClaudeSession: async (folder: string) => {
-      const sess = await api.post<ClaudeSession>("/api/claude/sessions", { folder });
-      dispatch({ type: "ADD_CLAUDE_SESSION", session: sess });
+    createChatSession: async (provider: string, folder: string) => {
+      const sess = await api.post<ChatSession>(`/api/chat/${provider}/sessions`, { folder });
+      dispatch({ type: "ADD_CHAT_SESSION", provider, session: sess });
       return sess;
     },
-    closeClaudeSession: async (id: string) => {
-      await api.del(`/api/claude/sessions/${id}`);
-      dispatch({ type: "REMOVE_CLAUDE_SESSION", sessionId: id });
+    closeChatSession: async (provider: string, id: string) => {
+      await api.del(`/api/chat/${provider}/sessions/${id}`);
+      dispatch({ type: "REMOVE_CHAT_SESSION", provider, sessionId: id });
     },
-    sendClaudeMessage: async (id: string, message: string, attachments: DraftAttachment[] = []) => {
+    sendChatMessage: async (provider: string, id: string, message: string, attachments: DraftAttachment[] = []) => {
       const timestamp = new Date().toISOString();
       const optimisticId = createOptimisticMessageId();
-      dispatch({ type: "SET_CLAUDE_BUSY", sessionId: id, busy: true });
+      dispatch({ type: "SET_CHAT_BUSY", provider, sessionId: id, busy: true });
       dispatch({ type: "CLEAR_STREAMING", sessionId: id });
       dispatch({
-        type: "ADD_CLAUDE_MESSAGE",
+        type: "ADD_CHAT_MESSAGE",
+        provider,
         sessionId: id,
         message: {
           role: "user",
@@ -648,24 +539,26 @@ export function useSessionsReducer() {
         },
       });
       try {
-        await sendPrompt(`/api/claude/sessions/${id}/send`, message, attachments);
+        await sendPrompt(`/api/chat/${provider}/sessions/${id}/send`, message, attachments);
       } catch (error) {
         dispatch({
-          type: "REMOVE_CLAUDE_OPTIMISTIC_MESSAGE",
+          type: "REMOVE_OPTIMISTIC_MESSAGE",
+          provider,
           sessionId: id,
           optimisticId,
         });
-        dispatch({ type: "SET_CLAUDE_BUSY", sessionId: id, busy: false });
+        dispatch({ type: "SET_CHAT_BUSY", provider, sessionId: id, busy: false });
         throw error;
       }
     },
-    sendClaudeCommand: async (id: string, command: string) => {
+    runChatCommand: async (provider: string, id: string, command: string) => {
       const timestamp = new Date().toISOString();
       const optimisticId = createOptimisticMessageId();
-      dispatch({ type: "SET_CLAUDE_BUSY", sessionId: id, busy: true });
+      dispatch({ type: "SET_CHAT_BUSY", provider, sessionId: id, busy: true });
       dispatch({ type: "CLEAR_STREAMING", sessionId: id });
       dispatch({
-        type: "ADD_CLAUDE_MESSAGE",
+        type: "ADD_CHAT_MESSAGE",
+        provider,
         sessionId: id,
         message: {
           role: "user",
@@ -680,86 +573,23 @@ export function useSessionsReducer() {
         },
       });
       try {
-        await runCommand(`/api/claude/sessions/${id}/command`, command);
+        await runCommand(`/api/chat/${provider}/sessions/${id}/command`, command);
       } catch (error) {
         dispatch({
-          type: "REMOVE_CLAUDE_OPTIMISTIC_MESSAGE",
+          type: "REMOVE_OPTIMISTIC_MESSAGE",
+          provider,
           sessionId: id,
           optimisticId,
         });
-        dispatch({ type: "SET_CLAUDE_BUSY", sessionId: id, busy: false });
+        dispatch({ type: "SET_CHAT_BUSY", provider, sessionId: id, busy: false });
         throw error;
       }
     },
-    createCodexSession: async (folder: string) => {
-      const sess = await api.post<CodexSession>("/api/codex/sessions", { folder });
-      dispatch({ type: "ADD_CODEX_SESSION", session: sess });
-      return sess;
-    },
-    closeCodexSession: async (id: string) => {
-      await api.del(`/api/codex/sessions/${id}`);
-      dispatch({ type: "REMOVE_CODEX_SESSION", sessionId: id });
-    },
-    sendCodexMessage: async (id: string, message: string, attachments: DraftAttachment[] = []) => {
-      const timestamp = new Date().toISOString();
-      const optimisticId = createOptimisticMessageId();
-      dispatch({ type: "SET_CODEX_BUSY", sessionId: id, busy: true });
-      dispatch({
-        type: "ADD_CODEX_MESSAGE",
-        sessionId: id,
-        message: {
-          role: "user",
-          kind: "text",
-          content: message,
-          timestamp,
-          attachments: toOptimisticAttachments(attachments),
-          optimistic: true,
-          optimistic_id: optimisticId,
-        },
-      });
-      try {
-        await sendPrompt(`/api/codex/sessions/${id}/send`, message, attachments);
-      } catch (error) {
-        dispatch({
-          type: "REMOVE_CODEX_OPTIMISTIC_MESSAGE",
-          sessionId: id,
-          optimisticId,
-        });
-        dispatch({ type: "SET_CODEX_BUSY", sessionId: id, busy: false });
-        throw error;
-      }
-    },
-    sendCodexCommand: async (id: string, command: string) => {
-      const timestamp = new Date().toISOString();
-      const optimisticId = createOptimisticMessageId();
-      dispatch({ type: "SET_CODEX_BUSY", sessionId: id, busy: true });
-      dispatch({
-        type: "ADD_CODEX_MESSAGE",
-        sessionId: id,
-        message: {
-          role: "user",
-          kind: "bash",
-          content: command,
-          timestamp,
-          command: {
-            command,
-          },
-          optimistic: true,
-          optimistic_id: optimisticId,
-        },
-      });
-      try {
-        await runCommand(`/api/codex/sessions/${id}/command`, command);
-      } catch (error) {
-        dispatch({
-          type: "REMOVE_CODEX_OPTIMISTIC_MESSAGE",
-          sessionId: id,
-          optimisticId,
-        });
-        dispatch({ type: "SET_CODEX_BUSY", sessionId: id, busy: false });
-        throw error;
-      }
-    },
+    // Legacy aliases
+    createClaudeSession: async (folder: string) => actions.createChatSession("claude", folder),
+    closeClaudeSession: async (id: string) => actions.closeChatSession("claude", id),
+    sendClaudeMessage: async (id: string, message: string, attachments: DraftAttachment[] = []) => 
+      actions.sendChatMessage("claude", id, message, attachments),
   };
 
   return { state, dispatch, actions };

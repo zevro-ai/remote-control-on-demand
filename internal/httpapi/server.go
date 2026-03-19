@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
@@ -23,8 +24,7 @@ import (
 type Server struct {
 	cfg        config.APIConfig
 	sessionMgr *session.Manager
-	claudeMgr  *claudechat.Manager
-	codexMgr   *codex.Manager
+	providers  map[string]chat.Provider
 	hub        *Hub
 	httpServer *http.Server
 	uploadDir  string
@@ -33,11 +33,18 @@ type Server struct {
 
 func NewServer(cfg config.APIConfig, sessionMgr *session.Manager, claudeMgr *claudechat.Manager, codexMgr *codex.Manager) *Server {
 	spaFS := dashboard.FS()
+	providers := make(map[string]chat.Provider)
+	if claudeMgr != nil {
+		providers["claude"] = claudeMgr
+	}
+	if codexMgr != nil {
+		providers["codex"] = codexMgr
+	}
+
 	return &Server{
 		cfg:        cfg,
 		sessionMgr: sessionMgr,
-		claudeMgr:  claudeMgr,
-		codexMgr:   codexMgr,
+		providers:  providers,
 		hub:        newHub(),
 		uploadDir:  filepath.Join(".codexbot", "uploads"),
 		spaFS:      spaFS,
@@ -47,28 +54,21 @@ func NewServer(cfg config.APIConfig, sessionMgr *session.Manager, claudeMgr *cla
 func (s *Server) Start() {
 	mux := http.NewServeMux()
 
-	// Claude RC sessions
+	// Remote Control sessions (legacy/generic)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/restart", s.handleRestartSession)
 	mux.HandleFunc("GET /api/sessions/{id}/logs", s.handleSessionLogs)
 
-	// Claude chat sessions
-	mux.HandleFunc("GET /api/claude/sessions", s.handleListClaudeSessions)
-	mux.HandleFunc("POST /api/claude/sessions", s.handleCreateClaudeSession)
-	mux.HandleFunc("POST /api/claude/sessions/{id}/send", s.handleSendClaudeMessage)
-	mux.HandleFunc("POST /api/claude/sessions/{id}/command", s.handleRunClaudeCommand)
-	mux.HandleFunc("GET /api/claude/sessions/{id}/messages", s.handleClaudeMessages)
-	mux.HandleFunc("DELETE /api/claude/sessions/{id}", s.handleDeleteClaudeSession)
-
-	// Codex sessions
-	mux.HandleFunc("GET /api/codex/sessions", s.handleListCodexSessions)
-	mux.HandleFunc("POST /api/codex/sessions", s.handleCreateCodexSession)
-	mux.HandleFunc("POST /api/codex/sessions/{id}/send", s.handleSendCodexMessage)
-	mux.HandleFunc("POST /api/codex/sessions/{id}/command", s.handleRunCodexCommand)
-	mux.HandleFunc("GET /api/codex/sessions/{id}/messages", s.handleCodexMessages)
-	mux.HandleFunc("DELETE /api/codex/sessions/{id}", s.handleDeleteCodexSession)
+	// Generic Chat Provider API
+	mux.HandleFunc("GET /api/chat/providers", s.handleListProviders)
+	mux.HandleFunc("GET /api/chat/{provider}/sessions", s.handleListChatSessions)
+	mux.HandleFunc("POST /api/chat/{provider}/sessions", s.handleCreateChatSession)
+	mux.HandleFunc("GET /api/chat/{provider}/sessions/{id}/messages", s.handleGetChatMessages)
+	mux.HandleFunc("POST /api/chat/{provider}/sessions/{id}/send", s.handleSendChatMessage)
+	mux.HandleFunc("POST /api/chat/{provider}/sessions/{id}/command", s.handleRunChatCommand)
+	mux.HandleFunc("DELETE /api/chat/{provider}/sessions/{id}", s.handleDeleteChatSession)
 
 	// Folders
 	mux.HandleFunc("GET /api/folders", s.handleListFolders)
@@ -84,7 +84,7 @@ func (s *Server) Start() {
 	handler = authMiddleware(s.cfg.Token, handler)
 	handler = corsMiddleware(s.cfg.Token, handler)
 
-	s.hub.start(s.sessionMgr, s.claudeMgr, s.codexMgr)
+	s.hub.start(s.sessionMgr, s.providers)
 
 	s.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.cfg.Port),

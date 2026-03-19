@@ -7,10 +7,12 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 )
 
 func TestBuildCodexArgsNewSessionDangerousBypass(t *testing.T) {
-	sess := &Session{RelName: "remote-control-on-demand"}
+	sess := &chat.Session{RelName: "remote-control-on-demand"}
 
 	got := buildCodexArgs(sess, "Wystaw PR", nil, "workspace-write", "gpt-5", true)
 	want := []string{
@@ -28,7 +30,7 @@ func TestBuildCodexArgsNewSessionDangerousBypass(t *testing.T) {
 }
 
 func TestBuildCodexArgsNewSessionSandboxed(t *testing.T) {
-	sess := &Session{RelName: "remote-control-on-demand"}
+	sess := &chat.Session{RelName: "remote-control-on-demand"}
 
 	got := buildCodexArgs(sess, "Wystaw PR", nil, "workspace-write", "gpt-5", false)
 	want := []string{
@@ -47,9 +49,9 @@ func TestBuildCodexArgsNewSessionSandboxed(t *testing.T) {
 }
 
 func TestBuildCodexArgsNewSessionWithImages(t *testing.T) {
-	sess := &Session{RelName: "remote-control-on-demand"}
+	sess := &chat.Session{RelName: "remote-control-on-demand"}
 
-	got := buildCodexArgs(sess, "Opisz obrazek", []Attachment{
+	got := buildCodexArgs(sess, "Opisz obrazek", []chat.Attachment{
 		{Path: "/tmp/one.png"},
 		{Path: "/tmp/two.jpg"},
 	}, "workspace-write", "gpt-5", false)
@@ -73,7 +75,7 @@ func TestBuildCodexArgsNewSessionWithImages(t *testing.T) {
 }
 
 func TestBuildCodexArgsResumeDangerousBypass(t *testing.T) {
-	sess := &Session{
+	sess := &chat.Session{
 		RelName:  "remote-control-on-demand",
 		ThreadID: "thread-123",
 	}
@@ -96,12 +98,12 @@ func TestBuildCodexArgsResumeDangerousBypass(t *testing.T) {
 }
 
 func TestBuildCodexArgsResumeWithImages(t *testing.T) {
-	sess := &Session{
+	sess := &chat.Session{
 		RelName:  "remote-control-on-demand",
 		ThreadID: "thread-123",
 	}
 
-	got := buildCodexArgs(sess, "Opisz obrazek", []Attachment{
+	got := buildCodexArgs(sess, "Opisz obrazek", []chat.Attachment{
 		{Path: "/tmp/one.png"},
 		{Path: "/tmp/two.jpg"},
 	}, "workspace-write", "gpt-5", false)
@@ -132,14 +134,15 @@ func TestRunCommandPersistsBashMessages(t *testing.T) {
 	}
 
 	mgr := NewManager(baseDir, "")
-	sess, err := mgr.Create("demo")
+	sess, err := mgr.CreateSession("demo")
 	if err != nil {
-		t.Fatalf("Create(): %v", err)
+		t.Fatalf("CreateSession(): %v", err)
 	}
 
-	updated, result, err := mgr.RunCommand(context.Background(), sess.ID, "printf 'hello from bash'")
+	// We test mgr.Run because it returns the session, RunCommand only returns error in PoC
+	updated, result, err := mgr.Run(context.Background(), sess.ID, "printf 'hello from bash'")
 	if err != nil {
-		t.Fatalf("RunCommand(): %v", err)
+		t.Fatalf("Run(): %v", err)
 	}
 	if result.ExitCode != 0 {
 		t.Fatalf("ExitCode = %d, want 0", result.ExitCode)
@@ -166,17 +169,17 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 	}
 
 	mgr := NewManager(baseDir, "")
-	sess, err := mgr.Create("demo")
+	sess, err := mgr.CreateSession("demo")
 	if err != nil {
-		t.Fatalf("Create(): %v", err)
+		t.Fatalf("CreateSession(): %v", err)
 	}
 
 	previousRunCodexFn := runCodexFn
 	runCodexFn = func(
 		ctx context.Context,
-		sess *Session,
+		sess *chat.Session,
 		prompt string,
-		attachments []Attachment,
+		attachments []chat.Attachment,
 		sandbox,
 		model string,
 		dangerouslyBypassSandbox bool,
@@ -187,9 +190,9 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 		runCodexFn = previousRunCodexFn
 	})
 
-	var events []Message
-	mgr.Subscribe(func(event Event) {
-		if event.Type == EventMessageReceived && event.Message != nil {
+	var events []chat.Message
+	mgr.Subscribe(func(event chat.Event) {
+		if event.Type == chat.EventMessageReceived && event.Message != nil {
 			events = append(events, *event.Message)
 		}
 	})
@@ -223,21 +226,21 @@ func TestRunCommandEmitsUserAndAssistantEvents(t *testing.T) {
 	}
 
 	mgr := NewManager(baseDir, "")
-	sess, err := mgr.Create("demo")
+	sess, err := mgr.CreateSession("demo")
 	if err != nil {
-		t.Fatalf("Create(): %v", err)
+		t.Fatalf("CreateSession(): %v", err)
 	}
 
-	var events []Message
-	mgr.Subscribe(func(event Event) {
-		if event.Type == EventMessageReceived && event.Message != nil {
+	var events []chat.Message
+	mgr.Subscribe(func(event chat.Event) {
+		if event.Type == chat.EventMessageReceived && event.Message != nil {
 			events = append(events, *event.Message)
 		}
 	})
 
-	_, result, err := mgr.RunCommand(context.Background(), sess.ID, "printf 'hello from bash'")
+	_, result, err := mgr.Run(context.Background(), sess.ID, "printf 'hello from bash'")
 	if err != nil {
-		t.Fatalf("RunCommand(): %v", err)
+		t.Fatalf("Run(): %v", err)
 	}
 	if result.Output != "hello from bash" {
 		t.Fatalf("output = %q", result.Output)
@@ -263,17 +266,17 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 	}
 
 	mgr := NewManager(baseDir, "")
-	first, err := mgr.Create("one")
+	first, err := mgr.CreateSession("one")
 	if err != nil {
-		t.Fatalf("Create(one): %v", err)
+		t.Fatalf("CreateSession(one): %v", err)
 	}
-	second, err := mgr.Create("two")
+	second, err := mgr.CreateSession("two")
 	if err != nil {
-		t.Fatalf("Create(two): %v", err)
+		t.Fatalf("CreateSession(two): %v", err)
 	}
-	third, err := mgr.Create("three")
+	third, err := mgr.CreateSession("three")
 	if err != nil {
-		t.Fatalf("Create(three): %v", err)
+		t.Fatalf("CreateSession(three): %v", err)
 	}
 
 	mgr.mu.Lock()
@@ -283,8 +286,8 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 	mgr.activeSessionID = third.ID
 	mgr.mu.Unlock()
 
-	if err := mgr.Close(third.ID); err != nil {
-		t.Fatalf("Close(): %v", err)
+	if err := mgr.DeleteSession(third.ID); err != nil {
+		t.Fatalf("DeleteSession(): %v", err)
 	}
 
 	if mgr.activeSessionID != second.ID {

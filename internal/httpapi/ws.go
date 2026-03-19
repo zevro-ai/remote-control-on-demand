@@ -8,8 +8,7 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
-	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
-	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 )
 
@@ -26,8 +25,7 @@ type Hub struct {
 	mu           sync.Mutex
 	clients      map[*wsClient]bool
 	unsubSession func()
-	unsubClaude  func()
-	unsubCodex   func()
+	unsubChat    []func()
 }
 
 func newHub() *Hub {
@@ -36,122 +34,81 @@ func newHub() *Hub {
 	}
 }
 
-func (h *Hub) start(sessionMgr *session.Manager, claudeMgr *claudechat.Manager, codexMgr *codex.Manager) {
+func (h *Hub) start(sessionMgr *session.Manager, providers map[string]chat.Provider) {
 	h.unsubSession = sessionMgr.Subscribe(func(n session.Notification) {
 		h.broadcast(wsMessage{Type: "notification", Line: n.Message})
 	})
 
-	h.unsubClaude = claudeMgr.Subscribe(func(e claudechat.Event) {
-		switch e.Type {
-		case claudechat.EventSessionCreated:
-			h.broadcast(wsMessage{
-				Type:      "claude_session_added",
-				SessionID: e.SessionID,
-				Session:   toClaudeSessionResponse(e.Session),
-			})
-		case claudechat.EventSessionClosed:
-			h.broadcast(wsMessage{
-				Type:      "claude_session_removed",
-				SessionID: e.SessionID,
-			})
-		case claudechat.EventMessageReceived:
-			if e.Message != nil {
-				h.broadcast(wsMessage{
-					Type:      "claude_message",
-					SessionID: e.SessionID,
-					Message:   toClaudeMessagePayload(*e.Message),
-				})
-			}
-		case claudechat.EventMessageDelta:
-			h.broadcast(wsMessage{
-				Type:      "claude_message_delta",
-				SessionID: e.SessionID,
-				Delta:     e.Delta,
-			})
-		case claudechat.EventBusyChanged:
-			busy := e.Busy
-			h.broadcast(wsMessage{
-				Type:      "claude_busy",
-				SessionID: e.SessionID,
-				Busy:      &busy,
-			})
-		case claudechat.EventToolUseStart:
-			if e.ToolCall != nil {
-				h.broadcast(wsMessage{
-					Type:      "claude_tool_start",
-					SessionID: e.SessionID,
-					ToolCall: &toolCallPayload{
-						Index: e.ToolCall.Index,
-						ID:    e.ToolCall.ID,
-						Name:  e.ToolCall.Name,
-					},
-				})
-			}
-		case claudechat.EventToolUseDelta:
-			if e.ToolCall != nil {
-				h.broadcast(wsMessage{
-					Type:      "claude_tool_delta",
-					SessionID: e.SessionID,
-					ToolCall: &toolCallPayload{
-						Index:       e.ToolCall.Index,
-						PartialJSON: e.ToolCall.PartialJSON,
-					},
-				})
-			}
-		case claudechat.EventToolUseFinish:
-			if e.ToolCall != nil {
-				h.broadcast(wsMessage{
-					Type:      "claude_tool_finish",
-					SessionID: e.SessionID,
-					ToolCall: &toolCallPayload{
-						Index: e.ToolCall.Index,
-					},
-				})
-			}
-		}
-	})
+	for id, p := range providers {
+		providerID := id
+		unsub := p.Subscribe(func(e chat.Event) {
+			h.handleChatEvent(providerID, e)
+		})
+		h.unsubChat = append(h.unsubChat, unsub)
+	}
+}
 
-	h.unsubCodex = codexMgr.Subscribe(func(e codex.Event) {
-		switch e.Type {
-		case codex.EventSessionCreated:
-			h.broadcast(wsMessage{
-				Type:      "codex_session_added",
-				SessionID: e.SessionID,
-				Session:   toCodexSessionResponse(e.Session),
-			})
-		case codex.EventSessionClosed:
-			h.broadcast(wsMessage{
-				Type:      "codex_session_removed",
-				SessionID: e.SessionID,
-			})
-		case codex.EventMessageReceived:
-			if e.Message != nil {
-				h.broadcast(wsMessage{
-					Type:      "codex_message",
-					SessionID: e.SessionID,
-					Message:   toCodexMessagePayload(*e.Message),
-				})
-			}
-		case codex.EventBusyChanged:
-			busy := e.Busy
-			h.broadcast(wsMessage{
-				Type:      "codex_busy",
-				SessionID: e.SessionID,
-				Busy:      &busy,
-			})
+func (h *Hub) handleChatEvent(providerID string, e chat.Event) {
+	msg := wsMessage{
+		Provider:  providerID,
+		SessionID: e.SessionID,
+	}
+
+	switch e.Type {
+	case chat.EventSessionCreated:
+		msg.Type = "chat_session_added"
+		msg.Session = toChatSessionResponse(e.Session, providerID)
+	case chat.EventSessionClosed:
+		msg.Type = "chat_session_removed"
+	case chat.EventMessageReceived:
+		if e.Message != nil {
+			msg.Type = "chat_message"
+			msg.Message = toMessagePayload(*e.Message)
 		}
-	})
+	case chat.EventMessageDelta:
+		msg.Type = "chat_message_delta"
+		msg.Delta = e.Delta
+	case chat.EventBusyChanged:
+		msg.Type = "chat_busy"
+		busy := e.Busy
+		msg.Busy = &busy
+	case chat.EventToolUseStart:
+		if e.ToolCall != nil {
+			msg.Type = "chat_tool_start"
+			msg.ToolCall = &toolCallPayload{
+				Index: e.ToolCall.Index,
+				ID:    e.ToolCall.ID,
+				Name:  e.ToolCall.Name,
+			}
+		}
+	case chat.EventToolUseDelta:
+		if e.ToolCall != nil {
+			msg.Type = "chat_tool_delta"
+			msg.ToolCall = &toolCallPayload{
+				Index:       e.ToolCall.Index,
+				PartialJSON: e.ToolCall.PartialJSON,
+			}
+		}
+	case chat.EventToolUseFinish:
+		if e.ToolCall != nil {
+			msg.Type = "chat_tool_finish"
+			msg.ToolCall = &toolCallPayload{
+				Index: e.ToolCall.Index,
+			}
+		}
+	default:
+		return
+	}
+
+	h.broadcast(msg)
 }
 
 func (h *Hub) stop() {
 	if h.unsubSession != nil {
 		h.unsubSession()
 	}
-	if h.unsubClaude != nil {
-		h.unsubClaude()
-	}
-	if h.unsubCodex != nil {
-		h.unsubCodex()
+	for _, unsub := range h.unsubChat {
+		unsub()
 	}
 	h.mu.Lock()
 	for c := range h.clients {
@@ -190,31 +147,6 @@ func (h *Hub) broadcast(msg wsMessage) {
 		case c.send <- data:
 		default:
 			// Client too slow, drop message
-		}
-	}
-}
-
-func (h *Hub) broadcastToSession(sessionID string, msg wsMessage) {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-
-	h.mu.Lock()
-	clients := make([]*wsClient, 0)
-	for c := range h.clients {
-		c.subsMu.Lock()
-		if c.subs[sessionID] {
-			clients = append(clients, c)
-		}
-		c.subsMu.Unlock()
-	}
-	h.mu.Unlock()
-
-	for _, c := range clients {
-		select {
-		case c.send <- data:
-		default:
 		}
 	}
 }
