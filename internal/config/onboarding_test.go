@@ -94,6 +94,53 @@ func TestRunOnboardingCanLeaveDashboardDisabled(t *testing.T) {
 	}
 }
 
+func TestRunOnboardingEnablesDashboardWithoutToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	cfg, output, exitCode, err := runOnboardingForTest(t, onboardingTestCase{
+		configPath: configPath,
+		cwd:        tmpDir,
+		stdin:      "telegram-token\n123456\n\n\n",
+		selections: []int{1, 1, 0, 1, 0},
+	})
+	if err != nil {
+		t.Fatalf("RunOnboarding returned error: %v", err)
+	}
+	if exitCode != -1 {
+		t.Fatalf("expected onboarding not to exit, got exit code %d", exitCode)
+	}
+
+	if cfg.API.Port != defaultDashboardPort {
+		t.Fatalf("expected dashboard port %d, got %d", defaultDashboardPort, cfg.API.Port)
+	}
+	if cfg.API.Token != "" {
+		t.Fatalf("expected no dashboard token, got %q", cfg.API.Token)
+	}
+
+	if !strings.Contains(output, "Dashboard URL: http://127.0.0.1:3001/") {
+		t.Fatalf("expected output to include dashboard URL, got %q", output)
+	}
+	if strings.Contains(output, "token protected") {
+		t.Fatalf("did not expect token-protected output, got %q", output)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading saved config: %v", err)
+	}
+	configYAML := string(data)
+	if !strings.Contains(configYAML, "api:\n") {
+		t.Fatalf("expected saved config to include api section, got %q", configYAML)
+	}
+	if !strings.Contains(configYAML, "port: 3001") {
+		t.Fatalf("expected saved config to include dashboard port, got %q", configYAML)
+	}
+	if strings.Contains(configYAML, "api:\n    port: 3001\n    token:") {
+		t.Fatalf("expected saved config to omit dashboard token, got %q", configYAML)
+	}
+}
+
 type onboardingTestCase struct {
 	configPath     string
 	cwd            string
