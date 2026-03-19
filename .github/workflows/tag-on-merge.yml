@@ -20,7 +20,7 @@ jobs:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ github.token }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Calculate and Push Tag
         env:
