@@ -116,7 +116,7 @@ func selectFromList(labels []string, defaultIdx int) (int, error) {
 			fmt.Print(cursorShow)
 			term.Restore(fd, oldState)
 			fmt.Println()
-			os.Exit(1)
+			onboardingExit(1)
 		}
 
 		// Enter
@@ -463,7 +463,7 @@ func dashboardURL(port int) string {
 }
 
 func generateOnboardingToken() (string, error) {
-	buf := make([]byte, 16)
+	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}

@@ -12,8 +12,8 @@ import (
 )
 
 type APIConfig struct {
-	Port  int    `yaml:"port"`  // default 0 = disabled
-	Token string `yaml:"token"` // optional bearer token
+	Port  int    `yaml:"port"`            // default 0 = disabled
+	Token string `yaml:"token,omitempty"` // optional bearer token
 }
 
 type Config struct {
