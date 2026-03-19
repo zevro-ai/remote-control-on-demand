@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { AgentType } from "../api/types";
 import { FolderPicker } from "./FolderPicker";
 
 interface Props {
@@ -15,7 +14,7 @@ export function CreateSessionModal({
   onCreateClaude,
   onCreateCodex,
 }: Props) {
-  const [agent, setAgent] = useState<AgentType>("claude");
+  const [agent, setAgent] = useState<string>("claude");
 
   const handleSelect = async (folder: string) => {
     if (agent === "claude") {

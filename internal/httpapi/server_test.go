@@ -42,18 +42,16 @@ func setupTestServer(t *testing.T) (*Server, *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/restart", srv.handleRestartSession)
 	mux.HandleFunc("GET /api/folders", srv.handleListFolders)
-	mux.HandleFunc("GET /api/claude/sessions", srv.handleListClaudeSessions)
-	mux.HandleFunc("POST /api/claude/sessions", srv.handleCreateClaudeSession)
-	mux.HandleFunc("POST /api/claude/sessions/{id}/send", srv.handleSendClaudeMessage)
-	mux.HandleFunc("POST /api/claude/sessions/{id}/command", srv.handleRunClaudeCommand)
-	mux.HandleFunc("GET /api/claude/sessions/{id}/messages", srv.handleClaudeMessages)
-	mux.HandleFunc("DELETE /api/claude/sessions/{id}", srv.handleDeleteClaudeSession)
-	mux.HandleFunc("GET /api/codex/sessions", srv.handleListCodexSessions)
-	mux.HandleFunc("POST /api/codex/sessions", srv.handleCreateCodexSession)
-	mux.HandleFunc("POST /api/codex/sessions/{id}/send", srv.handleSendCodexMessage)
-	mux.HandleFunc("POST /api/codex/sessions/{id}/command", srv.handleRunCodexCommand)
-	mux.HandleFunc("GET /api/codex/sessions/{id}/messages", srv.handleCodexMessages)
-	mux.HandleFunc("DELETE /api/codex/sessions/{id}", srv.handleDeleteCodexSession)
+
+	// Generic Chat Provider API
+	mux.HandleFunc("GET /api/chat/providers", srv.handleListProviders)
+	mux.HandleFunc("GET /api/chat/{provider}/sessions", srv.handleListChatSessions)
+	mux.HandleFunc("POST /api/chat/{provider}/sessions", srv.handleCreateChatSession)
+	mux.HandleFunc("GET /api/chat/{provider}/sessions/{id}/messages", srv.handleGetChatMessages)
+	mux.HandleFunc("POST /api/chat/{provider}/sessions/{id}/send", srv.handleSendChatMessage)
+	mux.HandleFunc("POST /api/chat/{provider}/sessions/{id}/command", srv.handleRunChatCommand)
+	mux.HandleFunc("DELETE /api/chat/{provider}/sessions/{id}", srv.handleDeleteChatSession)
+
 	mux.HandleFunc("GET /api/uploads/{name}", srv.handleUpload)
 
 	return srv, mux
@@ -223,7 +221,7 @@ func TestListFolders(t *testing.T) {
 func TestListCodexSessions_Empty(t *testing.T) {
 	_, mux := setupTestServer(t)
 
-	req := httptest.NewRequest("GET", "/api/codex/sessions", nil)
+	req := httptest.NewRequest("GET", "/api/chat/codex/sessions", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -231,7 +229,7 @@ func TestListCodexSessions_Empty(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 
-	var sessions []codexSessionResponse
+	var sessions []chatSessionResponse
 	if err := json.NewDecoder(rr.Body).Decode(&sessions); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +241,7 @@ func TestListCodexSessions_Empty(t *testing.T) {
 func TestDeleteCodexSession_NotFound(t *testing.T) {
 	_, mux := setupTestServer(t)
 
-	req := httptest.NewRequest("DELETE", "/api/codex/sessions/nonexistent", nil)
+	req := httptest.NewRequest("DELETE", "/api/chat/codex/sessions/nonexistent", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -304,9 +302,9 @@ func TestDeleteCodexSession_CleansUpAttachments(t *testing.T) {
 	if err := codexMgr.Restore(); err != nil {
 		t.Fatalf("Restore(): %v", err)
 	}
-	srv.codexMgr = codexMgr
+	srv.providers["codex"] = codexMgr
 
-	req := httptest.NewRequest("DELETE", "/api/codex/sessions/codex-1", nil)
+	req := httptest.NewRequest("DELETE", "/api/chat/codex/sessions/codex-1", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -365,7 +363,7 @@ func TestSendClaudeMessage_NotFoundReturns404(t *testing.T) {
 
 	req := httptest.NewRequest(
 		"POST",
-		"/api/claude/sessions/missing/send",
+		"/api/chat/claude/sessions/missing/send",
 		bytes.NewBufferString(`{"message":"hello"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -382,14 +380,14 @@ func TestSendClaudeMessage_RejectsMultipartWithoutWritingUploads(t *testing.T) {
 
 	baseDir := t.TempDir()
 	claudeMgr := claudechat.NewManager(baseDir, "")
-	srv.claudeMgr = claudeMgr
+	srv.providers["claude"] = claudeMgr
 
 	repoDir := filepath.Join(baseDir, "demo")
 	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0755); err != nil {
 		t.Fatalf("MkdirAll(.git): %v", err)
 	}
 
-	sess, err := srv.claudeMgr.Create("demo")
+	sess, err := srv.providers["claude"].CreateSession("demo")
 	if err != nil {
 		t.Fatalf("Create(): %v", err)
 	}
@@ -417,7 +415,7 @@ func TestSendClaudeMessage_RejectsMultipartWithoutWritingUploads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest("POST", "/api/claude/sessions/"+sess.ID+"/send", &body)
+	req := httptest.NewRequest("POST", "/api/chat/claude/sessions/"+sess.ID+"/send", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -495,9 +493,9 @@ func TestDeleteClaudeSession_CleansUpAttachments(t *testing.T) {
 	if err := claudeMgr.Restore(); err != nil {
 		t.Fatalf("Restore(): %v", err)
 	}
-	srv.claudeMgr = claudeMgr
+	srv.providers["claude"] = claudeMgr
 
-	req := httptest.NewRequest("DELETE", "/api/claude/sessions/claude-1", nil)
+	req := httptest.NewRequest("DELETE", "/api/chat/claude/sessions/claude-1", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -514,7 +512,7 @@ func TestSendCodexMessage_NotFoundReturns404(t *testing.T) {
 
 	req := httptest.NewRequest(
 		"POST",
-		"/api/codex/sessions/missing/send",
+		"/api/chat/codex/sessions/missing/send",
 		bytes.NewBufferString(`{"message":"hello"}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -599,7 +597,7 @@ func TestWebSocket_Connect(t *testing.T) {
 	codexMgr := codex.NewManager(t.TempDir(), "")
 
 	srv := NewServer(config.APIConfig{}, sessionMgr, claudeMgr, codexMgr)
-	srv.hub.start(sessionMgr, claudeMgr, codexMgr)
+	srv.hub.start(sessionMgr, srv.providers)
 	defer srv.hub.stop()
 
 	mux := http.NewServeMux()
@@ -623,7 +621,7 @@ func TestWebSocket_RejectsCrossOrigin(t *testing.T) {
 	codexMgr := codex.NewManager(t.TempDir(), "")
 
 	srv := NewServer(config.APIConfig{}, sessionMgr, claudeMgr, codexMgr)
-	srv.hub.start(sessionMgr, claudeMgr, codexMgr)
+	srv.hub.start(sessionMgr, srv.providers)
 	defer srv.hub.stop()
 
 	mux := http.NewServeMux()
@@ -728,7 +726,7 @@ func TestParseSendMessageRequestMultipart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest("POST", "/api/codex/sessions/test/send", &body)
+	req := httptest.NewRequest("POST", "/api/chat/codex/sessions/test/send", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	message, attachments, err := srv.parseSendMessageRequest(req, "sess-1")
@@ -780,7 +778,7 @@ func TestParseMultipartSendMessage_CleansUpEarlierFilesOnLaterFailure(t *testing
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest("POST", "/api/codex/sessions/test/send", &body)
+	req := httptest.NewRequest("POST", "/api/chat/codex/sessions/test/send", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	_, _, err = srv.parseSendMessageRequest(req, "sess-1")
@@ -819,7 +817,7 @@ func TestSaveAttachmentRejectsOversizeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest("POST", "/api/codex/sessions/test/send", &body)
+	req := httptest.NewRequest("POST", "/api/chat/codex/sessions/test/send", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	if err := req.ParseMultipartForm(maxUploadBytes); err != nil {
 		t.Fatalf("ParseMultipartForm(): %v", err)
@@ -883,7 +881,7 @@ func TestSendCodexMessage_CleansUpAttachmentsOnManagerError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest("POST", "/api/codex/sessions/missing/send", &body)
+	req := httptest.NewRequest("POST", "/api/chat/codex/sessions/missing/send", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -906,7 +904,7 @@ func TestSendCodexMessage_CleansUpAttachmentsOnManagerError(t *testing.T) {
 func TestCreateClaudeSession_InvalidFolderReturnsBadRequest(t *testing.T) {
 	_, mux := setupTestServer(t)
 
-	req := httptest.NewRequest("POST", "/api/claude/sessions", bytes.NewBufferString(`{"folder":"missing"}`))
+	req := httptest.NewRequest("POST", "/api/chat/claude/sessions", bytes.NewBufferString(`{"folder":"missing"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -919,7 +917,7 @@ func TestCreateClaudeSession_InvalidFolderReturnsBadRequest(t *testing.T) {
 func TestDeleteClaudeSession_NotFound(t *testing.T) {
 	_, mux := setupTestServer(t)
 
-	req := httptest.NewRequest("DELETE", "/api/claude/sessions/nonexistent", nil)
+	req := httptest.NewRequest("DELETE", "/api/chat/claude/sessions/nonexistent", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 

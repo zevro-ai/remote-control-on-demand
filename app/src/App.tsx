@@ -23,21 +23,20 @@ export default function App() {
       return;
     }
 
-    const sessions =
-      focusedPanel.type === "claude" ? state.claudeSessions : state.codexSessions;
+    const sessions = state.chatSessions[focusedPanel.type] || [];
     const exists = sessions.some((session) => session.id === focusedPanel.sessionId);
     if (!exists) {
       clearFocus();
     }
-  }, [clearFocus, focusedPanel, state.claudeSessions, state.codexSessions]);
+  }, [clearFocus, focusedPanel, state.chatSessions]);
 
   const openCreatedClaude = async (folder: string) => {
-    const session = await actions.createClaudeSession(folder);
+    const session = await actions.createChatSession("claude", folder);
     focusPanel(session.id, "claude");
   };
 
   const openCreatedCodex = async (folder: string) => {
-    const session = await actions.createCodexSession(folder);
+    const session = await actions.createChatSession("codex", folder);
     focusPanel(session.id, "codex");
   };
 
@@ -45,8 +44,7 @@ export default function App() {
     <SessionsContext.Provider value={{ state, dispatch, actions }}>
       <div className="app-shell">
         <Sidebar
-          claudeSessions={state.claudeSessions}
-          codexSessions={state.codexSessions}
+          chatSessions={state.chatSessions}
           connected={connected}
           focusedPanel={focusedPanel}
           onNewSession={() => setShowModal(true)}
@@ -73,8 +71,7 @@ export default function App() {
             </div>
           ) : (
             <PanelLayout
-              claudeSessions={state.claudeSessions}
-              codexSessions={state.codexSessions}
+              chatSessions={state.chatSessions}
               focusedPanel={focusedPanel}
               density={density}
               onDensityChange={setDensity}

@@ -1,5 +1,4 @@
 export type SessionStatus = "running" | "stopped" | "crashed";
-export type AgentType = "claude" | "codex";
 export type MessageKind = "text" | "bash" | "bash_result";
 
 export interface MessageAttachment {
@@ -32,7 +31,7 @@ export interface Session {
   folder: string;
   rel_name: string;
   status: SessionStatus;
-  agent: AgentType;
+  agent: string; // Provider ID (e.g., "claude", "codex")
   url?: string;
   pid?: number;
   started_at: string;
@@ -52,11 +51,11 @@ export interface Message {
   optimistic_id?: string;
 }
 
-export interface ClaudeSession {
+export interface ChatSession {
   id: string;
   folder: string;
   rel_name: string;
-  agent: "claude";
+  agent: string; // Provider ID
   thread_id?: string;
   busy: boolean;
   created_at: string;
@@ -64,17 +63,9 @@ export interface ClaudeSession {
   messages?: Message[];
 }
 
-export interface CodexSession {
-  id: string;
-  folder: string;
-  rel_name: string;
-  agent: "codex";
-  thread_id?: string;
-  busy: boolean;
-  created_at: string;
-  updated_at: string;
-  messages?: Message[];
-}
+// Deprecated aliases for backward compatibility during refactoring if needed
+export type ClaudeSession = ChatSession;
+export type CodexSession = ChatSession;
 
 export type StreamBlock =
   | { type: "text"; content: string }
@@ -89,11 +80,12 @@ export interface WsToolCall {
 
 export interface WsMessage {
   type: string;
+  provider?: string;
   session_id?: string;
   line?: string;
   status?: string;
   restarts?: number;
-  session?: Session | ClaudeSession | CodexSession;
+  session?: Session | ChatSession;
   message?: Message;
   delta?: string;
   busy?: boolean;

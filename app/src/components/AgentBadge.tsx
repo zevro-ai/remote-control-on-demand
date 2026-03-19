@@ -1,14 +1,14 @@
-import type { AgentType } from "../api/types";
-
-const styles: Record<AgentType, string> = {
+const styles: Record<string, string> = {
   claude: "border border-accent-blue/20 bg-accent-blue/10 text-accent-blue",
   codex: "border border-accent-orange/20 bg-accent-orange/10 text-accent-orange",
 };
 
-export function AgentBadge({ agent }: { agent: AgentType }) {
+export function AgentBadge({ agent }: { agent: string }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${styles[agent]}`}
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+        styles[agent] || "border border-gray-500/20 bg-gray-500/10 text-gray-400"
+      }`}
     >
       {agent}
     </span>

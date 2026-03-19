@@ -43,16 +43,18 @@ describe("reduceSessionsState", () => {
 });
 
 describe("resolveBootstrapResults", () => {
+  const providers = ["claude", "codex"];
+
   it("keeps fulfilled bootstrap data when one endpoint fails", () => {
-    const results = resolveBootstrapResults([
+    const results = resolveBootstrapResults(providers, [
       { status: "fulfilled", value: [makeSession({ id: "session-1" })] },
-      { status: "fulfilled", value: [] },
+      { status: "fulfilled", value: { provider: "claude", sessions: [] } },
       { status: "rejected", reason: new Error("codex unavailable") },
     ]);
 
     expect(results.sessions).toHaveLength(1);
-    expect(results.claudeSessions).toEqual([]);
-    expect(results.codexSessions).toEqual([]);
+    expect(results.chatSessions["claude"]).toEqual([]);
+    expect(results.chatSessions["codex"]).toBeUndefined();
     expect(results.authRequired).toBe(false);
     expect(results.loadError).toBe("Some services failed to load: Codex: codex unavailable");
   });
@@ -60,7 +62,7 @@ describe("resolveBootstrapResults", () => {
   it("marks auth as required when all bootstrap requests fail with unauthorized", () => {
     const unauthorized = Object.assign(new Error("unauthorized"), { status: 401 });
 
-    const results = resolveBootstrapResults([
+    const results = resolveBootstrapResults(providers, [
       { status: "rejected", reason: unauthorized },
       { status: "rejected", reason: unauthorized },
       { status: "rejected", reason: unauthorized },
@@ -69,12 +71,11 @@ describe("resolveBootstrapResults", () => {
     expect(results.authRequired).toBe(true);
     expect(results.loadError).toBeNull();
     expect(results.sessions).toEqual([]);
-    expect(results.claudeSessions).toEqual([]);
-    expect(results.codexSessions).toEqual([]);
+    expect(results.chatSessions).toEqual({});
   });
 
   it("returns a blocking load error when all bootstrap requests fail", () => {
-    const results = resolveBootstrapResults([
+    const results = resolveBootstrapResults(providers, [
       { status: "rejected", reason: new Error("sessions down") },
       { status: "rejected", reason: new Error("claude down") },
       { status: "rejected", reason: new Error("codex down") },

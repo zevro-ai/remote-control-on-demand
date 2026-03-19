@@ -1,6 +1,6 @@
 package httpapi
 
-import "time"
+const claudeAttachmentsUnsupportedMessage = "image attachments are not supported for Claude sessions in the current CLI mode"
 
 type sessionResponse struct {
 	ID        string `json:"id"`
@@ -15,23 +15,11 @@ type sessionResponse struct {
 	Uptime    string `json:"uptime"`
 }
 
-type codexSessionResponse struct {
+type chatSessionResponse struct {
 	ID        string           `json:"id"`
 	Folder    string           `json:"folder"`
 	RelName   string           `json:"rel_name"`
-	Agent     string           `json:"agent"`
-	ThreadID  string           `json:"thread_id,omitempty"`
-	Busy      bool             `json:"busy"`
-	CreatedAt string           `json:"created_at"`
-	UpdatedAt string           `json:"updated_at"`
-	Messages  []messagePayload `json:"messages,omitempty"`
-}
-
-type claudeSessionResponse struct {
-	ID        string           `json:"id"`
-	Folder    string           `json:"folder"`
-	RelName   string           `json:"rel_name"`
-	Agent     string           `json:"agent"`
+	Agent     string           `json:"agent"` // Provider ID
 	ThreadID  string           `json:"thread_id,omitempty"`
 	Busy      bool             `json:"busy"`
 	CreatedAt string           `json:"created_at"`
@@ -89,6 +77,7 @@ type toolCallPayload struct {
 
 type wsMessage struct {
 	Type      string           `json:"type"`
+	Provider  string           `json:"provider,omitempty"`
 	SessionID string           `json:"session_id,omitempty"`
 	Line      string           `json:"line,omitempty"`
 	Status    string           `json:"status,omitempty"`
@@ -103,11 +92,4 @@ type wsMessage struct {
 type wsClientMessage struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id,omitempty"`
-}
-
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.Format(time.RFC3339)
 }
