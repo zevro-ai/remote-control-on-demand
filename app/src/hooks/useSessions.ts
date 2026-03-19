@@ -231,19 +231,11 @@ export const sessionsInitialState: State = {
   loadError: null,
 };
 
-async function fetchBootstrapData(): Promise<BootstrapData> {
-  const providers = await api.get<string[]>("/api/chat/providers").catch(() => ["claude", "codex"]);
-  
-  const chatPromises = providers.map(async (p) => {
-    const sessions = await api.get<ChatSession[]>(`/api/chat/${p}/sessions`);
-    return { provider: p, sessions };
-  });
-
-  const [sessionsResult, ...chatResults] = await Promise.allSettled([
-    api.get<Session[]>("/api/sessions"),
-    ...chatPromises,
-  ]);
-
+export function resolveBootstrapResults(
+  providers: string[],
+  results: PromiseSettledResult<any>[]
+): BootstrapData {
+  const [sessionsResult, ...chatResults] = results;
   const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
   const chatSessions: Record<string, ChatSession[]> = {};
   let authRequired = false;
@@ -251,7 +243,7 @@ async function fetchBootstrapData(): Promise<BootstrapData> {
 
   if (sessionsResult.status === "rejected") {
     if (isUnauthorizedError(sessionsResult.reason)) authRequired = true;
-    else errors.push(`RC: ${sessionsResult.reason}`);
+    else errors.push(`RC: ${sessionsResult.reason.message || sessionsResult.reason}`);
   }
 
   chatResults.forEach((res, idx) => {
@@ -260,7 +252,7 @@ async function fetchBootstrapData(): Promise<BootstrapData> {
       chatSessions[provider] = res.value.sessions;
     } else {
       if (isUnauthorizedError(res.reason)) authRequired = true;
-      else errors.push(`${provider}: ${res.reason}`);
+      else errors.push(`${provider.charAt(0).toUpperCase() + provider.slice(1)}: ${res.reason.message || res.reason}`);
     }
   });
 
@@ -270,6 +262,22 @@ async function fetchBootstrapData(): Promise<BootstrapData> {
     authRequired,
     loadError: errors.length > 0 ? `Some services failed to load: ${errors.join("; ")}` : null,
   };
+}
+
+async function fetchBootstrapData(): Promise<BootstrapData> {
+  const providers = await api.get<string[]>("/api/chat/providers").catch(() => ["claude", "codex"]);
+  
+  const chatPromises = providers.map(async (p) => {
+    const sessions = await api.get<ChatSession[]>(`/api/chat/${p}/sessions`);
+    return { provider: p, sessions };
+  });
+
+  const results = await Promise.allSettled([
+    api.get<Session[]>("/api/sessions"),
+    ...chatPromises,
+  ]);
+
+  return resolveBootstrapResults(providers, results);
 }
 
 type Actions = {
