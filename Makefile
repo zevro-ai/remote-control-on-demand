@@ -3,9 +3,11 @@ BINARY := rcod
 .PHONY: build test vet fmt clean
 
 build:
-	go build -o $(BINARY) ./cmd/bot
+	cd app && npm ci && npm run build
+	go build -o $(BINARY) ./cmd/codexbot
 
 test:
+	cd app && npm ci && npm test
 	go test ./...
 
 vet:

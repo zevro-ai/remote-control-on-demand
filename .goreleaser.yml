@@ -5,8 +5,14 @@ version: 2
 
 project_name: remote-control-on-demand
 
+before:
+  hooks:
+    - npm ci --prefix app
+    - npm test --prefix app
+    - npm run build --prefix app
+
 builds:
-  - main: ./cmd/bot
+  - main: ./cmd/codexbot
     binary: rcod
     env:
       - CGO_ENABLED=0

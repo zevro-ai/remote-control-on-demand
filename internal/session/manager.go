@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
@@ -39,20 +42,22 @@ type Runner interface {
 }
 
 type Manager struct {
-	mu               sync.Mutex
-	sessions         map[string]*Session
-	runner           Runner
-	baseFolder       string
-	statePath        string
-	autoRestart      bool
-	maxRestarts      int
-	restartDelay     time.Duration
-	notificationsCfg *config.NotificationsConfig
-	notify           chan Notification
+	mu                   sync.Mutex
+	sessions             map[string]*Session
+	runner               Runner
+	baseFolder           string
+	statePath            string
+	autoRestart          bool
+	maxRestarts          int
+	restartDelay         time.Duration
+	notificationsCfg     *config.NotificationsConfig
+	notificationsEnabled atomic.Bool
+	subMu                sync.Mutex
+	subscribers          []func(Notification)
 }
 
 func NewManager(runner Runner, baseFolder, statePath string, autoRestart bool, maxRestarts int, restartDelay time.Duration, notifCfg *config.NotificationsConfig) *Manager {
-	return &Manager{
+	mgr := &Manager{
 		sessions:         make(map[string]*Session),
 		runner:           runner,
 		baseFolder:       baseFolder,
@@ -61,12 +66,46 @@ func NewManager(runner Runner, baseFolder, statePath string, autoRestart bool, m
 		maxRestarts:      maxRestarts,
 		restartDelay:     restartDelay,
 		notificationsCfg: notifCfg,
-		notify:           make(chan Notification, 100),
+	}
+	mgr.notificationsEnabled.Store(true)
+	return mgr
+}
+
+// Subscribe registers a callback for notification events.
+// fn MUST be non-blocking (push to channel or spawn goroutine).
+// Returns an unsubscribe function.
+func (m *Manager) Subscribe(fn func(Notification)) func() {
+	m.subMu.Lock()
+	defer m.subMu.Unlock()
+	m.subscribers = append(m.subscribers, fn)
+	idx := len(m.subscribers) - 1
+	return func() {
+		m.subMu.Lock()
+		defer m.subMu.Unlock()
+		m.subscribers[idx] = nil
 	}
 }
 
-func (m *Manager) Notifications() <-chan Notification {
-	return m.notify
+// SetNotifications enables or disables notifications.
+// When disabled, notifications are silently dropped.
+func (m *Manager) SetNotifications(enabled bool) {
+	m.notificationsEnabled.Store(enabled)
+}
+
+func (m *Manager) sendNotification(msg string) {
+	if !m.notificationsEnabled.Load() {
+		return
+	}
+	n := Notification{Message: msg}
+	m.subMu.Lock()
+	subs := make([]func(Notification), len(m.subscribers))
+	copy(subs, m.subscribers)
+	m.subMu.Unlock()
+	for _, fn := range subs {
+		if fn != nil {
+			fn(n)
+		}
+	}
 }
 
 func (m *Manager) BaseFolder() string {
@@ -101,10 +140,10 @@ func (m *Manager) Start(folder string) (*Session, error) {
 			return nil, fmt.Errorf("session already running in %q (ID: %s)", relName, s.ID)
 		}
 	}
-	m.mu.Unlock()
 
-	id, err := generateID()
+	id, err := m.generateUniqueSessionID()
 	if err != nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
@@ -118,14 +157,19 @@ func (m *Manager) Start(folder string) (*Session, error) {
 		OutputBuf: NewRingBuffer(500),
 	}
 
-	if err := m.startProcess(sess); err != nil {
-		return nil, fmt.Errorf("starting process: %w", err)
-	}
-
-	m.mu.Lock()
+	// Reserve slot before releasing lock
 	m.sessions[id] = sess
 	m.saveState()
 	m.mu.Unlock()
+
+	if err := m.startProcess(sess); err != nil {
+		// Rollback on process start failure
+		m.mu.Lock()
+		delete(m.sessions, id)
+		m.saveState()
+		m.mu.Unlock()
+		return nil, fmt.Errorf("starting process: %w", err)
+	}
 
 	msg := fmt.Sprintf(
 		"<b>Session started</b>\nID: <code>%s</code>\nProject: <code>%s</code>",
@@ -139,9 +183,7 @@ func (m *Manager) Start(folder string) (*Session, error) {
 		msg += fmt.Sprintf("\nMax duration: <code>%s</code>", html.EscapeString(time.Duration(projCfg.MaxDuration).String()))
 	}
 
-	m.notify <- Notification{
-		Message: msg,
-	}
+	m.sendNotification(msg)
 
 	return sess, nil
 }
@@ -183,13 +225,11 @@ func (m *Manager) startProcess(sess *Session) error {
 		m.saveState()
 		m.mu.Unlock()
 
-		m.notify <- Notification{
-			Message: fmt.Sprintf(
-				"Session <code>%s</code> is ready.\n<a href=\"%s\">Open in Claude</a>",
-				html.EscapeString(sess.ID),
-				html.EscapeString(url),
-			),
-		}
+		m.sendNotification(fmt.Sprintf(
+			"Session <code>%s</code> is ready.\n<a href=\"%s\">Open in Claude</a>",
+			html.EscapeString(sess.ID),
+			html.EscapeString(url),
+		))
 	})
 
 	// Resolve effective notifications config (project overrides global)
@@ -201,15 +241,13 @@ func (m *Manager) startProcess(sess *Session) error {
 
 	evtScan := newEventScanner(urlScan, effectiveNotif,
 		func(patternName, match string) {
-			m.notify <- Notification{
-				Message: fmt.Sprintf(
-					"Session <code>%s</code> (%s)\n<b>%s</b>: <code>%s</code>",
-					html.EscapeString(sess.ID),
-					html.EscapeString(sess.RelName),
-					html.EscapeString(patternName),
-					html.EscapeString(match),
-				),
-			}
+			m.sendNotification(fmt.Sprintf(
+				"Session <code>%s</code> (%s)\n<b>%s</b>: <code>%s</code>",
+				html.EscapeString(sess.ID),
+				html.EscapeString(sess.RelName),
+				html.EscapeString(patternName),
+				html.EscapeString(match),
+			))
 		},
 		func() {
 			m.mu.Lock()
@@ -217,14 +255,12 @@ func (m *Manager) startProcess(sess *Session) error {
 			m.mu.Unlock()
 		},
 		func() {
-			m.notify <- Notification{
-				Message: fmt.Sprintf(
-					"Session <code>%s</code> (%s) is idle for %s.",
-					html.EscapeString(sess.ID),
-					html.EscapeString(sess.RelName),
-					html.EscapeString(time.Duration(effectiveNotif.IdleTimeout).String()),
-				),
-			}
+			m.sendNotification(fmt.Sprintf(
+				"Session <code>%s</code> (%s) is idle for %s.",
+				html.EscapeString(sess.ID),
+				html.EscapeString(sess.RelName),
+				html.EscapeString(time.Duration(effectiveNotif.IdleTimeout).String()),
+			))
 		},
 	)
 	sess.eventScanner = evtScan
@@ -246,13 +282,11 @@ func (m *Manager) startProcess(sess *Session) error {
 			m.mu.Lock()
 			if sess.Status == StatusRunning {
 				m.mu.Unlock()
-				m.notify <- Notification{
-					Message: fmt.Sprintf(
-						"Session <code>%s</code> reached max duration (%s) and will be stopped.",
-						html.EscapeString(sess.ID),
-						html.EscapeString(time.Duration(sess.Config.MaxDuration).String()),
-					),
-				}
+				m.sendNotification(fmt.Sprintf(
+					"Session <code>%s</code> reached max duration (%s) and will be stopped.",
+					html.EscapeString(sess.ID),
+					html.EscapeString(time.Duration(sess.Config.MaxDuration).String()),
+				))
 				m.Kill(sess.ID)
 			} else {
 				m.mu.Unlock()
@@ -299,14 +333,12 @@ func (m *Manager) monitor(sess *Session) {
 		restarts := sess.Restarts
 		m.mu.Unlock()
 
-		m.notify <- Notification{
-			Message: fmt.Sprintf(
-				"Session <code>%s</code> crashed, restarting (%d/%d).",
-				html.EscapeString(sess.ID),
-				restarts,
-				maxRestarts,
-			),
-		}
+		m.sendNotification(fmt.Sprintf(
+			"Session <code>%s</code> crashed, restarting (%d/%d).",
+			html.EscapeString(sess.ID),
+			restarts,
+			maxRestarts,
+		))
 
 		time.Sleep(restartDelay)
 
@@ -323,28 +355,22 @@ func (m *Manager) monitor(sess *Session) {
 			sess.Status = StatusCrashed
 			m.saveState()
 			m.mu.Unlock()
-			m.notify <- Notification{
-				Message: fmt.Sprintf(
-					"Session <code>%s</code> restart failed: <code>%s</code>",
-					html.EscapeString(sess.ID),
-					html.EscapeString(err.Error()),
-				),
-			}
+			m.sendNotification(fmt.Sprintf(
+				"Session <code>%s</code> restart failed: <code>%s</code>",
+				html.EscapeString(sess.ID),
+				html.EscapeString(err.Error()),
+			))
 		}
 	} else {
 		m.mu.Unlock()
 		if sess.Restarts >= maxRestarts {
-			m.notify <- Notification{
-				Message: m.renderSessionSummary(
-					sess,
-					"Session crashed",
-					fmt.Sprintf("Restart limit reached (%d/%d).", sess.Restarts, maxRestarts),
-				),
-			}
+			m.sendNotification(m.renderSessionSummary(
+				sess,
+				"Session crashed",
+				fmt.Sprintf("Restart limit reached (%d/%d).", sess.Restarts, maxRestarts),
+			))
 		} else {
-			m.notify <- Notification{
-				Message: m.renderSessionSummary(sess, "Session ended", "Process exited without auto-restart."),
-			}
+			m.sendNotification(m.renderSessionSummary(sess, "Session ended", "Process exited without auto-restart."))
 		}
 	}
 }
@@ -403,9 +429,7 @@ func (m *Manager) Restart(id string) error {
 		return fmt.Errorf("restart failed: %w", err)
 	}
 
-	m.notify <- Notification{
-		Message: fmt.Sprintf("Session <code>%s</code> restarted.", html.EscapeString(id)),
-	}
+	m.sendNotification(fmt.Sprintf("Session <code>%s</code> restarted.", html.EscapeString(id)))
 	return nil
 }
 
@@ -547,22 +571,18 @@ func (m *Manager) Restore() error {
 
 			// Re-deliver URL if present
 			if sess.URL != "" {
-				m.notify <- Notification{
-					Message: fmt.Sprintf(
-						"<b>Session restored</b>\nSession <code>%s</code> (<code>%s</code>)\n<a href=\"%s\">Open in Claude</a>",
-						html.EscapeString(sess.ID),
-						html.EscapeString(sess.RelName),
-						html.EscapeString(sess.URL),
-					),
-				}
+				m.sendNotification(fmt.Sprintf(
+					"<b>Session restored</b>\nSession <code>%s</code> (<code>%s</code>)\n<a href=\"%s\">Open in Claude</a>",
+					html.EscapeString(sess.ID),
+					html.EscapeString(sess.RelName),
+					html.EscapeString(sess.URL),
+				))
 			} else {
-				m.notify <- Notification{
-					Message: fmt.Sprintf(
-						"<b>Session restored</b>\nSession <code>%s</code> (<code>%s</code>)\nNo Claude URL recorded.",
-						html.EscapeString(sess.ID),
-						html.EscapeString(sess.RelName),
-					),
-				}
+				m.sendNotification(fmt.Sprintf(
+					"<b>Session restored</b>\nSession <code>%s</code> (<code>%s</code>)\nNo Claude URL recorded.",
+					html.EscapeString(sess.ID),
+					html.EscapeString(sess.RelName),
+				))
 			}
 		} else {
 			// Process is dead
@@ -604,13 +624,11 @@ func (m *Manager) monitorOrphan(ctx context.Context, sess *Session) {
 				m.saveState()
 				m.mu.Unlock()
 
-				m.notify <- Notification{
-					Message: fmt.Sprintf(
-						"<b>Restored session exited</b>\nSession <code>%s</code> (<code>%s</code>) exited or crashed.",
-						html.EscapeString(sess.ID),
-						html.EscapeString(sess.RelName),
-					),
-				}
+				m.sendNotification(fmt.Sprintf(
+					"<b>Restored session exited</b>\nSession <code>%s</code> (<code>%s</code>) exited or crashed.",
+					html.EscapeString(sess.ID),
+					html.EscapeString(sess.RelName),
+				))
 				return
 			}
 		}
@@ -618,11 +636,26 @@ func (m *Manager) monitorOrphan(ctx context.Context, sess *Session) {
 }
 
 func generateID() (string, error) {
-	b := make([]byte, 2)
+	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// generateUniqueSessionID generates a session ID that does not collide with existing sessions.
+// Must be called with m.mu held.
+func (m *Manager) generateUniqueSessionID() (string, error) {
+	for i := 0; i < 100; i++ {
+		id, err := generateID()
+		if err != nil {
+			return "", err
+		}
+		if _, exists := m.sessions[id]; !exists {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique session ID after 100 attempts")
 }
 
 func (m *Manager) startProgressReporter(sess *Session, notifCfg *config.NotificationsConfig) {
@@ -689,7 +722,7 @@ func (m *Manager) notifyProgress(sess *Session) {
 		sb.WriteString(fmt.Sprintf("<a href=\"%s\">Open in Claude</a>", html.EscapeString(claudeURL)))
 	}
 
-	m.notify <- Notification{Message: strings.TrimSpace(sb.String())}
+	m.sendNotification(strings.TrimSpace(sb.String()))
 }
 
 func trimForTelegram(value string, maxLen int) string {
@@ -707,6 +740,43 @@ func sessionURL(sess *Session) string {
 		return sess.ClaudeURL
 	}
 	return sess.URL
+}
+
+// ListFolders returns relative paths of all git repositories under baseFolder.
+func (m *Manager) ListFolders() []string {
+	info, err := os.Stat(m.baseFolder)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+
+	var folders []string
+	_ = filepath.WalkDir(m.baseFolder, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || path == m.baseFolder {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, ".") {
+			return filepath.SkipDir
+		}
+		switch name {
+		case "node_modules", "vendor", "dist", "build", "tmp":
+			return filepath.SkipDir
+		}
+		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+			rel, err := filepath.Rel(m.baseFolder, path)
+			if err == nil && rel != "." {
+				folders = append(folders, rel)
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
+	sort.Strings(folders)
+	return folders
 }
 
 func (m *Manager) renderSessionSummary(sess *Session, title, summary string) string {

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zevro-ai/remote-control-on-demand/internal/bashcmd"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 )
 
@@ -25,6 +26,51 @@ const (
 	defaultSystemPATH               = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
 )
 
+var runCodexFn = runCodex
+
+type EventType int
+
+const (
+	EventSessionCreated EventType = iota
+	EventSessionClosed
+	EventMessageReceived
+	EventBusyChanged
+)
+
+type Event struct {
+	Type      EventType
+	SessionID string
+	Session   *Session // non-nil for Created
+	Message   *Message // non-nil for MessageReceived
+	Busy      bool     // for BusyChanged
+}
+
+type Message struct {
+	Role        string       `json:"role"` // "user" | "assistant"
+	Kind        string       `json:"kind,omitempty"`
+	Content     string       `json:"content"`
+	Timestamp   time.Time    `json:"timestamp"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	Command     *CommandMeta `json:"command,omitempty"`
+}
+
+type Attachment struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Path        string `json:"path,omitempty"`
+}
+
+type CommandMeta struct {
+	Command    string `json:"command"`
+	ExitCode   int    `json:"exit_code,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	TimedOut   bool   `json:"timed_out,omitempty"`
+	Truncated  bool   `json:"truncated,omitempty"`
+}
+
 type Session struct {
 	ID        string    `json:"id"`
 	Folder    string    `json:"folder"`
@@ -33,6 +79,7 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Busy      bool      `json:"-"`
+	Messages  []Message `json:"messages,omitempty"`
 }
 
 type state struct {
@@ -49,6 +96,9 @@ type Manager struct {
 	model                    string
 	sandbox                  string
 	dangerouslyBypassSandbox bool
+	subMu                    sync.Mutex
+	subscribers              []func(Event)
+	wg                       sync.WaitGroup
 }
 
 func NewManager(baseFolder, statePath string) *Manager {
@@ -137,6 +187,38 @@ func (m *Manager) BaseFolder() string {
 	return m.baseFolder
 }
 
+// Subscribe registers a callback for codex events.
+// fn MUST be non-blocking (push to channel or spawn goroutine).
+// Returns an unsubscribe function.
+func (m *Manager) Subscribe(fn func(Event)) func() {
+	m.subMu.Lock()
+	defer m.subMu.Unlock()
+	m.subscribers = append(m.subscribers, fn)
+	idx := len(m.subscribers) - 1
+	return func() {
+		m.subMu.Lock()
+		defer m.subMu.Unlock()
+		m.subscribers[idx] = nil
+	}
+}
+
+func (m *Manager) emit(e Event) {
+	m.subMu.Lock()
+	subs := make([]func(Event), len(m.subscribers))
+	copy(subs, m.subscribers)
+	m.subMu.Unlock()
+	for _, fn := range subs {
+		if fn != nil {
+			fn(e)
+		}
+	}
+}
+
+// Shutdown waits for in-flight Send() calls to finish.
+func (m *Manager) Shutdown() {
+	m.wg.Wait()
+}
+
 func (m *Manager) Create(folder string) (*Session, error) {
 	fullPath, relName, err := resolveProjectPath(m.baseFolder, folder)
 	if err != nil {
@@ -152,8 +234,10 @@ func (m *Manager) Create(folder string) (*Session, error) {
 		return nil, fmt.Errorf("folder %q is not a git repository", relName)
 	}
 
-	id, err := generateID()
+	m.mu.Lock()
+	id, err := m.generateUniqueCodexID()
 	if err != nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
@@ -166,16 +250,17 @@ func (m *Manager) Create(folder string) (*Session, error) {
 		UpdatedAt: now,
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	m.sessions[id] = sess
 	m.activeSessionID = id
 	if err := m.saveLocked(); err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
+	clone := cloneSession(sess)
+	m.mu.Unlock()
 
-	return cloneSession(sess), nil
+	m.emit(Event{Type: EventSessionCreated, SessionID: id, Session: clone})
+	return clone, nil
 }
 
 func (m *Manager) List() []*Session {
@@ -245,23 +330,38 @@ func (m *Manager) SetActive(id string) (*Session, error) {
 
 func (m *Manager) Close(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if _, ok := m.sessions[id]; !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("session %q not found", id)
 	}
 
 	delete(m.sessions, id)
 	if m.activeSessionID == id {
-		m.activeSessionID = ""
+		m.activeSessionID = latestCodexSessionIDLocked(m.sessions)
 	}
-	if len(m.sessions) == 1 && m.activeSessionID == "" {
-		for sessionID := range m.sessions {
-			m.activeSessionID = sessionID
+
+	err := m.saveLocked()
+	m.mu.Unlock()
+
+	if err == nil {
+		m.emit(Event{Type: EventSessionClosed, SessionID: id})
+	}
+	return err
+}
+
+func latestCodexSessionIDLocked(sessions map[string]*Session) string {
+	var latestID string
+	var latestTime time.Time
+
+	for sessionID, sess := range sessions {
+		if latestID == "" || sess.UpdatedAt.After(latestTime) {
+			latestID = sessionID
+			latestTime = sess.UpdatedAt
 		}
 	}
 
-	return m.saveLocked()
+	return latestID
 }
 
 func (m *Manager) ResolveActive() (*Session, error) {
@@ -291,9 +391,11 @@ func (m *Manager) ResolveActive() (*Session, error) {
 	return nil, fmt.Errorf("no active session selected; use /use or /sessions")
 }
 
-func (m *Manager) Send(id, prompt string) (*Session, string, error) {
+const maxMessages = 500
+
+func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Attachment) (*Session, string, error) {
 	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
+	if prompt == "" && len(attachments) == 0 {
 		return nil, "", fmt.Errorf("message cannot be empty")
 	}
 
@@ -308,20 +410,37 @@ func (m *Manager) Send(id, prompt string) (*Session, string, error) {
 		return nil, "", fmt.Errorf("session %q is already processing another message", id)
 	}
 
+	now := time.Now()
+	userMessage := Message{
+		Role:        "user",
+		Kind:        "text",
+		Content:     prompt,
+		Timestamp:   now,
+		Attachments: cloneAttachments(attachments),
+	}
 	sess.Busy = true
+	sess.Messages = append(sess.Messages, userMessage)
+	if len(sess.Messages) > maxMessages {
+		sess.Messages = sess.Messages[len(sess.Messages)-maxMessages:]
+	}
 	sandbox := m.sandbox
 	dangerouslyBypassSandbox := m.dangerouslyBypassSandbox
 	model := m.model
 	snapshot := cloneSession(sess)
 	m.mu.Unlock()
 
-	threadID, reply, err := runCodex(snapshot, prompt, sandbox, model, dangerouslyBypassSandbox)
+	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
+	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
+	m.wg.Add(1)
+	defer m.wg.Done()
+
+	threadID, reply, err := runCodexFn(ctx, snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	current, ok := m.sessions[id]
 	if !ok {
+		m.mu.Unlock()
+		m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
 		return nil, "", fmt.Errorf("session %q disappeared while processing", id)
 	}
 
@@ -330,7 +449,29 @@ func (m *Manager) Send(id, prompt string) (*Session, string, error) {
 	if threadID != "" {
 		current.ThreadID = threadID
 	}
+	var emitted *Message
+	if err == nil && reply != "" {
+		assistantMessage := Message{
+			Role:      "assistant",
+			Kind:      "text",
+			Content:   reply,
+			Timestamp: time.Now(),
+		}
+		current.Messages = append(current.Messages, assistantMessage)
+		if len(current.Messages) > maxMessages {
+			current.Messages = current.Messages[len(current.Messages)-maxMessages:]
+		}
+		emitted = cloneMessage(&assistantMessage)
+	}
 	saveErr := m.saveLocked()
+	clone := cloneSession(current)
+	m.mu.Unlock()
+
+	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
+	if emitted != nil {
+		m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: emitted})
+	}
+
 	if err != nil {
 		if saveErr != nil {
 			return nil, "", fmt.Errorf("%w (state save failed: %v)", err, saveErr)
@@ -341,17 +482,120 @@ func (m *Manager) Send(id, prompt string) (*Session, string, error) {
 		return nil, "", saveErr
 	}
 
-	return cloneSession(current), reply, nil
+	return clone, reply, nil
 }
 
-func runCodex(sess *Session, prompt, sandbox, model string, dangerouslyBypassSandbox bool) (string, string, error) {
+func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session, bashcmd.Result, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil, bashcmd.Result{}, fmt.Errorf("command cannot be empty")
+	}
+
+	m.mu.Lock()
+	sess, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return nil, bashcmd.Result{}, fmt.Errorf("session %q not found", id)
+	}
+	if sess.Busy {
+		m.mu.Unlock()
+		return nil, bashcmd.Result{}, fmt.Errorf("session %q is already processing another request", id)
+	}
+
+	now := time.Now()
+	userMessage := Message{
+		Role:      "user",
+		Kind:      "bash",
+		Content:   command,
+		Timestamp: now,
+		Command:   &CommandMeta{Command: command},
+	}
+	sess.Busy = true
+	sess.Messages = append(sess.Messages, userMessage)
+	if len(sess.Messages) > maxMessages {
+		sess.Messages = sess.Messages[len(sess.Messages)-maxMessages:]
+	}
+	snapshot := cloneSession(sess)
+	m.mu.Unlock()
+
+	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
+	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
+	m.wg.Add(1)
+	defer m.wg.Done()
+
+	result, err := bashcmd.Run(ctx, snapshot.Folder, command)
+
+	m.mu.Lock()
+	current, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
+		return nil, bashcmd.Result{}, fmt.Errorf("session %q disappeared while processing", id)
+	}
+
+	current.Busy = false
+	current.UpdatedAt = time.Now()
+
+	var emitted *Message
+	if err == nil {
+		reply := Message{
+			Role:      "assistant",
+			Kind:      "bash_result",
+			Content:   result.Output,
+			Timestamp: time.Now(),
+			Command: &CommandMeta{
+				Command:    result.Command,
+				ExitCode:   result.ExitCode,
+				DurationMs: result.DurationMs,
+				TimedOut:   result.TimedOut,
+				Truncated:  result.Truncated,
+			},
+		}
+		current.Messages = append(current.Messages, reply)
+		if len(current.Messages) > maxMessages {
+			current.Messages = current.Messages[len(current.Messages)-maxMessages:]
+		}
+		emitted = &reply
+	}
+
+	saveErr := m.saveLocked()
+	clone := cloneSession(current)
+	m.mu.Unlock()
+
+	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
+	if emitted != nil {
+		m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: emitted})
+	}
+
+	if err != nil {
+		if saveErr != nil {
+			return nil, bashcmd.Result{}, fmt.Errorf("%w (state save failed: %v)", err, saveErr)
+		}
+		return nil, bashcmd.Result{}, err
+	}
+	if saveErr != nil {
+		return nil, bashcmd.Result{}, saveErr
+	}
+
+	return clone, result, nil
+}
+
+func runCodex(
+	ctx context.Context,
+	sess *Session,
+	prompt string,
+	attachments []Attachment,
+	sandbox,
+	model string,
+	dangerouslyBypassSandbox bool,
+) (string, string, error) {
 	codexBin, cmdEnv, err := resolveCodexCommandEnv()
 	if err != nil {
 		return "", "", fmt.Errorf("starting codex: %w", err)
 	}
 
-	args := buildCodexArgs(sess, prompt, sandbox, model, dangerouslyBypassSandbox)
-	cmd := exec.CommandContext(context.Background(), codexBin, args...)
+	args := buildCodexArgs(sess, prompt, attachments, sandbox, model, dangerouslyBypassSandbox)
+	cmd := exec.CommandContext(ctx, codexBin, args...)
 	cmd.Dir = sess.Folder
 	cmd.Env = cmdEnv
 
@@ -408,7 +652,14 @@ func runCodex(sess *Session, prompt, sandbox, model string, dangerouslyBypassSan
 	return result.ThreadID, reply, nil
 }
 
-func buildCodexArgs(sess *Session, prompt, sandbox, model string, dangerouslyBypassSandbox bool) []string {
+func buildCodexArgs(
+	sess *Session,
+	prompt string,
+	attachments []Attachment,
+	sandbox,
+	model string,
+	dangerouslyBypassSandbox bool,
+) []string {
 	args := []string{"exec"}
 	if dangerouslyBypassSandbox {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
@@ -422,7 +673,9 @@ func buildCodexArgs(sess *Session, prompt, sandbox, model string, dangerouslyByp
 		if model != "" {
 			args = append(args, "--model", model)
 		}
+		// For `codex exec`, `--image` is variadic, so the prompt must come first.
 		args = append(args, initialPrompt(sess, prompt))
+		args = appendImageArgs(args, attachments)
 		return args
 	}
 
@@ -431,6 +684,17 @@ func buildCodexArgs(sess *Session, prompt, sandbox, model string, dangerouslyByp
 		args = append(args, "--model", model)
 	}
 	args = append(args, sess.ThreadID, prompt)
+	args = appendImageArgs(args, attachments)
+	return args
+}
+
+func appendImageArgs(args []string, attachments []Attachment) []string {
+	for _, attachment := range attachments {
+		if strings.TrimSpace(attachment.Path) == "" {
+			continue
+		}
+		args = append(args, "--image", attachment.Path)
+	}
 	return args
 }
 
@@ -514,8 +778,43 @@ func cloneSession(sess *Session) *Session {
 	if sess == nil {
 		return nil
 	}
-	copy := *sess
-	return &copy
+	c := *sess
+	if sess.Messages != nil {
+		c.Messages = make([]Message, len(sess.Messages))
+		for i, msg := range sess.Messages {
+			c.Messages[i] = msg
+			c.Messages[i].Attachments = cloneAttachments(msg.Attachments)
+			c.Messages[i].Command = cloneCommand(msg.Command)
+		}
+	}
+	return &c
+}
+
+func cloneAttachments(attachments []Attachment) []Attachment {
+	if attachments == nil {
+		return nil
+	}
+	cloned := make([]Attachment, len(attachments))
+	copy(cloned, attachments)
+	return cloned
+}
+
+func cloneCommand(command *CommandMeta) *CommandMeta {
+	if command == nil {
+		return nil
+	}
+	cloned := *command
+	return &cloned
+}
+
+func cloneMessage(message *Message) *Message {
+	if message == nil {
+		return nil
+	}
+	cloned := *message
+	cloned.Attachments = cloneAttachments(message.Attachments)
+	cloned.Command = cloneCommand(message.Command)
+	return &cloned
 }
 
 func resolveProjectPath(baseFolder, folder string) (string, string, error) {
@@ -545,11 +844,26 @@ func resolveProjectPath(baseFolder, folder string) (string, string, error) {
 }
 
 func generateID() (string, error) {
-	b := make([]byte, 2)
+	b := make([]byte, 4)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// generateUniqueCodexID generates a codex session ID that does not collide with existing sessions.
+// Must be called with m.mu held.
+func (m *Manager) generateUniqueCodexID() (string, error) {
+	for i := 0; i < 100; i++ {
+		id, err := generateID()
+		if err != nil {
+			return "", err
+		}
+		if _, exists := m.sessions[id]; !exists {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique codex session ID after 100 attempts")
 }
 
 func resolveCodexCommandEnv() (string, []string, error) {

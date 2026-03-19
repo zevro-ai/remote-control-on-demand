@@ -2,6 +2,11 @@ telegram:
   token: "YOUR_BOT_TOKEN"
   allowed_user_id: 123456789
 
+# Web dashboard API (optional)
+# api:
+#   port: 8080          # 0 = disabled (default)
+#   token: ""           # optional bearer token for API auth
+
 rc:
   base_folder: "/home/user/Projects"
   permission_mode: "workspace-write"  # codexbot only; use bypassPermissions only for full local access
@@ -23,3 +28,4 @@ rc:
   #     - name: "error"
   #       regex: "(?i)(error:|fatal|panic:)"
   #       # once: false (default) — notify every match (throttled to max once per 30s)
+

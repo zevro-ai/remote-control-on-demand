@@ -14,7 +14,6 @@ func setProcessGroup(cmd *exec.Cmd) {
 }
 
 func isClaudeProcess(pid int) bool {
-	// Use tasklist /FI "PID eq <pid>"
 	b, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid)).Output()
 	if err != nil {
 		return false

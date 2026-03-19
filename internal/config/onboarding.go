@@ -338,7 +338,7 @@ func RunOnboarding(configPath string) (*Config, error) {
 	}
 	if startIdx == 1 {
 		fmt.Println()
-		fmt.Println(styled(fDim, "  OK, start later with: go run ./cmd/bot"))
+		fmt.Println(styled(fDim, "  OK, start later with: go run ./cmd/codexbot"))
 		fmt.Println()
 		os.Exit(0)
 	}

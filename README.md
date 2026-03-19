@@ -37,8 +37,9 @@ The `cmd/codexbot` entrypoint exposes Telegram as a chat interface for Codex:
 Build and run it with:
 
 ```bash
-go build -o codexbot ./cmd/codexbot
-./codexbot -config config.yaml
+cd app && npm ci && npm run build
+go build -o rcod ./cmd/codexbot
+./rcod -config config.yaml
 ```
 
 For local native control helpers:
@@ -75,7 +76,8 @@ For `codexbot`, `codex` must also be available in your `PATH`.
 ```bash
 git clone https://github.com/zevro-ai/remote-control-on-demand.git
 cd remote-control-on-demand
-go build -o rcod ./cmd/bot
+cd app && npm ci && npm run build && cd ..
+go build -o rcod ./cmd/codexbot
 ./rcod
 ```
 
@@ -196,7 +198,8 @@ make fmt
 If you do not use `make`, the equivalent commands are:
 
 ```bash
-go build -o rcod ./cmd/bot
+cd app && npm ci && npm test && npm run build && cd ..
+go build -o rcod ./cmd/codexbot
 go test ./...
 go vet ./...
 gofmt -w cmd internal
