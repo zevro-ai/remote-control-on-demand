@@ -1,4 +1,4 @@
-import type { ClaudeSession, CodexSession } from "../api/types";
+import type { ChatSession } from "../api/types";
 import type { PanelState } from "../hooks/usePanelManager";
 import { SessionPanel } from "./SessionPanel";
 import { useSessions } from "../hooks/useSessions";
@@ -13,20 +13,18 @@ import {
 import { SessionTile } from "./SessionTile";
 
 interface Props {
-  claudeSessions: ClaudeSession[];
-  codexSessions: CodexSession[];
+  chatSessions: Record<string, ChatSession[]>;
   focusedPanel: PanelState | null;
   density: OverviewDensity;
   onDensityChange: (density: OverviewDensity) => void;
-  onFocusSession: (sessionId: string, type: "claude" | "codex") => void;
+  onFocusSession: (sessionId: string, type: string) => void;
   onClearFocus: () => void;
 }
 
 const DENSITY_OPTIONS: OverviewDensity[] = ["compact", "comfortable", "focus"];
 
 export function PanelLayout({
-  claudeSessions,
-  codexSessions,
+  chatSessions,
   focusedPanel,
   density,
   onDensityChange,
@@ -34,12 +32,15 @@ export function PanelLayout({
   onClearFocus,
 }: Props) {
   const { state, actions } = useSessions();
-  const sessions = sortSessionsForWall([...claudeSessions, ...codexSessions]);
+  
+  // Flatten all sessions from all providers for the wall view
+  const allSessions = Object.values(chatSessions).flat();
+  const sessions = sortSessionsForWall(allSessions);
   const slots = buildWallSlots(sessions, density);
+  
   const focusedSession = resolveFocusedSession(
     focusedPanel,
-    state.claudeSessions,
-    state.codexSessions
+    allSessions
   );
 
   const liveCount = sessions.filter((session) => session.busy).length;
@@ -64,13 +65,14 @@ export function PanelLayout({
             <line x1="15" y1="3" x2="15" y2="21" />
           </svg>
           <div className="boot-message">No sessions on the wall</div>
-          <p>Create a Claude or Codex chat to populate the terminal grid.</p>
+          <p>Create a chat session to populate the terminal grid.</p>
         </div>
       </div>
     );
   }
 
   if (focusedSession && focusedPanel) {
+    const provider = focusedSession.agent;
     return (
       <div className="focus-stage">
         <header className="focus-stage__toolbar">
@@ -89,26 +91,15 @@ export function PanelLayout({
         </header>
 
         <div className="focus-stage__panel">
-          {focusedPanel.type === "claude" && focusedSession.agent === "claude" ? (
-            <SessionPanel
-              type="claude"
-              session={focusedSession}
-              streamBlocks={state.streamBlocks[focusedSession.id] || []}
-              onClose={onClearFocus}
-              onSend={actions.sendClaudeMessage}
-              onRunCommand={actions.sendClaudeCommand}
-              onSessionClose={actions.closeClaudeSession}
-            />
-          ) : focusedPanel.type === "codex" && focusedSession.agent === "codex" ? (
-            <SessionPanel
-              type="codex"
-              session={focusedSession}
-              onClose={onClearFocus}
-              onSend={actions.sendCodexMessage}
-              onRunCommand={actions.sendCodexCommand}
-              onSessionClose={actions.closeCodexSession}
-            />
-          ) : null}
+          <SessionPanel
+            type={provider}
+            session={focusedSession}
+            streamBlocks={state.streamBlocks[focusedSession.id] || []}
+            onClose={onClearFocus}
+            onSend={(id, msg, att) => actions.sendChatMessage(provider, id, msg, att)}
+            onRunCommand={(id, cmd) => actions.runChatCommand(provider, id, cmd)}
+            onSessionClose={(id) => actions.closeChatSession(provider, id)}
+          />
         </div>
       </div>
     );
@@ -175,9 +166,7 @@ export function PanelLayout({
                   slot.session
                     ? buildSessionPreview(
                         slot.session,
-                        slot.session.agent === "claude"
-                          ? state.streamBlocks[slot.session.id] || []
-                          : [],
+                        state.streamBlocks[slot.session.id] || [],
                         getPreviewLineCount(density)
                       )
                     : []

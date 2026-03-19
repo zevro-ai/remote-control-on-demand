@@ -1,12 +1,12 @@
 import { useMemo } from "react";
-import type { ClaudeSession, CodexSession, DraftAttachment, StreamBlock } from "../api/types";
+import type { ChatSession, DraftAttachment, StreamBlock } from "../api/types";
 import { AgentBadge } from "./AgentBadge";
 import { AgentActivityFeed } from "./AgentActivityFeed";
 import { MessageInput } from "./MessageInput";
 
-interface ClaudeProps {
-  type: "claude";
-  session: ClaudeSession;
+interface Props {
+  type: string;
+  session: ChatSession;
   streamBlocks: StreamBlock[];
   onClose: () => void;
   onSend: (id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
@@ -14,21 +14,9 @@ interface ClaudeProps {
   onSessionClose: (id: string) => Promise<void>;
 }
 
-interface CodexProps {
-  type: "codex";
-  session: CodexSession;
-  onClose: () => void;
-  onSend: (id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
-  onRunCommand: (id: string, command: string) => Promise<void>;
-  onSessionClose: (id: string) => Promise<void>;
-}
-
-type Props = ClaudeProps | CodexProps;
-
 export function SessionPanel(props: Props) {
-  const { session, type } = props;
+  const { session, type, streamBlocks } = props;
   const messages = session.messages || [];
-  const streamBlocks = props.type === "claude" ? props.streamBlocks : [];
 
   const telemetry = useMemo(
     () => [
@@ -36,11 +24,11 @@ export function SessionPanel(props: Props) {
       { label: "Messages", value: String(messages.length) },
       {
         label: "Updated",
-        value: formatClock((session as ClaudeSession | CodexSession).updated_at),
+        value: formatClock(session.updated_at),
       },
       {
         label: "Thread",
-        value: shorten((session as ClaudeSession | CodexSession).thread_id || session.id),
+        value: shorten(session.thread_id || session.id),
       },
     ],
     [messages.length, session]
@@ -50,7 +38,7 @@ export function SessionPanel(props: Props) {
     <article className="session-panel">
       <header className="session-panel__header">
         <div>
-          <div className="session-panel__kicker">{type === "claude" ? "Anthropic" : "OpenAI"}</div>
+          <div className="session-panel__kicker">{getProviderDisplay(type)}</div>
           <h2>{session.rel_name}</h2>
         </div>
 
@@ -67,9 +55,7 @@ export function SessionPanel(props: Props) {
 
       <div className="session-panel__body">
         <section className="session-window session-window--conversation">
-          <div className="session-window__title">
-            {type === "claude" ? "Agent Activity" : "Conversation"}
-          </div>
+          <div className="session-window__title">Agent Activity</div>
           <AgentActivityFeed
             messages={messages}
             streamBlocks={streamBlocks}
@@ -111,7 +97,7 @@ export function SessionPanel(props: Props) {
           promptPlaceholder={
             session.busy
               ? `${type} is responding...`
-              : `Send a message to ${type === "claude" ? "Claude" : "Codex"}...`
+              : `Send a message to ${type.charAt(0).toUpperCase() + type.slice(1)}...`
           }
           commandPlaceholder={
             session.busy
@@ -130,6 +116,15 @@ export function SessionPanel(props: Props) {
       </footer>
     </article>
   );
+}
+
+function getProviderDisplay(type: string) {
+  switch (type) {
+    case "claude": return "Anthropic";
+    case "codex": return "OpenAI";
+    case "gemini": return "Google";
+    default: return type.charAt(0).toUpperCase() + type.slice(1);
+  }
 }
 
 function trimMessage(content: string) {

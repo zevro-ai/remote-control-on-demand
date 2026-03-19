@@ -1,11 +1,11 @@
-import type { ClaudeSession, CodexSession, StreamBlock } from "../api/types";
+import type { ChatSession, StreamBlock } from "../api/types";
 
-export type ChatSession = ClaudeSession | CodexSession;
+export type { ChatSession };
 export type OverviewDensity = "compact" | "comfortable" | "focus";
 export type PreviewTone = "user" | "assistant" | "tool" | "system";
 export interface FocusTarget {
   sessionId: string;
-  type: "claude" | "codex";
+  type: string;
 }
 
 export interface PreviewLine {
@@ -80,16 +80,13 @@ export function buildWallSlots(
 
 export function resolveFocusedSession(
   focusedPanel: FocusTarget | null,
-  claudeSessions: ClaudeSession[],
-  codexSessions: CodexSession[]
+  allSessions: ChatSession[]
 ) {
   if (!focusedPanel) {
     return null;
   }
 
-  return focusedPanel.type === "claude"
-    ? claudeSessions.find((session) => session.id === focusedPanel.sessionId) || null
-    : codexSessions.find((session) => session.id === focusedPanel.sessionId) || null;
+  return allSessions.find((s) => s.id === focusedPanel.sessionId && s.agent === focusedPanel.type) || null;
 }
 
 export function buildSessionPreview(
