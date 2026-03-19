@@ -156,9 +156,7 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Currently SendMessage in Provider interface doesn't support attachments directly in the generic call,
-	// but we can cast or extend it later. For PoC, we handle text.
-	err = p.SendMessage(r.Context(), id, message)
+	err = p.SendMessage(r.Context(), id, message, toChatAttachments(attachments))
 	if err != nil {
 		cleanupStoredAttachments(attachments)
 		writeManagerError(w, err)
@@ -169,6 +167,24 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session": toChatSessionResponse(sess, p.ID()),
 	})
+}
+
+func toChatAttachments(attachments []storedAttachment) []chat.Attachment {
+	if attachments == nil {
+		return nil
+	}
+	out := make([]chat.Attachment, len(attachments))
+	for i, attachment := range attachments {
+		out[i] = chat.Attachment{
+			ID:          attachment.ID,
+			Name:        attachment.Name,
+			ContentType: attachment.ContentType,
+			Size:        attachment.Size,
+			URL:         attachment.URL,
+			Path:        attachment.Path,
+		}
+	}
+	return out
 }
 
 func (s *Server) handleRunChatCommand(w http.ResponseWriter, r *http.Request) {

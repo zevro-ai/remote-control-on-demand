@@ -268,8 +268,8 @@ func latestSessionIDLocked(sessions map[string]*chat.Session) string {
 	return latestID
 }
 
-func (m *Manager) SendMessage(ctx context.Context, id, prompt string) error {
-	_, _, err := m.Send(ctx, id, prompt, nil)
+func (m *Manager) SendMessage(ctx context.Context, id, prompt string, attachments []chat.Attachment) error {
+	_, _, err := m.Send(ctx, id, prompt, attachments)
 	return err
 }
 
