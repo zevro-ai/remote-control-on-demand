@@ -81,7 +81,7 @@ type Provider interface {
 	GetSession(id string) (*Session, bool)
 	CreateSession(folder string) (*Session, error)
 	DeleteSession(id string) error
-	SendMessage(ctx context.Context, sessionID, message string) error
+	SendMessage(ctx context.Context, sessionID, message string, attachments []Attachment) error
 	RunCommand(ctx context.Context, sessionID, command string) error
 	Subscribe(fn func(Event)) func()
 }
