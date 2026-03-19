@@ -2,13 +2,13 @@ import { useCallback, useState } from "react";
 
 export interface PanelState {
   sessionId: string;
-  type: "claude" | "codex";
+  type: string;
 }
 
 export function usePanelManager() {
   const [focusedPanel, setFocusedPanel] = useState<PanelState | null>(null);
 
-  const focusPanel = useCallback((sessionId: string, type: "claude" | "codex") => {
+  const focusPanel = useCallback((sessionId: string, type: string) => {
     setFocusedPanel({ sessionId, type });
   }, []);
 
