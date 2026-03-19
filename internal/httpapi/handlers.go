@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,7 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 	for id := range s.providers {
 		providers = append(providers, id)
 	}
+	sort.Strings(providers)
 	writeJSON(w, http.StatusOK, providers)
 }
 
