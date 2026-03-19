@@ -2,6 +2,8 @@ package config
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -25,6 +27,15 @@ const (
 	cursorHide = esc + "?25l"
 	cursorShow = esc + "?25h"
 	clearLine  = esc + "2K"
+)
+
+const defaultDashboardPort = 3001
+
+var (
+	onboardingSelectOption  = selectFromList
+	onboardingGetwd         = os.Getwd
+	onboardingExit          = os.Exit
+	onboardingGenerateToken = generateOnboardingToken
 )
 
 func styled(codes, s string) string { return codes + s + reset }
@@ -152,11 +163,11 @@ func RunOnboarding(configPath string) (*Config, error) {
 	reader := bufio.NewReader(os.Stdin)
 
 	printLogo()
-	fmt.Println(styled(fDim, "  Welcome! Let's configure your bot in 5 quick steps."))
+	fmt.Println(styled(fDim, "  Welcome! Let's configure RCOD in 6 quick steps."))
 	fmt.Println()
 
-	// ── 1/5 ── Telegram Bot Token ──────────────────────────────────
-	fmt.Println(stepLabel(1, 4) + "  " + stepTitle("Telegram Bot Token"))
+	// ── 1/6 ── Telegram Bot Token ──────────────────────────────────
+	fmt.Println(stepLabel(1, 6) + "  " + stepTitle("Telegram Bot Token"))
 	fmt.Println(stepHint("Create a bot via @BotFather and paste the token."))
 	fmt.Println()
 	token, err := styledPrompt(reader)
@@ -169,8 +180,8 @@ func RunOnboarding(configPath string) (*Config, error) {
 	fmt.Println(stepOK("Token saved"))
 	fmt.Println()
 
-	// ── 2/5 ── Telegram User ID ────────────────────────────────────
-	fmt.Println(stepLabel(2, 4) + "  " + stepTitle("Telegram User ID"))
+	// ── 2/6 ── Telegram User ID ────────────────────────────────────
+	fmt.Println(stepLabel(2, 6) + "  " + stepTitle("Telegram User ID"))
 	fmt.Println(stepHint("Message @userinfobot on Telegram to get your ID."))
 	fmt.Println()
 	userIDStr, err := styledPrompt(reader)
@@ -184,9 +195,9 @@ func RunOnboarding(configPath string) (*Config, error) {
 	fmt.Println(stepOK("User ID saved"))
 	fmt.Println()
 
-	// ── 3/5 ── Projects folder ─────────────────────────────────────
-	cwd, _ := os.Getwd()
-	fmt.Println(stepLabel(3, 4) + "  " + stepTitle("Projects folder"))
+	// ── 3/6 ── Projects folder ─────────────────────────────────────
+	cwd, _ := onboardingGetwd()
+	fmt.Println(stepLabel(3, 6) + "  " + stepTitle("Projects folder"))
 	fmt.Println(stepHint("Base directory containing your git repos."))
 	fmt.Println(stepHint("Press Enter to use " + styled(fBrWhite, cwd)))
 	fmt.Println()
@@ -205,11 +216,11 @@ func RunOnboarding(configPath string) (*Config, error) {
 	fmt.Println(stepOK("Folder verified"))
 	fmt.Println()
 
-	// ── 4/5 ── Auto-restart ────────────────────────────────────────
-	fmt.Println(stepLabel(4, 5) + "  " + stepTitle("Auto-restart"))
+	// ── 4/6 ── Auto-restart ────────────────────────────────────────
+	fmt.Println(stepLabel(4, 6) + "  " + stepTitle("Auto-restart"))
 	fmt.Println(stepHint("Restart crashed sessions automatically?"))
 	fmt.Println()
-	autoIdx, err := selectFromList([]string{"Yes", "No"}, 0)
+	autoIdx, err := onboardingSelectOption([]string{"Yes", "No"}, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -251,11 +262,11 @@ func RunOnboarding(configPath string) (*Config, error) {
 	}
 	fmt.Println()
 
-	// ── 5/5 ── Progress updates ────────────────────────────────────
-	fmt.Println(stepLabel(5, 5) + "  " + stepTitle("Progress updates"))
+	// ── 5/6 ── Progress updates ────────────────────────────────────
+	fmt.Println(stepLabel(5, 6) + "  " + stepTitle("Progress updates"))
 	fmt.Println(stepHint("Send Telegram progress updates for running sessions?"))
 	fmt.Println()
-	progressIdx, err := selectFromList([]string{"Yes", "No"}, 0)
+	progressIdx, err := onboardingSelectOption([]string{"Yes", "No"}, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -288,11 +299,74 @@ func RunOnboarding(configPath string) (*Config, error) {
 	}
 	fmt.Println()
 
+	// ── 6/6 ── Built-in dashboard ──────────────────────────────────
+	fmt.Println(stepLabel(6, 6) + "  " + stepTitle("Built-in dashboard"))
+	fmt.Println(stepHint("RCOD can serve its dashboard directly from the same binary."))
+	fmt.Println(stepHint("Enable it now to browse sessions from a web UI without editing config.yaml later."))
+	fmt.Println()
+	dashboardIdx, err := onboardingSelectOption([]string{"Yes", "No"}, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	apiCfg := APIConfig{}
+	if dashboardIdx == 0 {
+		fmt.Println()
+		fmt.Print(styled(fDim, fmt.Sprintf("       Dashboard port [%d]: ", defaultDashboardPort)))
+		portStr, err := readLine(reader)
+		if err != nil {
+			return nil, err
+		}
+
+		apiCfg.Port = defaultDashboardPort
+		if portStr != "" {
+			apiCfg.Port, err = strconv.Atoi(portStr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid dashboard port: %w", err)
+			}
+		}
+		if apiCfg.Port <= 0 || apiCfg.Port > 65535 {
+			return nil, fmt.Errorf("dashboard port must be between 1 and 65535")
+		}
+
+		fmt.Println()
+		fmt.Println(stepHint("Protect the dashboard with a bearer token?"))
+		fmt.Println()
+		tokenIdx, err := onboardingSelectOption([]string{"Yes", "No"}, 0)
+		if err != nil {
+			return nil, err
+		}
+
+		if tokenIdx == 0 {
+			fmt.Println()
+			fmt.Println(stepHint("Press Enter to generate a token automatically."))
+			fmt.Print(styled(fDim, "       Dashboard token [auto-generated]: "))
+			apiToken, err := readLine(reader)
+			if err != nil {
+				return nil, err
+			}
+			if apiToken == "" {
+				apiToken, err = onboardingGenerateToken()
+				if err != nil {
+					return nil, fmt.Errorf("generating dashboard token: %w", err)
+				}
+			}
+			apiCfg.Token = apiToken
+			fmt.Println(stepOK("Dashboard enabled at " + dashboardURL(apiCfg.Port) + " (token protected)"))
+		} else {
+			fmt.Println(stepOK("Dashboard enabled at " + dashboardURL(apiCfg.Port)))
+		}
+	} else {
+		fmt.Println(stepOK("Dashboard disabled"))
+	}
+	fmt.Println()
+
 	cfg := &Config{
 		Telegram: TelegramConfig{
 			Token:         token,
 			AllowedUserID: userID,
 		},
+		API: apiCfg,
 		RC: RCConfig{
 			BaseFolder:          baseFolder,
 			PermissionMode:      DefaultCodexPermissionMode,
@@ -321,18 +395,34 @@ func RunOnboarding(configPath string) (*Config, error) {
 	} else {
 		fmt.Printf("    %s  disabled\n", summaryLabel("Progress       "))
 	}
+	if cfg.API.Port > 0 {
+		fmt.Printf("    %s  %s\n", summaryLabel("Dashboard      "), dashboardURL(cfg.API.Port))
+		if cfg.API.Token != "" {
+			fmt.Printf("    %s  bearer token enabled (%s)\n", summaryLabel("Dashboard auth "), redactToken(cfg.API.Token))
+		} else {
+			fmt.Printf("    %s  disabled\n", summaryLabel("Dashboard auth "))
+		}
+	} else {
+		fmt.Printf("    %s  disabled\n", summaryLabel("Dashboard      "))
+	}
 	fmt.Println()
 
 	if err := cfg.Save(configPath); err != nil {
 		return nil, fmt.Errorf("saving config: %w", err)
 	}
 	fmt.Println(stepOK("Config saved to " + configPath))
+	if cfg.API.Port > 0 {
+		fmt.Println(stepOK("Dashboard URL: " + dashboardURL(cfg.API.Port)))
+		if cfg.API.Token != "" {
+			fmt.Println(stepHint("Bearer token saved to config.yaml."))
+		}
+	}
 	fmt.Println()
 
 	// ── Start now? ─────────────────────────────────────────────────
 	fmt.Println(styled(fBold, "  Start the bot now?"))
 	fmt.Println()
-	startIdx, err := selectFromList([]string{"Yes", "No"}, 0)
+	startIdx, err := onboardingSelectOption([]string{"Yes", "No"}, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +430,8 @@ func RunOnboarding(configPath string) (*Config, error) {
 		fmt.Println()
 		fmt.Println(styled(fDim, "  OK, start later with: go run ./cmd/codexbot"))
 		fmt.Println()
-		os.Exit(0)
+		onboardingExit(0)
+		return nil, nil
 	}
 
 	fmt.Println()
@@ -365,4 +456,16 @@ func redactToken(token string) string {
 		return strings.Repeat("*", len(token))
 	}
 	return token[:4] + "..." + token[len(token)-4:]
+}
+
+func dashboardURL(port int) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/", port)
+}
+
+func generateOnboardingToken() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
