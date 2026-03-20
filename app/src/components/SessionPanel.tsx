@@ -126,7 +126,7 @@ export function SessionPanel(props: Props) {
         <div className="session-panel__footer-actions">
           {props.type === "codex" && session.busy && props.onCancel && (
             <button
-              onClick={() => props.onCancel!(session.id)}
+              onClick={() => props.onCancel!(session.id).catch(console.error)}
               className="session-stop-button"
             >
               Stop
