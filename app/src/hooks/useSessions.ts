@@ -119,7 +119,11 @@ export function reduceSessionsState(state: State, action: Action): State {
       if (state.codexSessions.some((s) => s.id === action.session.id)) return state;
       return { ...state, codexSessions: [action.session, ...state.codexSessions] };
     case "REMOVE_CODEX_SESSION":
-      return { ...state, codexSessions: state.codexSessions.filter((s) => s.id !== action.sessionId) };
+      return {
+        ...state,
+        codexSessions: state.codexSessions.filter((s) => s.id !== action.sessionId),
+        streamBlocks: omitKey(state.streamBlocks, action.sessionId),
+      };
     case "ADD_CLAUDE_MESSAGE": {
       const currentBlocks = state.streamBlocks[action.sessionId] || [];
       const enrichedMessage =
@@ -256,7 +260,9 @@ export function reduceSessionsState(state: State, action: Action): State {
     }
     case "CODEX_ITEM_COMPLETED": {
       const blocks = (state.streamBlocks[action.sessionId] || []).map((b) =>
-        b.type === "tool_use" && b.index === action.index ? { ...b, done: true } : b
+        b.type === "tool_use" && b.index === action.index
+          ? { ...b, done: true, inputJSON: action.text || b.inputJSON }
+          : b
       );
       return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };
     }

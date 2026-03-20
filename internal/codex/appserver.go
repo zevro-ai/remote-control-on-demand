@@ -210,15 +210,15 @@ func (c *appServerClient) run(
 	model string,
 	dangerouslyBypassSandbox bool,
 ) (string, error) {
-	if err := c.initialize(); err != nil {
+	if err := c.initialize(ctx); err != nil {
 		return "", err
 	}
 
-	threadID, err := c.ensureThread(sess, sandbox, model, dangerouslyBypassSandbox)
+	threadID, err := c.ensureThread(ctx, sess, sandbox, model, dangerouslyBypassSandbox)
 	if err != nil {
 		return "", err
 	}
-	if err := c.startTurn(threadID, sess.Folder, prompt, attachments, model); err != nil {
+	if err := c.startTurn(ctx, threadID, sess.Folder, prompt, attachments, model); err != nil {
 		return threadID, err
 	}
 
@@ -232,8 +232,8 @@ func (c *appServerClient) run(
 	return threadID, nil
 }
 
-func (c *appServerClient) initialize() error {
-	resp, err := c.sendRequest("initialize", map[string]any{
+func (c *appServerClient) initialize(ctx context.Context) error {
+	resp, err := c.sendRequest(ctx, "initialize", map[string]any{
 		"clientInfo": map[string]string{
 			"name":    "rcod",
 			"version": "dev",
@@ -255,6 +255,7 @@ func (c *appServerClient) initialize() error {
 }
 
 func (c *appServerClient) ensureThread(
+	ctx context.Context,
 	sess *Session,
 	sandbox,
 	model string,
@@ -273,10 +274,8 @@ func (c *appServerClient) ensureThread(
 	if sess.ThreadID == "" {
 		params["experimentalRawEvents"] = false
 		params["developerInstructions"] = developerInstructions(sess)
-		params["approvalPolicy"] = appServerApprovalPolicy(dangerouslyBypassSandbox)
-		params["sandbox"] = appServerSandboxMode(sandbox, dangerouslyBypassSandbox)
 
-		resp, err := c.sendRequest("thread/start", params)
+		resp, err := c.sendRequest(ctx, "thread/start", params)
 		if err != nil {
 			return "", fmt.Errorf("starting codex thread: %w", err)
 		}
@@ -291,7 +290,7 @@ func (c *appServerClient) ensureThread(
 	}
 
 	params["threadId"] = sess.ThreadID
-	resp, err := c.sendRequest("thread/resume", params)
+	resp, err := c.sendRequest(ctx, "thread/resume", params)
 	if err != nil {
 		return "", fmt.Errorf("resuming codex thread %q: %w", sess.ThreadID, err)
 	}
@@ -306,6 +305,7 @@ func (c *appServerClient) ensureThread(
 }
 
 func (c *appServerClient) startTurn(
+	ctx context.Context,
 	threadID, cwd, prompt string,
 	attachments []Attachment,
 	model string,
@@ -339,7 +339,7 @@ func (c *appServerClient) startTurn(
 	if model != "" {
 		params["model"] = model
 	}
-	if _, err := c.sendRequest("turn/start", params); err != nil {
+	if _, err := c.sendRequest(ctx, "turn/start", params); err != nil {
 		return fmt.Errorf("starting codex turn: %w", err)
 	}
 	return nil
@@ -368,7 +368,7 @@ func (c *appServerClient) consumeTurn(ctx context.Context) (*appServerTurnState,
 	return state, nil
 }
 
-func (c *appServerClient) sendRequest(method string, params any) (appServerEnvelope, error) {
+func (c *appServerClient) sendRequest(ctx context.Context, method string, params any) (appServerEnvelope, error) {
 	c.nextID++
 	id := c.nextID
 	if err := c.writeEnvelope(map[string]any{
@@ -380,7 +380,7 @@ func (c *appServerClient) sendRequest(method string, params any) (appServerEnvel
 	}
 
 	for {
-		env, err := c.readEnvelope(context.Background())
+		env, err := c.readEnvelope(ctx)
 		if err != nil {
 			return appServerEnvelope{}, err
 		}
