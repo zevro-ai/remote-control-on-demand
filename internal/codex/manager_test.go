@@ -619,7 +619,7 @@ func TestAppServerClientBuffersNotificationsBeforeResponse(t *testing.T) {
 	events <- notification
 	events <- response
 
-	if _, err := client.sendRequest("turn/start", map[string]any{"threadId": "thread-1"}); err != nil {
+	if _, err := client.sendRequest(context.Background(), "turn/start", map[string]any{"threadId": "thread-1"}); err != nil {
 		t.Fatalf("sendRequest(): %v", err)
 	}
 
