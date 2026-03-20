@@ -31,9 +31,11 @@ type appServerThreadResponse struct {
 }
 
 type appServerTurnState struct {
-	reply    strings.Builder
-	turnDone bool
-	turnErr  string
+	reply     strings.Builder
+	turnDone  bool
+	turnErr   string
+	nextIndex int
+	itemIndex map[string]int
 }
 
 type appServerItemNotification struct {
@@ -346,7 +348,7 @@ func (c *appServerClient) startTurn(
 }
 
 func (c *appServerClient) consumeTurn(ctx context.Context) (*appServerTurnState, error) {
-	state := &appServerTurnState{}
+	state := &appServerTurnState{itemIndex: make(map[string]int)}
 	for !state.turnDone {
 		env, err := c.nextEnvelope(ctx)
 		if err != nil {
@@ -463,8 +465,6 @@ func (c *appServerClient) readEnvelope(ctx context.Context) (appServerEnvelope, 
 }
 
 func scanAppServer(r io.Reader, out chan<- appServerEnvelope, errCh chan<- error) {
-	defer close(out)
-
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
@@ -476,6 +476,7 @@ func scanAppServer(r io.Reader, out chan<- appServerEnvelope, errCh chan<- error
 		out <- env
 	}
 
+	close(out)
 	if err := scanner.Err(); err != nil {
 		errCh <- err
 	}
@@ -504,6 +505,12 @@ func handleAppServerNotification(
 			return fmt.Errorf("decoding item/started: %w", err)
 		}
 		if normalized, ok := normalizeAppServerItem(item.Item); ok && cb.OnItemStarted != nil {
+			idx := state.nextIndex
+			state.nextIndex++
+			if item.Item.ID != "" {
+				state.itemIndex[item.Item.ID] = idx
+			}
+			normalized.Index = idx
 			cb.OnItemStarted(normalized)
 		}
 	case "item/completed":
@@ -515,6 +522,9 @@ func handleAppServerNotification(
 			reply.WriteString(item.Item.Text)
 		}
 		if normalized, ok := normalizeAppServerItem(item.Item); ok && cb.OnItemCompleted != nil {
+			if idx, found := state.itemIndex[item.Item.ID]; found {
+				normalized.Index = idx
+			}
 			cb.OnItemCompleted(normalized)
 		}
 	case "turn/completed":

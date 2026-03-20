@@ -253,9 +253,13 @@ var errCancelledByUser = fmt.Errorf("cancelled by user")
 // Cancel aborts a running Send/RunCommand for the given session.
 func (m *Manager) Cancel(id string) error {
 	m.mu.Lock()
-	cancel, ok := m.cancelFuncs[id]
+	_, sessionExists := m.sessions[id]
+	cancel, isBusy := m.cancelFuncs[id]
 	m.mu.Unlock()
-	if !ok {
+	if !sessionExists {
+		return fmt.Errorf("session %q not found", id)
+	}
+	if !isBusy {
 		return fmt.Errorf("session %q is not busy", id)
 	}
 	cancel(errCancelledByUser)
