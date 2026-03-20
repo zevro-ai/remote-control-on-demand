@@ -55,7 +55,7 @@ const (
 type ItemEvent struct {
 	Index   int    `json:"index"`
 	ID      string `json:"id"`
-	Type    string `json:"type"`    // "command_execution", "reasoning", "file_changes", etc.
+	Type    string `json:"type"` // "command_execution", "reasoning", "file_changes", etc.
 	Command string `json:"command,omitempty"`
 	Text    string `json:"text,omitempty"`
 	Status  string `json:"status,omitempty"`
