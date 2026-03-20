@@ -112,77 +112,90 @@ func (h *Hub) start(sessionMgr *session.Manager, claudeMgr *claudechat.Manager, 
 	})
 
 	h.unsubCodex = codexMgr.Subscribe(func(e codex.Event) {
-		switch e.Type {
-		case codex.EventSessionCreated:
-			h.broadcast(wsMessage{
-				Type:      "codex_session_added",
-				SessionID: e.SessionID,
-				Session:   toCodexSessionResponse(e.Session),
-			})
-		case codex.EventSessionClosed:
-			h.broadcast(wsMessage{
-				Type:      "codex_session_removed",
-				SessionID: e.SessionID,
-			})
-		case codex.EventMessageReceived:
-			if e.Message != nil {
-				h.broadcast(wsMessage{
-					Type:      "codex_message",
-					SessionID: e.SessionID,
-					Message:   toCodexMessagePayload(*e.Message),
-				})
-			}
-		case codex.EventMessageDelta:
-			if e.Delta != "" {
-				h.broadcast(wsMessage{
-					Type:      "codex_message_delta",
-					SessionID: e.SessionID,
-					Delta:     e.Delta,
-				})
-			}
-		case codex.EventBusyChanged:
-			busy := e.Busy
-			h.broadcast(wsMessage{
-				Type:      "codex_busy",
-				SessionID: e.SessionID,
-				Busy:      &busy,
-			})
-		case codex.EventItemStarted:
-			if e.Item != nil {
-				h.broadcast(wsMessage{
-					Type:      "codex_item_started",
-					SessionID: e.SessionID,
-					ToolCall: &toolCallPayload{
-						Index: e.Item.Index,
-						ID:    e.Item.ID,
-						Name:  e.Item.Type,
-					},
-					Delta: e.Item.Command,
-				})
-			}
-		case codex.EventItemCompleted:
-			if e.Item != nil {
-				h.broadcast(wsMessage{
-					Type:      "codex_item_completed",
-					SessionID: e.SessionID,
-					ToolCall: &toolCallPayload{
-						Index: e.Item.Index,
-						ID:    e.Item.ID,
-						Name:  e.Item.Type,
-					},
-					Delta: e.Item.Text,
-				})
-			}
-		case codex.EventError:
-			if e.Error != "" {
-				h.broadcast(wsMessage{
-					Type:      "codex_error",
-					SessionID: e.SessionID,
-					Line:      e.Error,
-				})
-			}
+		if msg, ok := codexEventMessage(e); ok {
+			h.broadcast(msg)
 		}
 	})
+}
+
+func codexEventMessage(e codex.Event) (wsMessage, bool) {
+	switch e.Type {
+	case codex.EventSessionCreated:
+		return wsMessage{
+			Type:      "codex_session_added",
+			SessionID: e.SessionID,
+			Session:   toCodexSessionResponse(e.Session),
+		}, true
+	case codex.EventSessionClosed:
+		return wsMessage{
+			Type:      "codex_session_removed",
+			SessionID: e.SessionID,
+		}, true
+	case codex.EventMessageReceived:
+		if e.Message == nil {
+			return wsMessage{}, false
+		}
+		return wsMessage{
+			Type:      "codex_message",
+			SessionID: e.SessionID,
+			Message:   toCodexMessagePayload(*e.Message),
+		}, true
+	case codex.EventMessageDelta:
+		if e.Delta == "" {
+			return wsMessage{}, false
+		}
+		return wsMessage{
+			Type:      "codex_message_delta",
+			SessionID: e.SessionID,
+			Delta:     e.Delta,
+		}, true
+	case codex.EventBusyChanged:
+		busy := e.Busy
+		return wsMessage{
+			Type:      "codex_busy",
+			SessionID: e.SessionID,
+			Busy:      &busy,
+		}, true
+	case codex.EventItemStarted:
+		if e.Item == nil {
+			return wsMessage{}, false
+		}
+		return wsMessage{
+			Type:      "codex_item_started",
+			SessionID: e.SessionID,
+			ToolCall: &toolCallPayload{
+				Index:   e.Item.Index,
+				ID:      e.Item.ID,
+				Name:    e.Item.Type,
+				Command: e.Item.Command,
+			},
+		}, true
+	case codex.EventItemCompleted:
+		if e.Item == nil {
+			return wsMessage{}, false
+		}
+		return wsMessage{
+			Type:      "codex_item_completed",
+			SessionID: e.SessionID,
+			ToolCall: &toolCallPayload{
+				Index:      e.Item.Index,
+				ID:         e.Item.ID,
+				Name:       e.Item.Type,
+				OutputText: e.Item.Text,
+			},
+		}, true
+	case codex.EventError:
+		if e.Error == "" {
+			return wsMessage{}, false
+		}
+		return wsMessage{
+			Type:      "codex_error",
+			SessionID: e.SessionID,
+			Line:      e.Error,
+		}, true
+	default:
+		return wsMessage{}, false
+	}
 }
 
 func (h *Hub) stop() {

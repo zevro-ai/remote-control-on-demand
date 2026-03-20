@@ -82,6 +82,42 @@ describe("reduceSessionsState", () => {
     expect(next.codexSessions[0].messages?.[0].blocks).toEqual(initial.streamBlocks["codex-1"]);
     expect(next.streamBlocks["codex-1"]).toBeUndefined();
   });
+
+  it("keeps the command label when a Codex item completes with output text", () => {
+    const withStarted = reduceSessionsState(
+      {
+        ...sessionsInitialState,
+        streamBlocks: {},
+      },
+      {
+        type: "CODEX_ITEM_STARTED",
+        sessionId: "codex-1",
+        index: 0,
+        id: "tool-1",
+        name: "command_execution",
+        command: "ls -la",
+      }
+    );
+
+    const next = reduceSessionsState(withStarted, {
+      type: "CODEX_ITEM_COMPLETED",
+      sessionId: "codex-1",
+      index: 0,
+      text: "total 0",
+    });
+
+    expect(next.streamBlocks["codex-1"]).toEqual([
+      {
+        type: "tool_use",
+        index: 0,
+        id: "tool-1",
+        name: "command_execution",
+        inputJSON: "ls -la",
+        outputText: "total 0",
+        done: true,
+      },
+    ]);
+  });
 });
 
 describe("resolveBootstrapResults", () => {

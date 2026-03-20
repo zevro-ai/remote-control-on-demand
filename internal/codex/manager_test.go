@@ -822,3 +822,100 @@ func TestSendEmitsErrorEvent(t *testing.T) {
 		t.Fatalf("error = %q", errorEvents[0].Error)
 	}
 }
+
+func TestSendClearsCancelBeforeBusyFalseEvent(t *testing.T) {
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	sess, err := mgr.Create("demo")
+	if err != nil {
+		t.Fatalf("Create(): %v", err)
+	}
+
+	previousRunCodexFn := runCodexFn
+	runCodexFn = func(
+		ctx context.Context,
+		sess *Session,
+		prompt string,
+		attachments []Attachment,
+		sandbox, model string,
+		dangerouslyBypassSandbox bool,
+		cb StreamCallback,
+	) (string, string, error) {
+		return "thread-123", "done", nil
+	}
+	t.Cleanup(func() { runCodexFn = previousRunCodexFn })
+
+	cancelErrCh := make(chan error, 1)
+	mgr.Subscribe(func(event Event) {
+		if event.Type == EventBusyChanged && event.SessionID == sess.ID && !event.Busy {
+			cancelErrCh <- mgr.Cancel(sess.ID)
+		}
+	})
+
+	if _, _, err := mgr.Send(context.Background(), sess.ID, "hello", nil); err != nil {
+		t.Fatalf("Send(): %v", err)
+	}
+
+	select {
+	case cancelErr := <-cancelErrCh:
+		if cancelErr == nil || !strings.Contains(cancelErr.Error(), "not busy") {
+			t.Fatalf("Cancel() during busy=false event = %v, want not busy error", cancelErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("did not observe busy=false event")
+	}
+}
+
+func TestRunCommandEmitsErrorEventOnCancel(t *testing.T) {
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	sess, err := mgr.Create("demo")
+	if err != nil {
+		t.Fatalf("Create(): %v", err)
+	}
+
+	var errorEvents []Event
+	mgr.Subscribe(func(event Event) {
+		if event.Type == EventError {
+			errorEvents = append(errorEvents, event)
+		}
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, _, err := mgr.RunCommand(context.Background(), sess.ID, "while true; do sleep 1; done")
+		errCh <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	if err := mgr.Cancel(sess.ID); err != nil {
+		t.Fatalf("Cancel(): %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "cancelled by user") {
+			t.Fatalf("RunCommand() error = %v, want cancelled by user", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunCommand() did not return after Cancel()")
+	}
+
+	if len(errorEvents) != 1 {
+		t.Fatalf("error events = %d, want 1", len(errorEvents))
+	}
+	if errorEvents[0].Error != errCancelledByUser.Error() {
+		t.Fatalf("error event = %q, want %q", errorEvents[0].Error, errCancelledByUser.Error())
+	}
+}

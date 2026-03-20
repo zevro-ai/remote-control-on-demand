@@ -419,6 +419,8 @@ func (c *appServerClient) sendNotification(method string, params any) error {
 func (c *appServerClient) respondToServerRequest(id int, method string) error {
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "applyPatchApproval", "execCommandApproval":
+		// RCOD has no interactive approval handshake with the Telegram/dashboard client yet,
+		// so sandboxing remains the only permission boundary and out-of-sandbox requests are denied.
 		return c.writeEnvelope(map[string]any{
 			"id":     id,
 			"result": map[string]any{"decision": "denied"},
