@@ -66,6 +66,7 @@ func (s *Server) Start() {
 	mux.HandleFunc("GET /api/codex/sessions", s.handleListCodexSessions)
 	mux.HandleFunc("POST /api/codex/sessions", s.handleCreateCodexSession)
 	mux.HandleFunc("POST /api/codex/sessions/{id}/send", s.handleSendCodexMessage)
+	mux.HandleFunc("POST /api/codex/sessions/{id}/cancel", s.handleCancelCodexSession)
 	mux.HandleFunc("POST /api/codex/sessions/{id}/command", s.handleRunCodexCommand)
 	mux.HandleFunc("GET /api/codex/sessions/{id}/messages", s.handleCodexMessages)
 	mux.HandleFunc("DELETE /api/codex/sessions/{id}", s.handleDeleteCodexSession)

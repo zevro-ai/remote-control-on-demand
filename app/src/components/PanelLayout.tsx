@@ -103,10 +103,12 @@ export function PanelLayout({
             <SessionPanel
               type="codex"
               session={focusedSession}
+              streamBlocks={state.streamBlocks[focusedSession.id] || []}
               onClose={onClearFocus}
               onSend={actions.sendCodexMessage}
               onRunCommand={actions.sendCodexCommand}
               onSessionClose={actions.closeCodexSession}
+              onCancel={actions.cancelCodexSession}
             />
           ) : null}
         </div>
@@ -175,9 +177,7 @@ export function PanelLayout({
                   slot.session
                     ? buildSessionPreview(
                         slot.session,
-                        slot.session.agent === "claude"
-                          ? state.streamBlocks[slot.session.id] || []
-                          : [],
+                        state.streamBlocks[slot.session.id] || [],
                         getPreviewLineCount(density)
                       )
                     : []

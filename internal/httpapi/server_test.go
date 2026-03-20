@@ -51,6 +51,7 @@ func setupTestServer(t *testing.T) (*Server, *http.ServeMux) {
 	mux.HandleFunc("GET /api/codex/sessions", srv.handleListCodexSessions)
 	mux.HandleFunc("POST /api/codex/sessions", srv.handleCreateCodexSession)
 	mux.HandleFunc("POST /api/codex/sessions/{id}/send", srv.handleSendCodexMessage)
+	mux.HandleFunc("POST /api/codex/sessions/{id}/cancel", srv.handleCancelCodexSession)
 	mux.HandleFunc("POST /api/codex/sessions/{id}/command", srv.handleRunCodexCommand)
 	mux.HandleFunc("GET /api/codex/sessions/{id}/messages", srv.handleCodexMessages)
 	mux.HandleFunc("DELETE /api/codex/sessions/{id}", srv.handleDeleteCodexSession)
@@ -345,6 +346,11 @@ func TestStatusCodeForManagerError(t *testing.T) {
 			want: http.StatusConflict,
 		},
 		{
+			name: "not busy becomes 409",
+			err:  errors.New(`session "abc" is not busy`),
+			want: http.StatusConflict,
+		},
+		{
 			name: "validation stays 400",
 			err:  errors.New("message cannot be empty"),
 			want: http.StatusBadRequest,
@@ -523,6 +529,30 @@ func TestSendCodexMessage_NotFoundReturns404(t *testing.T) {
 
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestCancelCodexSession_IdleReturns409(t *testing.T) {
+	srv, mux := setupTestServer(t)
+
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	srv.codexMgr = codex.NewManager(baseDir, "")
+	sess, err := srv.codexMgr.Create("demo")
+	if err != nil {
+		t.Fatalf("Create(): %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/codex/sessions/"+sess.ID+"/cancel", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rr.Code)
 	}
 }
 
