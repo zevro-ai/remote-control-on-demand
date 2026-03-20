@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,7 +25,17 @@ const (
 	defaultSandbox                  = "workspace-write"
 	defaultDangerouslyBypassSandbox = false
 	defaultSystemPATH               = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
+	execInactivityTimeout           = 5 * time.Minute
 )
+
+var errExecInactivityTimeout = fmt.Errorf("codex exec timed out after %s of inactivity on stdout", execInactivityTimeout)
+
+// StreamCallback receives structured events from Codex CLI --json output.
+type StreamCallback struct {
+	OnTextDelta     func(delta string)
+	OnItemStarted   func(item ItemEvent)
+	OnItemCompleted func(item ItemEvent)
+}
 
 var runCodexFn = runCodex
 
@@ -34,15 +45,31 @@ const (
 	EventSessionCreated EventType = iota
 	EventSessionClosed
 	EventMessageReceived
+	EventMessageDelta
 	EventBusyChanged
+	EventItemStarted
+	EventItemCompleted
+	EventError
 )
+
+type ItemEvent struct {
+	Index   int    `json:"index"`
+	ID      string `json:"id"`
+	Type    string `json:"type"`    // "command_execution", "reasoning", "file_changes", etc.
+	Command string `json:"command,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Status  string `json:"status,omitempty"`
+}
 
 type Event struct {
 	Type      EventType
 	SessionID string
-	Session   *Session // non-nil for Created
-	Message   *Message // non-nil for MessageReceived
-	Busy      bool     // for BusyChanged
+	Session   *Session   // non-nil for Created
+	Message   *Message   // non-nil for MessageReceived
+	Delta     string     // non-empty for EventMessageDelta
+	Busy      bool       // for BusyChanged
+	Item      *ItemEvent // non-nil for ItemStarted/ItemCompleted
+	Error     string     // non-empty for EventError
 }
 
 type Message struct {
@@ -96,6 +123,7 @@ type Manager struct {
 	model                    string
 	sandbox                  string
 	dangerouslyBypassSandbox bool
+	cancelFuncs              map[string]context.CancelCauseFunc
 	subMu                    sync.Mutex
 	subscribers              []func(Event)
 	wg                       sync.WaitGroup
@@ -108,6 +136,7 @@ func NewManager(baseFolder, statePath string) *Manager {
 		sessions:                 make(map[string]*Session),
 		sandbox:                  defaultSandbox,
 		dangerouslyBypassSandbox: defaultDangerouslyBypassSandbox,
+		cancelFuncs:              make(map[string]context.CancelCauseFunc),
 	}
 }
 
@@ -217,6 +246,20 @@ func (m *Manager) emit(e Event) {
 // Shutdown waits for in-flight Send() calls to finish.
 func (m *Manager) Shutdown() {
 	m.wg.Wait()
+}
+
+var errCancelledByUser = fmt.Errorf("cancelled by user")
+
+// Cancel aborts a running Send/RunCommand for the given session.
+func (m *Manager) Cancel(id string) error {
+	m.mu.Lock()
+	cancel, ok := m.cancelFuncs[id]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("session %q is not busy", id)
+	}
+	cancel(errCancelledByUser)
+	return nil
 }
 
 func (m *Manager) Create(folder string) (*Session, error) {
@@ -431,10 +474,32 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 
 	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
 	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
+
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	m.mu.Lock()
+	m.cancelFuncs[id] = cancelCause
+	m.mu.Unlock()
+
 	m.wg.Add(1)
 	defer m.wg.Done()
+	defer func() {
+		cancelCause(nil)
+		m.mu.Lock()
+		delete(m.cancelFuncs, id)
+		m.mu.Unlock()
+	}()
 
-	threadID, reply, err := runCodexFn(ctx, snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox)
+	threadID, reply, err := runCodexFn(ctx, snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox, StreamCallback{
+		OnTextDelta: func(delta string) {
+			m.emit(Event{Type: EventMessageDelta, SessionID: id, Delta: delta})
+		},
+		OnItemStarted: func(item ItemEvent) {
+			m.emit(Event{Type: EventItemStarted, SessionID: id, Item: &item})
+		},
+		OnItemCompleted: func(item ItemEvent) {
+			m.emit(Event{Type: EventItemCompleted, SessionID: id, Item: &item})
+		},
+	})
 
 	m.mu.Lock()
 	current, ok := m.sessions[id]
@@ -473,6 +538,7 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	}
 
 	if err != nil {
+		m.emit(Event{Type: EventError, SessionID: id, Error: err.Error()})
 		if saveErr != nil {
 			return nil, "", fmt.Errorf("%w (state save failed: %v)", err, saveErr)
 		}
@@ -580,7 +646,7 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 	return clone, result, nil
 }
 
-func runCodex(
+func runCodexExecJSON(
 	ctx context.Context,
 	sess *Session,
 	prompt string,
@@ -588,11 +654,15 @@ func runCodex(
 	sandbox,
 	model string,
 	dangerouslyBypassSandbox bool,
+	cb StreamCallback,
 ) (string, string, error) {
 	codexBin, cmdEnv, err := resolveCodexCommandEnv()
 	if err != nil {
 		return "", "", fmt.Errorf("starting codex: %w", err)
 	}
+
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	defer cancelCause(nil)
 
 	args := buildCodexArgs(sess, prompt, attachments, sandbox, model, dangerouslyBypassSandbox)
 	cmd := exec.CommandContext(ctx, codexBin, args...)
@@ -612,6 +682,9 @@ func runCodex(
 		return "", "", fmt.Errorf("starting codex: %w", err)
 	}
 
+	ir := newInactivityReader(stdout, execInactivityTimeout, cancelCause)
+	defer ir.Stop()
+
 	var wg sync.WaitGroup
 	var result execResult
 	var stdoutBuf strings.Builder
@@ -620,7 +693,7 @@ func runCodex(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		parseExecOutput(stdout, &result, &stdoutBuf)
+		parseExecOutput(ir, &result, &stdoutBuf, cb)
 	}()
 	go func() {
 		defer wg.Done()
@@ -629,6 +702,15 @@ func runCodex(
 
 	waitErr := cmd.Wait()
 	wg.Wait()
+
+	if cause := context.Cause(ctx); errors.Is(cause, errExecInactivityTimeout) {
+		return result.ThreadID, strings.TrimSpace(result.Response),
+			fmt.Errorf("codex exec killed: no output received for %s", execInactivityTimeout)
+	}
+	if cause := context.Cause(ctx); errors.Is(cause, errCancelledByUser) {
+		return result.ThreadID, strings.TrimSpace(result.Response),
+			fmt.Errorf("codex exec cancelled by user")
+	}
 
 	if waitErr != nil {
 		detail := strings.TrimSpace(stderrBuf.String())
@@ -715,14 +797,20 @@ type execEvent struct {
 	Type     string `json:"type"`
 	ThreadID string `json:"thread_id,omitempty"`
 	Item     struct {
-		Type string `json:"type,omitempty"`
-		Text string `json:"text,omitempty"`
+		ID      string `json:"id,omitempty"`
+		Type    string `json:"type,omitempty"`
+		Text    string `json:"text,omitempty"`
+		Command string `json:"command,omitempty"`
+		Status  string `json:"status,omitempty"`
 	} `json:"item,omitempty"`
 }
 
-func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder) {
+func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb StreamCallback) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	nextIndex := 0
+	itemIndices := make(map[string]int)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -737,9 +825,89 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder) {
 		if event.ThreadID != "" {
 			result.ThreadID = event.ThreadID
 		}
-		if event.Type == "item.completed" && event.Item.Type == "agent_message" && event.Item.Text != "" {
-			result.Response = event.Item.Text
+
+		switch event.Type {
+		case "item.started":
+			if event.Item.Type != "" && cb.OnItemStarted != nil {
+				idx := nextIndex
+				nextIndex++
+				if event.Item.ID != "" {
+					itemIndices[event.Item.ID] = idx
+				}
+				cb.OnItemStarted(ItemEvent{
+					Index:   idx,
+					ID:      event.Item.ID,
+					Type:    event.Item.Type,
+					Command: event.Item.Command,
+					Text:    event.Item.Text,
+					Status:  event.Item.Status,
+				})
+			}
+		case "item.completed":
+			if event.Item.Type == "agent_message" && event.Item.Text != "" {
+				result.Response = event.Item.Text
+			}
+			if event.Item.Type != "" && cb.OnItemCompleted != nil {
+				idx, ok := itemIndices[event.Item.ID]
+				if !ok {
+					idx = nextIndex
+					nextIndex++
+				}
+				cb.OnItemCompleted(ItemEvent{
+					Index:   idx,
+					ID:      event.Item.ID,
+					Type:    event.Item.Type,
+					Command: event.Item.Command,
+					Text:    event.Item.Text,
+					Status:  event.Item.Status,
+				})
+			}
 		}
+	}
+}
+
+// inactivityReader wraps an io.Reader and cancels a context when no data
+// arrives for the configured timeout duration.
+type inactivityReader struct {
+	inner    io.Reader
+	timer    *time.Timer
+	timeout  time.Duration
+	cancelFn context.CancelCauseFunc
+	done     chan struct{}
+}
+
+func newInactivityReader(r io.Reader, timeout time.Duration, cancelFn context.CancelCauseFunc) *inactivityReader {
+	ir := &inactivityReader{
+		inner:    r,
+		timeout:  timeout,
+		cancelFn: cancelFn,
+		done:     make(chan struct{}),
+	}
+	ir.timer = time.NewTimer(timeout)
+	go func() {
+		select {
+		case <-ir.timer.C:
+			cancelFn(errExecInactivityTimeout)
+		case <-ir.done:
+		}
+	}()
+	return ir
+}
+
+func (ir *inactivityReader) Read(p []byte) (int, error) {
+	n, err := ir.inner.Read(p)
+	if n > 0 {
+		ir.timer.Reset(ir.timeout)
+	}
+	return n, err
+}
+
+func (ir *inactivityReader) Stop() {
+	ir.timer.Stop()
+	select {
+	case <-ir.done:
+	default:
+		close(ir.done)
 	}
 }
 

@@ -4,7 +4,7 @@ BINARY := rcod
 
 build:
 	cd app && npm ci && npm run build
-	go build -o $(BINARY) ./cmd/codexbot
+	go build -o $(BINARY) ./cmd/rcod
 
 test:
 	cd app && npm ci && npm test

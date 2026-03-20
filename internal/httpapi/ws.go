@@ -132,6 +132,14 @@ func (h *Hub) start(sessionMgr *session.Manager, claudeMgr *claudechat.Manager, 
 					Message:   toCodexMessagePayload(*e.Message),
 				})
 			}
+		case codex.EventMessageDelta:
+			if e.Delta != "" {
+				h.broadcast(wsMessage{
+					Type:      "codex_message_delta",
+					SessionID: e.SessionID,
+					Delta:     e.Delta,
+				})
+			}
 		case codex.EventBusyChanged:
 			busy := e.Busy
 			h.broadcast(wsMessage{
@@ -139,6 +147,40 @@ func (h *Hub) start(sessionMgr *session.Manager, claudeMgr *claudechat.Manager, 
 				SessionID: e.SessionID,
 				Busy:      &busy,
 			})
+		case codex.EventItemStarted:
+			if e.Item != nil {
+				h.broadcast(wsMessage{
+					Type:      "codex_item_started",
+					SessionID: e.SessionID,
+					ToolCall: &toolCallPayload{
+						Index: e.Item.Index,
+						ID:    e.Item.ID,
+						Name:  e.Item.Type,
+					},
+					Delta: e.Item.Command,
+				})
+			}
+		case codex.EventItemCompleted:
+			if e.Item != nil {
+				h.broadcast(wsMessage{
+					Type:      "codex_item_completed",
+					SessionID: e.SessionID,
+					ToolCall: &toolCallPayload{
+						Index: e.Item.Index,
+						ID:    e.Item.ID,
+						Name:  e.Item.Type,
+					},
+					Delta: e.Item.Text,
+				})
+			}
+		case codex.EventError:
+			if e.Error != "" {
+				h.broadcast(wsMessage{
+					Type:      "codex_error",
+					SessionID: e.SessionID,
+					Line:      e.Error,
+				})
+			}
 		}
 	})
 }

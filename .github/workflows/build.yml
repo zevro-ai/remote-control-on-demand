@@ -52,7 +52,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Build worker binary
-        run: go build -v -o rcod ./cmd/codexbot
+        run: go build -v -o rcod ./cmd/rcod
 
       - name: Test
         run: go test -v ./...

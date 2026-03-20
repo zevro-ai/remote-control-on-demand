@@ -17,10 +17,12 @@ interface ClaudeProps {
 interface CodexProps {
   type: "codex";
   session: CodexSession;
+  streamBlocks: StreamBlock[];
   onClose: () => void;
   onSend: (id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
   onRunCommand: (id: string, command: string) => Promise<void>;
   onSessionClose: (id: string) => Promise<void>;
+  onCancel?: (id: string) => Promise<void>;
 }
 
 type Props = ClaudeProps | CodexProps;
@@ -28,7 +30,7 @@ type Props = ClaudeProps | CodexProps;
 export function SessionPanel(props: Props) {
   const { session, type } = props;
   const messages = session.messages || [];
-  const streamBlocks = props.type === "claude" ? props.streamBlocks : [];
+  const streamBlocks = props.streamBlocks;
 
   const telemetry = useMemo(
     () => [
@@ -121,12 +123,22 @@ export function SessionPanel(props: Props) {
           supportsImages={type === "codex"}
           supportsBash
         />
-        <button
-          onClick={() => props.onSessionClose(session.id)}
-          className="session-close-button"
-        >
-          End session
-        </button>
+        <div className="session-panel__footer-actions">
+          {props.type === "codex" && session.busy && props.onCancel && (
+            <button
+              onClick={() => props.onCancel!(session.id)}
+              className="session-stop-button"
+            >
+              Stop
+            </button>
+          )}
+          <button
+            onClick={() => props.onSessionClose(session.id)}
+            className="session-close-button"
+          >
+            End session
+          </button>
+        </div>
       </footer>
     </article>
   );

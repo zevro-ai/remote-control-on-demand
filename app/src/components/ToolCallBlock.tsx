@@ -30,14 +30,14 @@ export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
   }, [inputJSON]);
 
   const target = useMemo(() => {
-    if (!parsed) return "";
+    if (!parsed) return inputJSON || "";
     if (parsed.file_path) return parsed.file_path;
     if (parsed.command) return parsed.command;
     if (parsed.pattern) return parsed.pattern;
     if (parsed.path) return parsed.path;
     if (parsed.description) return parsed.description;
     return "";
-  }, [parsed]);
+  }, [parsed, inputJSON]);
 
   const isActive = live && !done;
 

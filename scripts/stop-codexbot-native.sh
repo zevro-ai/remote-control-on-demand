@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="$ROOT_DIR/.codexbot"
-PID_FILE="$STATE_DIR/codexbot.pid"
+PID_FILE="$STATE_DIR/rcod.pid"
 
 if [[ ! -f "$PID_FILE" ]]; then
-  echo "codexbot is not running"
+  echo "rcod is not running"
   exit 0
 fi
 
@@ -16,13 +16,13 @@ if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
   for _ in {1..10}; do
     if ! kill -0 "$PID" 2>/dev/null; then
       rm -f "$PID_FILE"
-      echo "codexbot stopped"
+      echo "rcod stopped"
       exit 0
     fi
     sleep 1
   done
 
-  echo "codexbot did not exit after 10s; send SIGKILL manually if needed" >&2
+  echo "rcod did not exit after 10s; send SIGKILL manually if needed" >&2
   exit 1
 fi
 
