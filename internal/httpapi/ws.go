@@ -262,9 +262,7 @@ func (h *Hub) broadcastToSession(sessionID string, msg wsMessage) {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
-	})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("websocket accept error: %v", err)
 		return
