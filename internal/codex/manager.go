@@ -243,6 +243,13 @@ func (m *Manager) emit(e Event) {
 	}
 }
 
+func (m *Manager) clearCancelFunc(id string, cancelCause context.CancelCauseFunc) {
+	cancelCause(nil)
+	m.mu.Lock()
+	delete(m.cancelFuncs, id)
+	m.mu.Unlock()
+}
+
 // Shutdown waits for in-flight Send() calls to finish.
 func (m *Manager) Shutdown() {
 	m.wg.Wait()
@@ -483,12 +490,6 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 
 	m.wg.Add(1)
 	defer m.wg.Done()
-	defer func() {
-		cancelCause(nil)
-		m.mu.Lock()
-		delete(m.cancelFuncs, id)
-		m.mu.Unlock()
-	}()
 
 	threadID, reply, err := runCodexFn(ctx, snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox, StreamCallback{
 		OnTextDelta: func(delta string) {
@@ -506,6 +507,7 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	current, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
+		m.clearCancelFunc(id, cancelCause)
 		m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
 		return nil, "", fmt.Errorf("session %q disappeared while processing", id)
 	}
@@ -532,6 +534,8 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	saveErr := m.saveLocked()
 	clone := cloneSession(current)
 	m.mu.Unlock()
+
+	m.clearCancelFunc(id, cancelCause)
 
 	if emitted != nil {
 		m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: emitted})
@@ -592,24 +596,17 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 
 	m.wg.Add(1)
 	defer m.wg.Done()
-	defer func() {
-		cancelCause(nil)
-		m.mu.Lock()
-		delete(m.cancelFuncs, id)
-		m.mu.Unlock()
-	}()
 
 	result, err := bashcmd.Run(ctx, snapshot.Folder, command)
-	if err != nil {
-		if cause := context.Cause(ctx); cause != nil && cause != err {
-			err = cause
-		}
+	if cause := context.Cause(ctx); cause != nil && cause != err {
+		err = cause
 	}
 
 	m.mu.Lock()
 	current, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
+		m.clearCancelFunc(id, cancelCause)
 		m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
 		return nil, bashcmd.Result{}, fmt.Errorf("session %q disappeared while processing", id)
 	}
@@ -643,12 +640,15 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 	clone := cloneSession(current)
 	m.mu.Unlock()
 
+	m.clearCancelFunc(id, cancelCause)
+
 	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
 	if emitted != nil {
 		m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: emitted})
 	}
 
 	if err != nil {
+		m.emit(Event{Type: EventError, SessionID: id, Error: err.Error()})
 		if saveErr != nil {
 			return nil, bashcmd.Result{}, fmt.Errorf("%w (state save failed: %v)", err, saveErr)
 		}

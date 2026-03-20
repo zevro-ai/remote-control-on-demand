@@ -661,7 +661,7 @@ export function useSessionsReducer() {
           index: msg.tool_call.index,
           id: msg.tool_call.id || "",
           name: msg.tool_call.name || "",
-          command: msg.delta || "",
+          command: msg.tool_call.command || "",
         });
       }
     });
@@ -672,7 +672,7 @@ export function useSessionsReducer() {
           type: "CODEX_ITEM_COMPLETED",
           sessionId: msg.session_id,
           index: msg.tool_call.index,
-          text: msg.delta || "",
+          text: msg.tool_call.output_text || "",
         });
       }
     });

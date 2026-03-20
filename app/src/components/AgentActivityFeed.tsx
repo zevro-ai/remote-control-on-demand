@@ -10,6 +10,21 @@ interface Props {
   busy: boolean;
 }
 
+export function partitionStreamBlocks(streamBlocks: StreamBlock[]) {
+  const completedItems: (StreamBlock & { type: "tool_use" })[] = [];
+  const activeBlocks: StreamBlock[] = [];
+
+  for (const block of streamBlocks) {
+    if (block.type === "tool_use" && block.done) {
+      completedItems.push(block);
+      continue;
+    }
+    activeBlocks.push(block);
+  }
+
+  return { completedItems, activeBlocks };
+}
+
 export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -18,24 +33,7 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, streamBlocks.length, streamBlocks]);
 
-  const { completedItems, activeBlock } = useMemo(() => {
-    const completed: (StreamBlock & { type: "tool_use" })[] = [];
-    let active: StreamBlock | null = null;
-
-    for (const block of streamBlocks) {
-      if (block.type === "tool_use") {
-        if (block.done) {
-          completed.push(block);
-        } else {
-          active = block;
-        }
-      } else {
-        active = block;
-      }
-    }
-
-    return { completedItems: completed, activeBlock: active };
-  }, [streamBlocks]);
+  const { completedItems, activeBlocks } = useMemo(() => partitionStreamBlocks(streamBlocks), [streamBlocks]);
 
   return (
     <div ref={containerRef} className="activity-feed">
@@ -83,26 +81,26 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
         </div>
       )}
 
-      {activeBlock && activeBlock.type === "text" && (
-        <div className="text-stream-block">
-          {activeBlock.content}
-          {busy && <span className="cursor-blink" />}
-        </div>
+      {activeBlocks.map((block, index) =>
+        block.type === "text" ? (
+          <div key={`active-text-${index}`} className="text-stream-block">
+            {block.content}
+            {busy && index === activeBlocks.length - 1 && <span className="cursor-blink" />}
+          </div>
+        ) : (
+          <ToolCallBlock
+            key={`tool-${block.index}`}
+            name={block.name}
+            id={block.id}
+            inputJSON={block.inputJSON}
+            outputText={block.outputText}
+            done={block.done}
+            live
+          />
+        )
       )}
 
-      {activeBlock && activeBlock.type === "tool_use" && (
-        <ToolCallBlock
-          key={`tool-${activeBlock.index}`}
-          name={activeBlock.name}
-          id={activeBlock.id}
-          inputJSON={activeBlock.inputJSON}
-          outputText={activeBlock.outputText}
-          done={activeBlock.done}
-          live
-        />
-      )}
-
-      {busy && !activeBlock && (
+      {busy && activeBlocks.length === 0 && (
         <div className="thinking-indicator">
           <span className="tool-spinner" />
           <span style={{ color: "var(--color-text-muted)", fontSize: "0.82rem", marginLeft: "8px" }}>

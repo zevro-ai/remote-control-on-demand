@@ -84,6 +84,8 @@ export interface WsToolCall {
   index: number;
   id?: string;
   name?: string;
+  command?: string;
+  output_text?: string;
   partial_json?: string;
 }
 

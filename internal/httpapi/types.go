@@ -84,6 +84,8 @@ type toolCallPayload struct {
 	Index       int    `json:"index"`
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`
+	Command     string `json:"command,omitempty"`
+	OutputText  string `json:"output_text,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
 }
 
