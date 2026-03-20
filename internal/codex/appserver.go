@@ -160,9 +160,13 @@ func runCodexAppServer(
 		_, _ = io.Copy(&stderrBuf, stderr)
 	}()
 
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	ir := newInactivityReader(stdout, execInactivityTimeout, cancelCause)
+	defer ir.Stop()
+
 	events := make(chan appServerEnvelope, 128)
 	scanErr := make(chan error, 1)
-	go scanAppServer(stdout, events, scanErr)
+	go scanAppServer(ir, events, scanErr)
 
 	client := &appServerClient{
 		stdin:   stdin,
