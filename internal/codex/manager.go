@@ -600,6 +600,11 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 	}()
 
 	result, err := bashcmd.Run(ctx, snapshot.Folder, command)
+	if err != nil {
+		if cause := context.Cause(ctx); cause != nil && cause != err {
+			err = cause
+		}
+	}
 
 	m.mu.Lock()
 	current, ok := m.sessions[id]
