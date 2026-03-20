@@ -122,7 +122,7 @@ export function buildSessionPreview(
 
     for (const block of message.blocks || []) {
       if (block.type === "tool_use") {
-        pushPreview(preview, "tool", formatToolLine(block.name, block.done));
+        pushPreview(preview, "tool", formatToolLine(block.name, block.done, block.inputJSON));
       }
     }
 
@@ -131,7 +131,7 @@ export function buildSessionPreview(
 
   for (const block of streamBlocks) {
     if (block.type === "tool_use") {
-      pushPreview(preview, "tool", formatToolLine(block.name, block.done));
+      pushPreview(preview, "tool", formatToolLine(block.name, block.done, block.inputJSON));
       continue;
     }
 
@@ -175,8 +175,20 @@ function pushPreview(target: PreviewLine[], tone: PreviewTone, value: string, pr
   });
 }
 
-function formatToolLine(name: string, done: boolean) {
-  return `$ ${name || "tool"}${done ? "" : " ..."}`;
+function formatToolLine(name: string, done: boolean, inputJSON = "") {
+  const target = extractToolTarget(inputJSON);
+  const label = target ? `${name} ${target}` : name || "tool";
+  return `$ ${label}${done ? "" : " ..."}`;
+}
+
+function extractToolTarget(inputJSON: string): string {
+  if (!inputJSON) return "";
+  try {
+    const parsed = JSON.parse(inputJSON);
+    return parsed.file_path || parsed.command || parsed.pattern || parsed.path || parsed.description || "";
+  } catch {
+    return inputJSON;
+  }
 }
 
 function truncate(value: string) {

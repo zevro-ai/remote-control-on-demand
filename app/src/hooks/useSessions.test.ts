@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Session } from "../api/types";
+import type { CodexSession, Session } from "../api/types";
 import { reduceSessionsState, resolveBootstrapResults, sessionsInitialState } from "./useSessions";
 
 function makeSession(overrides: Partial<Session>): Session {
@@ -13,6 +13,20 @@ function makeSession(overrides: Partial<Session>): Session {
     started_at: "2026-03-17T12:00:00.000Z",
     restarts: 0,
     uptime: "1m",
+    ...overrides,
+  };
+}
+
+function makeCodexSession(overrides: Partial<CodexSession>): CodexSession {
+  return {
+    id: "codex-1",
+    folder: "/tmp/repo",
+    rel_name: "repo",
+    agent: "codex",
+    busy: true,
+    created_at: "2026-03-17T12:00:00.000Z",
+    updated_at: "2026-03-17T12:01:00.000Z",
+    messages: [],
     ...overrides,
   };
 }
@@ -39,6 +53,70 @@ describe("reduceSessionsState", () => {
     expect(next.sessions).toHaveLength(2);
     expect(next.sessions[0]).toEqual(restarted);
     expect(next.sessions[1]).toEqual(initial.sessions[1]);
+  });
+
+  it("clears Codex streaming blocks after the final assistant message arrives", () => {
+    const initial = {
+      ...sessionsInitialState,
+      codexSessions: [makeCodexSession({ id: "codex-1" })],
+      streamBlocks: {
+        "codex-1": [
+          { type: "tool_use" as const, index: 0, id: "tool-1", name: "command_execution", inputJSON: "ls", done: true },
+          { type: "text" as const, content: "hello" },
+        ],
+      },
+    };
+
+    const next = reduceSessionsState(initial, {
+      type: "ADD_CODEX_MESSAGE",
+      sessionId: "codex-1",
+      message: {
+        role: "assistant",
+        content: "hello world",
+        timestamp: "2026-03-17T12:02:00.000Z",
+      },
+    });
+
+    expect(next.codexSessions[0].busy).toBe(false);
+    expect(next.codexSessions[0].messages).toHaveLength(1);
+    expect(next.codexSessions[0].messages?.[0].blocks).toEqual(initial.streamBlocks["codex-1"]);
+    expect(next.streamBlocks["codex-1"]).toBeUndefined();
+  });
+
+  it("keeps the command label when a Codex item completes with output text", () => {
+    const withStarted = reduceSessionsState(
+      {
+        ...sessionsInitialState,
+        streamBlocks: {},
+      },
+      {
+        type: "CODEX_ITEM_STARTED",
+        sessionId: "codex-1",
+        index: 0,
+        id: "tool-1",
+        name: "command_execution",
+        command: "ls -la",
+      }
+    );
+
+    const next = reduceSessionsState(withStarted, {
+      type: "CODEX_ITEM_COMPLETED",
+      sessionId: "codex-1",
+      index: 0,
+      text: "total 0",
+    });
+
+    expect(next.streamBlocks["codex-1"]).toEqual([
+      {
+        type: "tool_use",
+        index: 0,
+        id: "tool-1",
+        name: "command_execution",
+        inputJSON: "ls -la",
+        outputText: "total 0",
+        done: true,
+      },
+    ]);
   });
 });
 

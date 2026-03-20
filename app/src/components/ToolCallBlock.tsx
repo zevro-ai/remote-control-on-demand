@@ -13,11 +13,12 @@ interface Props {
   name: string;
   id: string;
   inputJSON: string;
+  outputText?: string;
   done: boolean;
   live?: boolean;
 }
 
-export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
+export function ToolCallBlock({ name, inputJSON, outputText, done, live }: Props) {
   const [expanded, setExpanded] = useState(false);
   const color = TOOL_COLORS[name] || "var(--color-text-secondary)";
 
@@ -30,14 +31,14 @@ export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
   }, [inputJSON]);
 
   const target = useMemo(() => {
-    if (!parsed) return "";
+    if (!parsed) return inputJSON || "";
     if (parsed.file_path) return parsed.file_path;
     if (parsed.command) return parsed.command;
     if (parsed.pattern) return parsed.pattern;
     if (parsed.path) return parsed.path;
     if (parsed.description) return parsed.description;
     return "";
-  }, [parsed]);
+  }, [parsed, inputJSON]);
 
   const isActive = live && !done;
 
@@ -65,9 +66,10 @@ export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
           {expanded ? "\u25BC" : "\u25B6"}
         </span>
       </button>
-      {expanded && inputJSON && (
+      {expanded && (inputJSON || outputText) && (
         <div className="tool-call-block__body">
           <pre>{parsed ? JSON.stringify(parsed, null, 2) : inputJSON}</pre>
+          {outputText && <pre className="tool-call-block__output">{outputText}</pre>}
         </div>
       )}
     </div>

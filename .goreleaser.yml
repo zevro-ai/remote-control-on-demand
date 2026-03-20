@@ -12,7 +12,7 @@ before:
     - npm run build --prefix app
 
 builds:
-  - main: ./cmd/codexbot
+  - main: ./cmd/rcod
     binary: rcod
     env:
       - CGO_ENABLED=0

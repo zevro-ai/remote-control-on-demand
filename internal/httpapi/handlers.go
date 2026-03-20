@@ -230,6 +230,15 @@ func (s *Server) handleSendCodexMessage(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *Server) handleCancelCodexSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.codexMgr.Cancel(id); err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleRunCodexCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -312,7 +321,8 @@ func statusCodeForManagerError(err error) int {
 		return http.StatusNotFound
 	case strings.Contains(message, "already processing"),
 		strings.Contains(message, "already running"),
-		strings.Contains(message, "not running"):
+		strings.Contains(message, "not running"),
+		strings.Contains(message, "not busy"):
 		return http.StatusConflict
 	default:
 		return http.StatusBadRequest

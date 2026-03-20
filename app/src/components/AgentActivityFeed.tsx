@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
 import type { Message, StreamBlock } from "../api/types";
 import { getAuthenticatedAssetURL } from "../api/client";
 import { ToolCallBlock } from "./ToolCallBlock";
@@ -9,6 +10,21 @@ interface Props {
   busy: boolean;
 }
 
+export function partitionStreamBlocks(streamBlocks: StreamBlock[]) {
+  const completedItems: (StreamBlock & { type: "tool_use" })[] = [];
+  const activeBlocks: StreamBlock[] = [];
+
+  for (const block of streamBlocks) {
+    if (block.type === "tool_use" && block.done) {
+      completedItems.push(block);
+      continue;
+    }
+    activeBlocks.push(block);
+  }
+
+  return { completedItems, activeBlocks };
+}
+
 export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -16,6 +32,8 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
     const el = containerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, streamBlocks.length, streamBlocks]);
+
+  const { completedItems, activeBlocks } = useMemo(() => partitionStreamBlocks(streamBlocks), [streamBlocks]);
 
   return (
     <div ref={containerRef} className="activity-feed">
@@ -44,6 +62,7 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
                     name={block.name}
                     id={block.id}
                     inputJSON={block.inputJSON}
+                    outputText={block.outputText}
                     done={block.done}
                   />
                 ) : null
@@ -54,28 +73,34 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
         </div>
       ))}
 
-      {streamBlocks.map((block, i) => {
-        if (block.type === "text") {
-          return (
-            <div key={`stream-${i}`} className="text-stream-block">
-              {block.content}
-              {busy && i === streamBlocks.length - 1 && <span className="cursor-blink" />}
-            </div>
-          );
-        }
-        return (
+      {completedItems.length > 0 && (
+        <div className="completed-items-summary">
+          {completedItems.map((block) => (
+            <CompactToolItem key={`done-${block.index}`} name={block.name} inputJSON={block.inputJSON} />
+          ))}
+        </div>
+      )}
+
+      {activeBlocks.map((block, index) =>
+        block.type === "text" ? (
+          <div key={`active-text-${index}`} className="text-stream-block">
+            {block.content}
+            {busy && index === activeBlocks.length - 1 && <span className="cursor-blink" />}
+          </div>
+        ) : (
           <ToolCallBlock
             key={`tool-${block.index}`}
             name={block.name}
             id={block.id}
             inputJSON={block.inputJSON}
+            outputText={block.outputText}
             done={block.done}
             live
           />
-        );
-      })}
+        )
+      )}
 
-      {busy && streamBlocks.length === 0 && (
+      {busy && activeBlocks.length === 0 && (
         <div className="thinking-indicator">
           <span className="tool-spinner" />
           <span style={{ color: "var(--color-text-muted)", fontSize: "0.82rem", marginLeft: "8px" }}>
@@ -83,6 +108,26 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+function CompactToolItem({ name, inputJSON }: { name: string; inputJSON: string }) {
+  const target = useMemo(() => {
+    if (!inputJSON) return "";
+    try {
+      const parsed = JSON.parse(inputJSON);
+      return parsed.file_path || parsed.command || parsed.pattern || parsed.path || parsed.description || "";
+    } catch {
+      return inputJSON;
+    }
+  }, [inputJSON]);
+
+  return (
+    <div className="compact-tool-item">
+      <span style={{ color: "var(--color-accent-green)" }}>&#10003;</span>
+      <span className="compact-tool-item__name">{name}</span>
+      {target && <span className="compact-tool-item__target">{target}</span>}
     </div>
   );
 }
@@ -109,7 +154,11 @@ function UserPrompt({
 }
 
 function AssistantText({ content }: { content: string }) {
-  return <div className="text-stream-block">{content}</div>;
+  return (
+    <div className="text-stream-block markdown-body">
+      <ReactMarkdown>{content}</ReactMarkdown>
+    </div>
+  );
 }
 
 function BashCommandRequest({ command, timestamp }: { command: string; timestamp: string }) {
