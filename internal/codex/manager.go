@@ -533,10 +533,10 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	clone := cloneSession(current)
 	m.mu.Unlock()
 
-	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
 	if emitted != nil {
 		m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: emitted})
 	}
+	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: false})
 
 	if err != nil {
 		m.emit(Event{Type: EventError, SessionID: id, Error: err.Error()})
