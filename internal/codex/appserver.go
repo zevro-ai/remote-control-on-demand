@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
@@ -474,6 +475,7 @@ func scanAppServer(r io.Reader, out chan<- appServerEnvelope, errCh chan<- error
 	for scanner.Scan() {
 		var env appServerEnvelope
 		if err := json.Unmarshal(scanner.Bytes(), &env); err != nil {
+			log.Printf("scanAppServer: ignoring unparseable line: %v", err)
 			continue
 		}
 		out <- env
@@ -527,6 +529,9 @@ func handleAppServerNotification(
 		if normalized, ok := normalizeAppServerItem(item.Item); ok && cb.OnItemCompleted != nil {
 			if idx, found := state.itemIndex[item.Item.ID]; found {
 				normalized.Index = idx
+			} else {
+				normalized.Index = state.nextIndex
+				state.nextIndex++
 			}
 			cb.OnItemCompleted(normalized)
 		}
