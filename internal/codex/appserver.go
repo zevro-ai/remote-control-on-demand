@@ -414,9 +414,13 @@ func (c *appServerClient) sendNotification(method string, params any) error {
 }
 
 // respondToServerRequest handles server-initiated approval requests.
-// All approval requests are intentionally denied because RCOD manages tool
-// execution through its own sandbox and permission layer (approvalPolicy "on-request").
-// The server should not independently execute commands or file changes.
+// All approval requests are intentionally denied. Combined with
+// approvalPolicy "on-request" (set in ensureThreadCtx), this means the
+// sandbox mode (workspace-write / read-only) is the sole permission gate:
+// any operation Codex attempts that falls outside the sandbox boundary
+// triggers an approval request which is always denied, causing the
+// operation to be skipped. This is intentional conservative behavior —
+// RCOD does not yet support interactive approval flows.
 func (c *appServerClient) respondToServerRequest(id int, method string) error {
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "applyPatchApproval", "execCommandApproval":
