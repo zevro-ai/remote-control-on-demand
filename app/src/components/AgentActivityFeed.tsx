@@ -64,6 +64,7 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
                     name={block.name}
                     id={block.id}
                     inputJSON={block.inputJSON}
+                    outputText={block.outputText}
                     done={block.done}
                   />
                 ) : null
@@ -95,6 +96,7 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
           name={activeBlock.name}
           id={activeBlock.id}
           inputJSON={activeBlock.inputJSON}
+          outputText={activeBlock.outputText}
           done={activeBlock.done}
           live
         />
