@@ -450,6 +450,9 @@ func (c *appServerClient) nextEnvelope(ctx context.Context) (appServerEnvelope, 
 func (c *appServerClient) readEnvelope(ctx context.Context) (appServerEnvelope, error) {
 	select {
 	case <-ctx.Done():
+		if cause := context.Cause(ctx); cause != nil {
+			return appServerEnvelope{}, cause
+		}
 		return appServerEnvelope{}, ctx.Err()
 	case err := <-c.scanErr:
 		if err != nil {
