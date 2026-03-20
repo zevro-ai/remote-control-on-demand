@@ -210,15 +210,15 @@ func (c *appServerClient) run(
 	model string,
 	dangerouslyBypassSandbox bool,
 ) (string, error) {
-	if err := c.initialize(); err != nil {
+	if err := c.initializeCtx(ctx); err != nil {
 		return "", err
 	}
 
-	threadID, err := c.ensureThread(sess, sandbox, model, dangerouslyBypassSandbox)
+	threadID, err := c.ensureThreadCtx(ctx, sess, sandbox, model, dangerouslyBypassSandbox)
 	if err != nil {
 		return "", err
 	}
-	if err := c.startTurn(threadID, sess.Folder, prompt, attachments, model); err != nil {
+	if err := c.startTurnCtx(ctx, threadID, sess.Folder, prompt, attachments, model); err != nil {
 		return threadID, err
 	}
 
@@ -232,8 +232,8 @@ func (c *appServerClient) run(
 	return threadID, nil
 }
 
-func (c *appServerClient) initialize() error {
-	resp, err := c.sendRequest("initialize", map[string]any{
+func (c *appServerClient) initializeCtx(ctx context.Context) error {
+	resp, err := c.sendRequestCtx(ctx, "initialize", map[string]any{
 		"clientInfo": map[string]string{
 			"name":    "rcod",
 			"version": "dev",
@@ -254,7 +254,8 @@ func (c *appServerClient) initialize() error {
 	return nil
 }
 
-func (c *appServerClient) ensureThread(
+func (c *appServerClient) ensureThreadCtx(
+	ctx context.Context,
 	sess *Session,
 	sandbox,
 	model string,
@@ -273,10 +274,8 @@ func (c *appServerClient) ensureThread(
 	if sess.ThreadID == "" {
 		params["experimentalRawEvents"] = false
 		params["developerInstructions"] = developerInstructions(sess)
-		params["approvalPolicy"] = appServerApprovalPolicy(dangerouslyBypassSandbox)
-		params["sandbox"] = appServerSandboxMode(sandbox, dangerouslyBypassSandbox)
 
-		resp, err := c.sendRequest("thread/start", params)
+		resp, err := c.sendRequestCtx(ctx, "thread/start", params)
 		if err != nil {
 			return "", fmt.Errorf("starting codex thread: %w", err)
 		}
@@ -291,7 +290,7 @@ func (c *appServerClient) ensureThread(
 	}
 
 	params["threadId"] = sess.ThreadID
-	resp, err := c.sendRequest("thread/resume", params)
+	resp, err := c.sendRequestCtx(ctx, "thread/resume", params)
 	if err != nil {
 		return "", fmt.Errorf("resuming codex thread %q: %w", sess.ThreadID, err)
 	}
@@ -305,7 +304,8 @@ func (c *appServerClient) ensureThread(
 	return parsed.Thread.ID, nil
 }
 
-func (c *appServerClient) startTurn(
+func (c *appServerClient) startTurnCtx(
+	ctx context.Context,
 	threadID, cwd, prompt string,
 	attachments []Attachment,
 	model string,
@@ -339,7 +339,7 @@ func (c *appServerClient) startTurn(
 	if model != "" {
 		params["model"] = model
 	}
-	if _, err := c.sendRequest("turn/start", params); err != nil {
+	if _, err := c.sendRequestCtx(ctx, "turn/start", params); err != nil {
 		return fmt.Errorf("starting codex turn: %w", err)
 	}
 	return nil
@@ -369,6 +369,10 @@ func (c *appServerClient) consumeTurn(ctx context.Context) (*appServerTurnState,
 }
 
 func (c *appServerClient) sendRequest(method string, params any) (appServerEnvelope, error) {
+	return c.sendRequestCtx(context.Background(), method, params)
+}
+
+func (c *appServerClient) sendRequestCtx(ctx context.Context, method string, params any) (appServerEnvelope, error) {
 	c.nextID++
 	id := c.nextID
 	if err := c.writeEnvelope(map[string]any{
@@ -380,7 +384,7 @@ func (c *appServerClient) sendRequest(method string, params any) (appServerEnvel
 	}
 
 	for {
-		env, err := c.readEnvelope(context.Background())
+		env, err := c.readEnvelope(ctx)
 		if err != nil {
 			return appServerEnvelope{}, err
 		}
@@ -409,6 +413,10 @@ func (c *appServerClient) sendNotification(method string, params any) error {
 	return c.writeEnvelope(envelope)
 }
 
+// respondToServerRequest handles server-initiated approval requests.
+// All approval requests are intentionally denied because RCOD manages tool
+// execution through its own sandbox and permission layer (approvalPolicy "on-request").
+// The server should not independently execute commands or file changes.
 func (c *appServerClient) respondToServerRequest(id int, method string) error {
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "applyPatchApproval", "execCommandApproval":

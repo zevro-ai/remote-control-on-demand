@@ -586,8 +586,20 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 
 	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
 	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
+
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	m.mu.Lock()
+	m.cancelFuncs[id] = cancelCause
+	m.mu.Unlock()
+
 	m.wg.Add(1)
 	defer m.wg.Done()
+	defer func() {
+		cancelCause(nil)
+		m.mu.Lock()
+		delete(m.cancelFuncs, id)
+		m.mu.Unlock()
+	}()
 
 	result, err := bashcmd.Run(ctx, snapshot.Folder, command)
 
@@ -646,6 +658,9 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 	return clone, result, nil
 }
 
+// runCodexExecJSON is the legacy exec-based Codex runner. It is no longer used
+// in production (runCodexFn delegates to runCodexAppServer), but is retained
+// for test coverage of the exec JSON output parser.
 func runCodexExecJSON(
 	ctx context.Context,
 	sess *Session,

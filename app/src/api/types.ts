@@ -78,7 +78,7 @@ export interface CodexSession {
 
 export type StreamBlock =
   | { type: "text"; content: string }
-  | { type: "tool_use"; index: number; id: string; name: string; inputJSON: string; done: boolean };
+  | { type: "tool_use"; index: number; id: string; name: string; inputJSON: string; done: boolean; outputText?: string };
 
 export interface WsToolCall {
   index: number;
