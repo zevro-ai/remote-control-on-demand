@@ -261,7 +261,7 @@ export function reduceSessionsState(state: State, action: Action): State {
     case "CODEX_ITEM_COMPLETED": {
       const blocks = (state.streamBlocks[action.sessionId] || []).map((b) =>
         b.type === "tool_use" && b.index === action.index
-          ? { ...b, done: true, inputJSON: action.text || b.inputJSON }
+          ? { ...b, done: true, outputText: action.text || undefined }
           : b
       );
       return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };

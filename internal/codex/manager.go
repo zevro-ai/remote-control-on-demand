@@ -470,15 +470,12 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []Att
 	dangerouslyBypassSandbox := m.dangerouslyBypassSandbox
 	model := m.model
 	snapshot := cloneSession(sess)
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	m.cancelFuncs[id] = cancelCause
 	m.mu.Unlock()
 
 	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
 	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
-
-	ctx, cancelCause := context.WithCancelCause(ctx)
-	m.mu.Lock()
-	m.cancelFuncs[id] = cancelCause
-	m.mu.Unlock()
 
 	m.wg.Add(1)
 	defer m.wg.Done()
@@ -582,15 +579,12 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 		sess.Messages = sess.Messages[len(sess.Messages)-maxMessages:]
 	}
 	snapshot := cloneSession(sess)
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	m.cancelFuncs[id] = cancelCause
 	m.mu.Unlock()
 
 	m.emit(Event{Type: EventMessageReceived, SessionID: id, Message: cloneMessage(&userMessage)})
 	m.emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
-
-	ctx, cancelCause := context.WithCancelCause(ctx)
-	m.mu.Lock()
-	m.cancelFuncs[id] = cancelCause
-	m.mu.Unlock()
 
 	m.wg.Add(1)
 	defer m.wg.Done()
