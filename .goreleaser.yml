@@ -12,8 +12,21 @@ before:
     - npm run build --prefix app
 
 builds:
-  - main: ./cmd/codexbot
+  - id: rcod
+    main: ./cmd/codexbot
     binary: rcod
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+  - id: ralph
+    main: ./cmd/ralph
+    binary: ralph
     env:
       - CGO_ENABLED=0
     goos:
