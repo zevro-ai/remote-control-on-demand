@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zevro-ai/remote-control-on-demand/internal/bashcmd"
 )
 
 type nopWriteCloser struct{}
@@ -884,6 +886,13 @@ func TestRunCommandEmitsErrorEventOnCancel(t *testing.T) {
 		t.Fatalf("Create(): %v", err)
 	}
 
+	previousRunBashCommandFn := runBashCommandFn
+	runBashCommandFn = func(ctx context.Context, dir, command string) (bashcmd.Result, error) {
+		<-ctx.Done()
+		return bashcmd.Result{Command: command}, ctx.Err()
+	}
+	t.Cleanup(func() { runBashCommandFn = previousRunBashCommandFn })
+
 	var errorEvents []Event
 	mgr.Subscribe(func(event Event) {
 		if event.Type == EventError {
@@ -893,7 +902,7 @@ func TestRunCommandEmitsErrorEventOnCancel(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, _, err := mgr.RunCommand(context.Background(), sess.ID, "while true; do sleep 1; done")
+		_, _, err := mgr.RunCommand(context.Background(), sess.ID, "long-running command")
 		errCh <- err
 	}()
 

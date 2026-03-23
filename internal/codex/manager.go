@@ -37,7 +37,10 @@ type StreamCallback struct {
 	OnItemCompleted func(item ItemEvent)
 }
 
-var runCodexFn = runCodex
+var (
+	runCodexFn       = runCodex
+	runBashCommandFn = bashcmd.Run
+)
 
 type EventType int
 
@@ -597,7 +600,7 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) (*Session,
 	m.wg.Add(1)
 	defer m.wg.Done()
 
-	result, err := bashcmd.Run(ctx, snapshot.Folder, command)
+	result, err := runBashCommandFn(ctx, snapshot.Folder, command)
 	if cause := context.Cause(ctx); cause != nil && cause != err {
 		err = cause
 	}
