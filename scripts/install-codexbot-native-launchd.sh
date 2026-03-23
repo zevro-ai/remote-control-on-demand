@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="$ROOT_DIR/.codexbot"
 LOG_DIR="$STATE_DIR/launchd"
-BIN_PATH="$ROOT_DIR/codexbot"
+BIN_PATH="$ROOT_DIR/rcod"
 CONFIG_PATH="${1:-$ROOT_DIR/config.yaml}"
 GO_BIN="${GO_BIN:-/usr/local/go/bin/go}"
-TEMPLATE_PATH="$ROOT_DIR/packaging/launchd/ai.zevro.codexbot.plist"
-LABEL="ai.zevro.codexbot"
+TEMPLATE_PATH="$ROOT_DIR/packaging/launchd/ai.zevro.rcod.plist"
+LABEL="ai.zevro.rcod"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LAUNCHD_TARGET="gui/$UID/$LABEL"
@@ -38,14 +38,14 @@ CONFIG_PATH="$(canonicalize_path "$CONFIG_PATH")"
 
 mkdir -p "$STATE_DIR" "$LOG_DIR" "$PLIST_DIR"
 
-echo "building codexbot..."
+echo "building rcod..."
 env \
   GOPROXY="${GOPROXY:-off}" \
   GONOSUMDB="${GONOSUMDB:-*}" \
   GOCACHE="${GOCACHE:-$ROOT_DIR/.gocache}" \
   GOMODCACHE="${GOMODCACHE:-$HOME/go/pkg/mod}" \
   GOTMPDIR="${GOTMPDIR:-$ROOT_DIR/.gotmp}" \
-  "$GO_BIN" build -o "$BIN_PATH" ./cmd/codexbot
+  "$GO_BIN" build -o "$BIN_PATH" ./cmd/rcod
 
 echo "writing launchd agent to $PLIST_PATH..."
 sed \
@@ -69,5 +69,5 @@ launchctl kickstart -k "$LAUNCHD_TARGET"
 echo "launchd agent installed"
 echo "label: $LABEL"
 echo "plist: $PLIST_PATH"
-echo "stdout log: $LOG_DIR/codexbot.stdout.log"
-echo "stderr log: $LOG_DIR/codexbot.stderr.log"
+echo "stdout log: $LOG_DIR/rcod.stdout.log"
+echo "stderr log: $LOG_DIR/rcod.stderr.log"

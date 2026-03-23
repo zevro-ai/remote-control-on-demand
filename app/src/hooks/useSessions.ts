@@ -61,6 +61,9 @@ type Action =
   | { type: "CLEAR_STREAMING"; sessionId: string }
   | { type: "SET_CLAUDE_BUSY"; sessionId: string; busy: boolean }
   | { type: "SET_CODEX_BUSY"; sessionId: string; busy: boolean }
+  | { type: "CODEX_ITEM_STARTED"; sessionId: string; index: number; id: string; name: string; command: string }
+  | { type: "CODEX_ITEM_COMPLETED"; sessionId: string; index: number; text: string }
+  | { type: "CODEX_ERROR"; sessionId: string; error: string }
   | { type: "SET_LOADING"; loading: boolean }
   | { type: "SET_AUTH_REQUIRED"; authRequired: boolean }
   | { type: "SET_LOAD_ERROR"; error: string | null }
@@ -116,7 +119,11 @@ export function reduceSessionsState(state: State, action: Action): State {
       if (state.codexSessions.some((s) => s.id === action.session.id)) return state;
       return { ...state, codexSessions: [action.session, ...state.codexSessions] };
     case "REMOVE_CODEX_SESSION":
-      return { ...state, codexSessions: state.codexSessions.filter((s) => s.id !== action.sessionId) };
+      return {
+        ...state,
+        codexSessions: state.codexSessions.filter((s) => s.id !== action.sessionId),
+        streamBlocks: omitKey(state.streamBlocks, action.sessionId),
+      };
     case "ADD_CLAUDE_MESSAGE": {
       const currentBlocks = state.streamBlocks[action.sessionId] || [];
       const enrichedMessage =
@@ -140,22 +147,32 @@ export function reduceSessionsState(state: State, action: Action): State {
         streamBlocks: omitKey(state.streamBlocks, action.sessionId),
       };
     }
-    case "ADD_CODEX_MESSAGE":
+    case "ADD_CODEX_MESSAGE": {
+      const currentBlocks = state.streamBlocks[action.sessionId] || [];
+      const enrichedMessage =
+        action.message.role === "assistant" && currentBlocks.length > 0
+          ? { ...action.message, blocks: [...currentBlocks] }
+          : action.message;
       return {
         ...state,
         codexSessions: state.codexSessions.map((s) =>
           s.id === action.sessionId
             ? {
                 ...s,
-                busy: action.message.role === "assistant" ? false : s.busy,
-                updated_at: action.message.timestamp,
+                busy: enrichedMessage.role === "assistant" ? false : s.busy,
+                updated_at: enrichedMessage.timestamp,
                 messages: action.message.optimistic
-                  ? [...(s.messages || []), action.message]
-                  : mergeIncomingMessage(s.messages || [], action.message),
+                  ? [...(s.messages || []), enrichedMessage]
+                  : mergeIncomingMessage(s.messages || [], enrichedMessage),
               }
             : s
         ),
+        streamBlocks:
+          action.message.role === "assistant"
+            ? omitKey(state.streamBlocks, action.sessionId)
+            : state.streamBlocks,
       };
+    }
     case "REMOVE_CLAUDE_OPTIMISTIC_MESSAGE":
       return {
         ...state,
@@ -206,7 +223,49 @@ export function reduceSessionsState(state: State, action: Action): State {
         codexSessions: state.codexSessions.map((s) =>
           s.id === action.sessionId ? { ...s, busy: action.busy } : s
         ),
+        streamBlocks: action.busy ? state.streamBlocks : omitKey(state.streamBlocks, action.sessionId),
       };
+    case "CODEX_ERROR": {
+      const errorMessage: Message = {
+        role: "assistant",
+        kind: "text",
+        content: `Error: ${action.error}`,
+        timestamp: new Date().toISOString(),
+      };
+      return {
+        ...state,
+        codexSessions: state.codexSessions.map((s) =>
+          s.id === action.sessionId
+            ? {
+                ...s,
+                busy: false,
+                messages: [...(s.messages || []), errorMessage],
+              }
+            : s
+        ),
+        streamBlocks: omitKey(state.streamBlocks, action.sessionId),
+      };
+    }
+    case "CODEX_ITEM_STARTED": {
+      const blocks = [...(state.streamBlocks[action.sessionId] || [])];
+      blocks.push({
+        type: "tool_use",
+        index: action.index,
+        id: action.id,
+        name: action.name,
+        inputJSON: action.command,
+        done: false,
+      });
+      return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };
+    }
+    case "CODEX_ITEM_COMPLETED": {
+      const blocks = (state.streamBlocks[action.sessionId] || []).map((b) =>
+        b.type === "tool_use" && b.index === action.index
+          ? { ...b, done: true, outputText: action.text || undefined }
+          : b
+      );
+      return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };
+    }
     case "SET_LOADING":
       return { ...state, loading: action.loading };
     case "SET_AUTH_REQUIRED":
@@ -340,6 +399,7 @@ type Actions = {
   sendClaudeCommand: (id: string, command: string) => Promise<void>;
   createCodexSession: (folder: string) => Promise<CodexSession>;
   closeCodexSession: (id: string) => Promise<void>;
+  cancelCodexSession: (id: string) => Promise<void>;
   sendCodexMessage: (id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
   sendCodexCommand: (id: string, command: string) => Promise<void>;
 };
@@ -361,6 +421,7 @@ export const SessionsContext = createContext<{
     sendClaudeCommand: async () => {},
     createCodexSession: async () => Promise.reject(new Error("not ready")),
     closeCodexSession: async () => {},
+    cancelCodexSession: async () => {},
     sendCodexMessage: async () => {},
     sendCodexCommand: async () => {},
   },
@@ -574,9 +635,45 @@ export function useSessionsReducer() {
       }
     });
 
+    const unsubCodexDelta = onMessage("codex_message_delta", (msg: WsMessage) => {
+      if (msg.session_id && msg.delta) {
+        dispatch({ type: "APPEND_STREAMING", sessionId: msg.session_id, delta: msg.delta });
+      }
+    });
+
     const unsubCodexBusy = onMessage("codex_busy", (msg: WsMessage) => {
       if (msg.session_id && msg.busy !== undefined) {
         dispatch({ type: "SET_CODEX_BUSY", sessionId: msg.session_id, busy: msg.busy });
+      }
+    });
+
+    const unsubCodexError = onMessage("codex_error", (msg: WsMessage) => {
+      if (msg.session_id && msg.line) {
+        dispatch({ type: "CODEX_ERROR", sessionId: msg.session_id, error: msg.line });
+      }
+    });
+
+    const unsubCodexItemStarted = onMessage("codex_item_started", (msg: WsMessage) => {
+      if (msg.session_id && msg.tool_call) {
+        dispatch({
+          type: "CODEX_ITEM_STARTED",
+          sessionId: msg.session_id,
+          index: msg.tool_call.index,
+          id: msg.tool_call.id || "",
+          name: msg.tool_call.name || "",
+          command: msg.tool_call.command || "",
+        });
+      }
+    });
+
+    const unsubCodexItemCompleted = onMessage("codex_item_completed", (msg: WsMessage) => {
+      if (msg.session_id && msg.tool_call) {
+        dispatch({
+          type: "CODEX_ITEM_COMPLETED",
+          sessionId: msg.session_id,
+          index: msg.tool_call.index,
+          text: msg.tool_call.output_text || "",
+        });
       }
     });
 
@@ -597,7 +694,11 @@ export function useSessionsReducer() {
       unsubCodexAdded();
       unsubCodexRemoved();
       unsubCodexMsg();
+      unsubCodexDelta();
       unsubCodexBusy();
+      unsubCodexError();
+      unsubCodexItemStarted();
+      unsubCodexItemCompleted();
     };
   }, [onMessage]);
 
@@ -700,10 +801,14 @@ export function useSessionsReducer() {
       await api.del(`/api/codex/sessions/${id}`);
       dispatch({ type: "REMOVE_CODEX_SESSION", sessionId: id });
     },
+    cancelCodexSession: async (id: string) => {
+      await api.post(`/api/codex/sessions/${id}/cancel`);
+    },
     sendCodexMessage: async (id: string, message: string, attachments: DraftAttachment[] = []) => {
       const timestamp = new Date().toISOString();
       const optimisticId = createOptimisticMessageId();
       dispatch({ type: "SET_CODEX_BUSY", sessionId: id, busy: true });
+      dispatch({ type: "CLEAR_STREAMING", sessionId: id });
       dispatch({
         type: "ADD_CODEX_MESSAGE",
         sessionId: id,
@@ -733,6 +838,7 @@ export function useSessionsReducer() {
       const timestamp = new Date().toISOString();
       const optimisticId = createOptimisticMessageId();
       dispatch({ type: "SET_CODEX_BUSY", sessionId: id, busy: true });
+      dispatch({ type: "CLEAR_STREAMING", sessionId: id });
       dispatch({
         type: "ADD_CODEX_MESSAGE",
         sessionId: id,
