@@ -3,25 +3,22 @@ import { FolderPicker } from "./FolderPicker";
 
 interface Props {
   folders: string[];
+  chatSessions: Record<string, any>;
   onClose: () => void;
-  onCreateClaude: (folder: string) => Promise<void>;
-  onCreateCodex: (folder: string) => Promise<void>;
+  onCreateSession: (provider: string, folder: string) => Promise<void>;
 }
 
 export function CreateSessionModal({
   folders,
+  chatSessions,
   onClose,
-  onCreateClaude,
-  onCreateCodex,
+  onCreateSession,
 }: Props) {
-  const [agent, setAgent] = useState<string>("claude");
+  const providers = Object.keys(chatSessions).sort();
+  const [agent, setAgent] = useState<string>(providers[0] || "claude");
 
   const handleSelect = async (folder: string) => {
-    if (agent === "claude") {
-      await onCreateClaude(folder);
-    } else {
-      await onCreateCodex(folder);
-    }
+    await onCreateSession(agent, folder);
     onClose();
   };
 
@@ -33,18 +30,15 @@ export function CreateSessionModal({
         <p>Select an AI agent and the repository to work in.</p>
 
         <div className="modal-agent-switch">
-          <button
-            onClick={() => setAgent("claude")}
-            className={agent === "claude" ? "is-active" : ""}
-          >
-            Claude
-          </button>
-          <button
-            onClick={() => setAgent("codex")}
-            className={agent === "codex" ? "is-active" : ""}
-          >
-            Codex
-          </button>
+          {providers.map((p) => (
+            <button
+              key={p}
+              onClick={() => setAgent(p)}
+              className={agent === p ? "is-active" : ""}
+            >
+              {p.charAt(0).toUpperCase() + p.slice(1)}
+            </button>
+          ))}
         </div>
 
         <FolderPicker folders={folders} onSelect={handleSelect} />

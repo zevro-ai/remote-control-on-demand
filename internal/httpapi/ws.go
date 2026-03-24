@@ -61,10 +61,11 @@ func (h *Hub) handleChatEvent(providerID string, e chat.Event) {
 	case chat.EventSessionClosed:
 		msg.Type = "chat_session_removed"
 	case chat.EventMessageReceived:
-		if e.Message != nil {
-			msg.Type = "chat_message"
-			msg.Message = toMessagePayload(*e.Message)
+		if e.Message == nil {
+			return
 		}
+		msg.Type = "chat_message"
+		msg.Message = toMessagePayload(*e.Message)
 	case chat.EventMessageDelta:
 		msg.Type = "chat_message_delta"
 		msg.Delta = e.Delta
@@ -73,28 +74,31 @@ func (h *Hub) handleChatEvent(providerID string, e chat.Event) {
 		busy := e.Busy
 		msg.Busy = &busy
 	case chat.EventToolUseStart:
-		if e.ToolCall != nil {
-			msg.Type = "chat_tool_start"
-			msg.ToolCall = &toolCallPayload{
-				Index: e.ToolCall.Index,
-				ID:    e.ToolCall.ID,
-				Name:  e.ToolCall.Name,
-			}
+		if e.ToolCall == nil {
+			return
+		}
+		msg.Type = "chat_tool_start"
+		msg.ToolCall = &toolCallPayload{
+			Index: e.ToolCall.Index,
+			ID:    e.ToolCall.ID,
+			Name:  e.ToolCall.Name,
 		}
 	case chat.EventToolUseDelta:
-		if e.ToolCall != nil {
-			msg.Type = "chat_tool_delta"
-			msg.ToolCall = &toolCallPayload{
-				Index:       e.ToolCall.Index,
-				PartialJSON: e.ToolCall.PartialJSON,
-			}
+		if e.ToolCall == nil {
+			return
+		}
+		msg.Type = "chat_tool_delta"
+		msg.ToolCall = &toolCallPayload{
+			Index:       e.ToolCall.Index,
+			PartialJSON: e.ToolCall.PartialJSON,
 		}
 	case chat.EventToolUseFinish:
-		if e.ToolCall != nil {
-			msg.Type = "chat_tool_finish"
-			msg.ToolCall = &toolCallPayload{
-				Index: e.ToolCall.Index,
-			}
+		if e.ToolCall == nil {
+			return
+		}
+		msg.Type = "chat_tool_finish"
+		msg.ToolCall = &toolCallPayload{
+			Index: e.ToolCall.Index,
 		}
 	default:
 		return

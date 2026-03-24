@@ -238,12 +238,12 @@ export function resolveBootstrapResults(
   const [sessionsResult, ...chatResults] = results;
   const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
   const chatSessions: Record<string, ChatSession[]> = {};
-  let authRequired = false;
   const errors: string[] = [];
 
+  const anySuccess = results.some((res) => res.status === "fulfilled");
+
   if (sessionsResult.status === "rejected") {
-    if (isUnauthorizedError(sessionsResult.reason)) authRequired = true;
-    else errors.push(`RC: ${sessionsResult.reason.message || sessionsResult.reason}`);
+    errors.push(`RC: ${sessionsResult.reason.message || sessionsResult.reason}`);
   }
 
   chatResults.forEach((res, idx) => {
@@ -251,16 +251,17 @@ export function resolveBootstrapResults(
     if (res.status === "fulfilled") {
       chatSessions[provider] = res.value.sessions;
     } else {
-      if (isUnauthorizedError(res.reason)) authRequired = true;
-      else errors.push(`${provider.charAt(0).toUpperCase() + provider.slice(1)}: ${res.reason.message || res.reason}`);
+      errors.push(`${provider.charAt(0).toUpperCase() + provider.slice(1)}: ${res.reason.message || res.reason}`);
     }
   });
+
+  const authRequired = !anySuccess && results.some((res) => res.status === "rejected" && isUnauthorizedError(res.reason));
 
   return {
     sessions,
     chatSessions,
     authRequired,
-    loadError: errors.length > 0 ? `Some services failed to load: ${errors.join("; ")}` : null,
+    loadError: authRequired ? null : (errors.length > 0 ? `Some services failed to load: ${errors.join("; ")}` : null),
   };
 }
 
@@ -288,10 +289,6 @@ type Actions = {
   closeChatSession: (provider: string, id: string) => Promise<void>;
   sendChatMessage: (provider: string, id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
   runChatCommand: (provider: string, id: string, command: string) => Promise<void>;
-  // Legacy aliases for components not yet fully updated
-  createClaudeSession: (folder: string) => Promise<ChatSession>;
-  closeClaudeSession: (id: string) => Promise<void>;
-  sendClaudeMessage: (id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
 };
 
 export const SessionsContext = createContext<{
@@ -309,9 +306,6 @@ export const SessionsContext = createContext<{
     closeChatSession: async () => {},
     sendChatMessage: async () => {},
     runChatCommand: async () => {},
-    createClaudeSession: async () => Promise.reject(new Error("not ready")),
-    closeClaudeSession: async () => {},
-    sendClaudeMessage: async () => {},
   },
 });
 
@@ -593,11 +587,6 @@ export function useSessionsReducer() {
         throw error;
       }
     },
-    // Legacy aliases
-    createClaudeSession: async (folder: string) => actions.createChatSession("claude", folder),
-    closeClaudeSession: async (id: string) => actions.closeChatSession("claude", id),
-    sendClaudeMessage: async (id: string, message: string, attachments: DraftAttachment[] = []) => 
-      actions.sendChatMessage("claude", id, message, attachments),
   };
 
   return { state, dispatch, actions };

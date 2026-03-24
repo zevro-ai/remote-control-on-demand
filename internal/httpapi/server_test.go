@@ -428,7 +428,7 @@ func TestSendClaudeMessage_RejectsMultipartWithoutWritingUploads(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("Decode(): %v", err)
 	}
-	if resp.Error != claudeAttachmentsUnsupportedMessage {
+	if resp.Error != "image attachments are not supported for Claude sessions in the current CLI mode" {
 		t.Fatalf("error = %q", resp.Error)
 	}
 

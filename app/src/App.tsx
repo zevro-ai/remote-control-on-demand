@@ -30,14 +30,9 @@ export default function App() {
     }
   }, [clearFocus, focusedPanel, state.chatSessions]);
 
-  const openCreatedClaude = async (folder: string) => {
-    const session = await actions.createChatSession("claude", folder);
-    focusPanel(session.id, "claude");
-  };
-
-  const openCreatedCodex = async (folder: string) => {
-    const session = await actions.createChatSession("codex", folder);
-    focusPanel(session.id, "codex");
+  const onCreateSession = async (provider: string, folder: string) => {
+    const session = await actions.createChatSession(provider, folder);
+    focusPanel(session.id, provider);
   };
 
   return (
@@ -84,9 +79,9 @@ export default function App() {
         {showModal && (
           <CreateSessionModal
             folders={folders}
+            chatSessions={state.chatSessions}
             onClose={() => setShowModal(false)}
-            onCreateClaude={openCreatedClaude}
-            onCreateCodex={openCreatedCodex}
+            onCreateSession={onCreateSession}
           />
         )}
       </div>

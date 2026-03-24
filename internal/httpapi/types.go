@@ -1,7 +1,5 @@
 package httpapi
 
-const claudeAttachmentsUnsupportedMessage = "image attachments are not supported for Claude sessions in the current CLI mode"
-
 type sessionResponse struct {
 	ID        string `json:"id"`
 	Folder    string `json:"folder"`

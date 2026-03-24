@@ -16,7 +16,7 @@ export function Sidebar({
   onNewSession,
   onSelectSession,
 }: Props) {
-  const providers = Object.entries(chatSessions);
+  const providers = Object.entries(chatSessions).sort(([a], [b]) => a.localeCompare(b));
   const liveCount = providers.reduce(
     (acc, [_, sessions]) => acc + sessions.filter((s) => s.busy).length,
     0
