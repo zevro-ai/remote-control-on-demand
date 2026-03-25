@@ -18,7 +18,7 @@ interface Props {
   live?: boolean;
 }
 
-export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
+export function ToolCallBlock({ name, id, inputJSON, done, live }: Props) {
   const [expanded, setExpanded] = useState(false);
   const color = TOOL_COLORS[name] || "var(--color-text-secondary)";
 
@@ -40,12 +40,12 @@ export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
     return "";
   }, [parsed]);
 
-  const diffSections = useMemo(() => extractToolDiff(name, inputJSON), [name, inputJSON]);
+  const diffSections = useMemo(() => extractToolDiff(name, parsed), [name, parsed]);
 
   const isActive = live && !done;
 
   return (
-    <div className={`tool-call-block ${isActive ? "is-active" : ""}`}>
+    <div id={id || undefined} className={`tool-call-block ${isActive ? "is-active" : ""}`}>
       <button
         className="tool-call-block__header"
         onClick={() => setExpanded(!expanded)}

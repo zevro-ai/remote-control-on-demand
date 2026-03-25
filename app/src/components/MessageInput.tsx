@@ -48,7 +48,9 @@ export function MessageInput({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<DraftAttachment[]>([]);
+  const inFlightAttachmentsRef = useRef<DraftAttachment[]>([]);
   const dragDepthRef = useRef(0);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -56,7 +58,9 @@ export function MessageInput({
 
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       attachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.preview_url));
+      inFlightAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.preview_url));
     };
   }, []);
 
@@ -119,6 +123,7 @@ export function MessageInput({
     const submittedMode = mode;
     const submittedMessage = message;
     const submittedAttachments = attachments;
+    inFlightAttachmentsRef.current = submittedMode === "prompt" ? submittedAttachments : [];
 
     setSubmitError(null);
     setIsSubmitting(true);
@@ -144,22 +149,35 @@ export function MessageInput({
         await onSendPrompt(submittedMessage, submittedAttachments);
       });
       revokeAttachments(submittedAttachments);
+      inFlightAttachmentsRef.current = [];
     } catch (error) {
-      setValue(submittedMessage);
       if (submittedMode === "prompt") {
-        restoreAttachments(submittedAttachments);
+        if (mountedRef.current) {
+          setValue(submittedMessage);
+          restoreAttachments(submittedAttachments);
+        } else {
+          revokeAttachments(submittedAttachments);
+        }
+        inFlightAttachmentsRef.current = [];
       }
-      setSubmitError(
-        toLoopActionErrorMessage(
-          error,
-          submittedMode === "bash" ? "Run" : "Send",
-          activeIteration || 1,
-          total
-        )
-      );
+      if (mountedRef.current) {
+        if (submittedMode === "bash") {
+          setValue(submittedMessage);
+        }
+        setSubmitError(
+          toLoopActionErrorMessage(
+            error,
+            submittedMode === "bash" ? "Run" : "Send",
+            activeIteration || 1,
+            total
+          )
+        );
+      }
     } finally {
-      setIsSubmitting(false);
-      setLoopIteration(0);
+      if (mountedRef.current) {
+        setIsSubmitting(false);
+        setLoopIteration(0);
+      }
     }
   };
 

@@ -12,24 +12,23 @@ const REPLACEMENT_KEYS = ["new_string", "new_str", "replacement", "replace"] as 
 const WRITE_KEYS = ["file_text", "content", "text"] as const;
 const PATH_KEYS = ["file_path", "path"] as const;
 
-export function extractToolDiff(name: string, inputJSON: string): ToolDiffSection[] {
-  const parsed = parseJSON(inputJSON);
-  if (!parsed) {
+export function extractToolDiff(name: string, input: JSONRecord | null): ToolDiffSection[] {
+  if (!input) {
     return [];
   }
 
-  const path = pickString(parsed, PATH_KEYS);
+  const path = pickString(input, PATH_KEYS);
   if (!path || !looksLikeEditTool(name)) {
     return [];
   }
 
-  const multiEditSections = extractMultiEditSections(parsed, path);
+  const multiEditSections = extractMultiEditSections(input, path);
   if (multiEditSections.length > 0) {
     return multiEditSections;
   }
 
-  const before = pickString(parsed, EDIT_KEYS);
-  const after = pickString(parsed, REPLACEMENT_KEYS);
+  const before = pickString(input, EDIT_KEYS);
+  const after = pickString(input, REPLACEMENT_KEYS);
   if (before !== undefined || after !== undefined) {
     return [
       {
@@ -41,7 +40,7 @@ export function extractToolDiff(name: string, inputJSON: string): ToolDiffSectio
     ];
   }
 
-  const content = pickString(parsed, WRITE_KEYS);
+  const content = pickString(input, WRITE_KEYS);
   if (content !== undefined) {
     return [
       {
@@ -54,15 +53,6 @@ export function extractToolDiff(name: string, inputJSON: string): ToolDiffSectio
   }
 
   return [];
-}
-
-function parseJSON(inputJSON: string): JSONRecord | null {
-  try {
-    const parsed = JSON.parse(inputJSON);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 function extractMultiEditSections(parsed: JSONRecord, path: string): ToolDiffSection[] {
