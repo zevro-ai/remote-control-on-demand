@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 )
 
 func TestParseExecOutputStreamsAndFinalizesMessage(t *testing.T) {
@@ -174,15 +176,15 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 	}
 
 	mgr := NewManager(baseDir, "")
-	sess, err := mgr.Create("demo")
+	sess, err := mgr.CreateSession("demo")
 	if err != nil {
-		t.Fatalf("Create(): %v", err)
+		t.Fatalf("CreateSession(): %v", err)
 	}
 
 	previousRunClaudeFn := runClaudeFn
 	runClaudeFn = func(
 		ctx context.Context,
-		sess *Session,
+		sess *chat.Session,
 		prompt,
 		permissionMode,
 		model string,
@@ -194,19 +196,16 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 		runClaudeFn = previousRunClaudeFn
 	})
 
-	var events []Message
-	mgr.Subscribe(func(event Event) {
-		if event.Type == EventMessageReceived && event.Message != nil {
+	var events []chat.Message
+	mgr.Subscribe(func(event chat.Event) {
+		if event.Type == chat.EventMessageReceived && event.Message != nil {
 			events = append(events, *event.Message)
 		}
 	})
 
-	_, reply, err := mgr.Send(context.Background(), sess.ID, "ping", nil)
+	_, _, err = mgr.Send(context.Background(), sess.ID, "ping", nil)
 	if err != nil {
 		t.Fatalf("Send(): %v", err)
-	}
-	if reply != "assistant reply" {
-		t.Fatalf("reply = %q", reply)
 	}
 	if len(events) != 2 {
 		t.Fatalf("events = %d, want 2", len(events))
@@ -227,24 +226,21 @@ func TestRunCommandEmitsUserAndAssistantEvents(t *testing.T) {
 	}
 
 	mgr := NewManager(baseDir, "")
-	sess, err := mgr.Create("demo")
+	sess, err := mgr.CreateSession("demo")
 	if err != nil {
-		t.Fatalf("Create(): %v", err)
+		t.Fatalf("CreateSession(): %v", err)
 	}
 
-	var events []Message
-	mgr.Subscribe(func(event Event) {
-		if event.Type == EventMessageReceived && event.Message != nil {
+	var events []chat.Message
+	mgr.Subscribe(func(event chat.Event) {
+		if event.Type == chat.EventMessageReceived && event.Message != nil {
 			events = append(events, *event.Message)
 		}
 	})
 
-	_, result, err := mgr.RunCommand(context.Background(), sess.ID, "printf 'hello from bash'")
+	err = mgr.RunCommand(context.Background(), sess.ID, "printf 'hello from bash'")
 	if err != nil {
 		t.Fatalf("RunCommand(): %v", err)
-	}
-	if result.Output != "hello from bash" {
-		t.Fatalf("output = %q", result.Output)
 	}
 	if len(events) != 2 {
 		t.Fatalf("events = %d, want 2", len(events))
@@ -255,9 +251,12 @@ func TestRunCommandEmitsUserAndAssistantEvents(t *testing.T) {
 	if events[1].Role != "assistant" || events[1].Kind != "bash_result" {
 		t.Fatalf("assistant event = %#v", events[1])
 	}
+	if events[1].Content != "hello from bash" {
+		t.Fatalf("content = %q, want 'hello from bash'", events[1].Content)
+	}
 }
 
-func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
+func TestDeleteSessionPromotesMostRecentRemaining(t *testing.T) {
 	baseDir := t.TempDir()
 	for _, name := range []string{"one", "two", "three"} {
 		repoDir := filepath.Join(baseDir, name)
@@ -267,17 +266,17 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 	}
 
 	mgr := NewManager(baseDir, "")
-	first, err := mgr.Create("one")
+	first, err := mgr.CreateSession("one")
 	if err != nil {
-		t.Fatalf("Create(one): %v", err)
+		t.Fatalf("CreateSession(one): %v", err)
 	}
-	second, err := mgr.Create("two")
+	second, err := mgr.CreateSession("two")
 	if err != nil {
-		t.Fatalf("Create(two): %v", err)
+		t.Fatalf("CreateSession(two): %v", err)
 	}
-	third, err := mgr.Create("three")
+	third, err := mgr.CreateSession("three")
 	if err != nil {
-		t.Fatalf("Create(three): %v", err)
+		t.Fatalf("CreateSession(three): %v", err)
 	}
 
 	mgr.mu.Lock()
@@ -287,8 +286,8 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 	mgr.activeSessionID = third.ID
 	mgr.mu.Unlock()
 
-	if err := mgr.Close(third.ID); err != nil {
-		t.Fatalf("Close(): %v", err)
+	if err := mgr.DeleteSession(third.ID); err != nil {
+		t.Fatalf("DeleteSession(): %v", err)
 	}
 
 	if mgr.activeSessionID != second.ID {
@@ -297,8 +296,8 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 }
 
 func TestHasAssistantReplyIgnoresBashResults(t *testing.T) {
-	sess := &Session{
-		Messages: []Message{
+	sess := &chat.Session{
+		Messages: []chat.Message{
 			{Role: "user", Kind: "bash", Content: "pwd"},
 			{Role: "assistant", Kind: "bash_result", Content: "/tmp"},
 		},
@@ -308,14 +307,14 @@ func TestHasAssistantReplyIgnoresBashResults(t *testing.T) {
 		t.Fatal("expected bash results to not count as assistant replies")
 	}
 
-	sess.Messages = append(sess.Messages, Message{Role: "assistant", Kind: "text", Content: "Hello"})
+	sess.Messages = append(sess.Messages, chat.Message{Role: "assistant", Kind: "text", Content: "Hello"})
 	if !hasAssistantReply(sess) {
 		t.Fatal("expected text replies to count as assistant replies")
 	}
 }
 
 func TestSystemPromptTargetsDashboard(t *testing.T) {
-	prompt := systemPrompt(&Session{RelName: "demo"})
+	prompt := systemPrompt(&chat.Session{RelName: "demo"})
 
 	if !strings.Contains(prompt, "RCOD dashboard") {
 		t.Fatalf("prompt = %q, want dashboard context", prompt)

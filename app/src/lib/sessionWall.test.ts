@@ -113,28 +113,26 @@ describe("buildWallSlots", () => {
 
 describe("resolveFocusedSession", () => {
   it("returns the selected claude or codex session when it exists", () => {
-    const claudeSession = createClaudeSession({ id: "claude-1" });
-    const codexSession = createCodexSession({ id: "codex-1" });
+    const claudeSession = createSession({ id: "claude-1", agent: "claude" });
+    const codexSession = createSession({ id: "codex-1", agent: "codex" });
 
     expect(
       resolveFocusedSession(
         { sessionId: "claude-1", type: "claude" },
-        [claudeSession],
-        [codexSession]
+        [claudeSession, codexSession]
       )
     ).toEqual(claudeSession);
 
     expect(
       resolveFocusedSession(
         { sessionId: "codex-1", type: "codex" },
-        [claudeSession],
-        [codexSession]
+        [claudeSession, codexSession]
       )
     ).toEqual(codexSession);
   });
 
   it("returns null when the focused session is gone", () => {
-    expect(resolveFocusedSession({ sessionId: "missing", type: "codex" }, [], [])).toBeNull();
+    expect(resolveFocusedSession({ sessionId: "missing", type: "codex" }, [])).toBeNull();
   });
 });
 
@@ -150,12 +148,4 @@ function createSession(overrides: Partial<ChatSession> = {}): ChatSession {
     messages: [],
     ...overrides,
   };
-}
-
-function createClaudeSession(overrides: Partial<ChatSession> = {}) {
-  return createSession({ agent: "claude", ...overrides }) as Extract<ChatSession, { agent: "claude" }>;
-}
-
-function createCodexSession(overrides: Partial<ChatSession> = {}) {
-  return createSession({ agent: "codex", ...overrides }) as Extract<ChatSession, { agent: "codex" }>;
 }

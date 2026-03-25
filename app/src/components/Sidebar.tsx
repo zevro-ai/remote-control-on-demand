@@ -1,33 +1,34 @@
-import type { ClaudeSession, CodexSession } from "../api/types";
+import type { ChatSession } from "../api/types";
 import type { PanelState } from "../hooks/usePanelManager";
 
 interface Props {
-  claudeSessions: ClaudeSession[];
-  codexSessions: CodexSession[];
+  chatSessions: Record<string, ChatSession[]>;
   connected: boolean;
   focusedPanel: PanelState | null;
   onNewSession: () => void;
-  onSelectSession: (sessionId: string, type: "claude" | "codex") => void;
+  onSelectSession: (sessionId: string, type: string) => void;
 }
 
 export function Sidebar({
-  claudeSessions,
-  codexSessions,
+  chatSessions,
   connected,
   focusedPanel,
   onNewSession,
   onSelectSession,
 }: Props) {
-  const liveCount = claudeSessions.filter((session) => session.busy).length +
-    codexSessions.filter((session) => session.busy).length;
-  const totalCount = claudeSessions.length + codexSessions.length;
+  const providers = Object.entries(chatSessions).sort(([a], [b]) => a.localeCompare(b));
+  const liveCount = providers.reduce(
+    (acc, [_, sessions]) => acc + sessions.filter((s) => s.busy).length,
+    0
+  );
+  const totalCount = providers.reduce((acc, [_, sessions]) => acc + sessions.length, 0);
 
   return (
     <aside className="tui-sidebar">
       <div className="sidebar-brand">
         <div className="sidebar-kicker">remote control on demand</div>
         <h1>Sessions</h1>
-        <p>Manage Claude and Codex AI sessions with live streaming.</p>
+        <p>Manage AI sessions with live streaming.</p>
       </div>
 
       <div className="sidebar-stats">
@@ -47,21 +48,16 @@ export function Sidebar({
         </div>
       </div>
 
-      <SessionSection
-        title="Claude"
-        sessions={claudeSessions}
-        type="claude"
-        focusedPanel={focusedPanel}
-        onSelectSession={onSelectSession}
-      />
-
-      <SessionSection
-        title="Codex"
-        sessions={codexSessions}
-        type="codex"
-        focusedPanel={focusedPanel}
-        onSelectSession={onSelectSession}
-      />
+      {providers.map(([provider, sessions]) => (
+        <SessionSection
+          key={provider}
+          title={provider.charAt(0).toUpperCase() + provider.slice(1)}
+          sessions={sessions}
+          type={provider}
+          focusedPanel={focusedPanel}
+          onSelectSession={onSelectSession}
+        />
+      ))}
 
       <button onClick={onNewSession} className="sidebar-new-button">
         + New session
@@ -78,10 +74,10 @@ function SessionSection({
   onSelectSession,
 }: {
   title: string;
-  sessions: (ClaudeSession | CodexSession)[];
-  type: "claude" | "codex";
+  sessions: ChatSession[];
+  type: string;
   focusedPanel: PanelState | null;
-  onSelectSession: (sessionId: string, type: "claude" | "codex") => void;
+  onSelectSession: (sessionId: string, type: string) => void;
 }) {
   return (
     <section className="sidebar-section">
