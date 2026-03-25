@@ -402,7 +402,20 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []cha
 	m.wg.Add(1)
 	defer m.wg.Done()
 
-	threadID, reply, err := runCodexFn(ctx, snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox)
+	threadID, reply, err := runCodexFn(ctx, snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox, StreamCallback{
+		OnTextDelta: func(delta string) {
+			m.emit(chat.Event{Type: chat.EventMessageDelta, SessionID: id, Delta: delta})
+		},
+		OnToolStart: func(index int, toolID, name string) {
+			m.emit(chat.Event{Type: chat.EventToolUseStart, SessionID: id, ToolCall: &chat.ToolCallEvent{Index: index, ID: toolID, Name: name}})
+		},
+		OnToolDelta: func(index int, partialJSON string) {
+			m.emit(chat.Event{Type: chat.EventToolUseDelta, SessionID: id, ToolCall: &chat.ToolCallEvent{Index: index, PartialJSON: partialJSON}})
+		},
+		OnToolFinish: func(index int) {
+			m.emit(chat.Event{Type: chat.EventToolUseFinish, SessionID: id, ToolCall: &chat.ToolCallEvent{Index: index}})
+		},
+	})
 
 	m.mu.Lock()
 	current, ok := m.sessions[id]
@@ -556,6 +569,7 @@ func runCodex(
 	sandbox,
 	model string,
 	dangerouslyBypassSandbox bool,
+	cb StreamCallback,
 ) (string, string, error) {
 	codexBin, cmdEnv, err := resolveCodexBinaryEnv()
 	if err != nil {
@@ -588,7 +602,7 @@ func runCodex(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		parseExecOutput(stdout, &result, &stdoutBuf)
+		parseExecOutput(stdout, &result, &stdoutBuf, cb)
 	}()
 	go func() {
 		defer wg.Done()
@@ -679,18 +693,52 @@ type execResult struct {
 	Response string
 }
 
-type execEvent struct {
-	Type     string `json:"type"`
-	ThreadID string `json:"thread_id,omitempty"`
-	Item     struct {
-		Type string `json:"type,omitempty"`
-		Text string `json:"text,omitempty"`
-	} `json:"item,omitempty"`
+// StreamCallback receives structured events from Codex exec JSONL output.
+type StreamCallback struct {
+	OnTextDelta  func(delta string)
+	OnToolStart  func(index int, id, name string)
+	OnToolDelta  func(index int, partialJSON string)
+	OnToolFinish func(index int)
 }
 
-func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder) {
+type execEvent struct {
+	Type     string   `json:"type"`
+	ThreadID string   `json:"thread_id,omitempty"`
+	Item     execItem `json:"item,omitempty"`
+}
+
+type execItem struct {
+	ID               string `json:"id,omitempty"`
+	Type             string `json:"type,omitempty"`
+	Text             string `json:"text,omitempty"`
+	Command          string `json:"command,omitempty"`
+	AggregatedOutput string `json:"aggregated_output,omitempty"`
+	Status           string `json:"status,omitempty"`
+}
+
+func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb StreamCallback) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	toolIndexes := make(map[string]int)
+	var toolCount int
+	var agentMessages []string
+
+	ensureTool := func(item execItem) int {
+		if index, ok := toolIndexes[item.ID]; ok {
+			return index
+		}
+
+		index := toolCount
+		toolCount++
+		toolIndexes[item.ID] = index
+		if cb.OnToolStart != nil {
+			cb.OnToolStart(index, item.ID, "Bash")
+		}
+		if cb.OnToolDelta != nil && item.Command != "" {
+			cb.OnToolDelta(index, marshalToolInput(item.Command))
+		}
+		return index
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -705,10 +753,48 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder) {
 		if event.ThreadID != "" {
 			result.ThreadID = event.ThreadID
 		}
-		if event.Type == "item.completed" && event.Item.Type == "agent_message" && event.Item.Text != "" {
-			result.Response = event.Item.Text
+
+		switch event.Type {
+		case "item.started":
+			if event.Item.Type == "command_execution" {
+				ensureTool(event.Item)
+			}
+		case "item.completed":
+			switch event.Item.Type {
+			case "agent_message":
+				text := strings.TrimSpace(event.Item.Text)
+				if text == "" {
+					continue
+				}
+				delta := text
+				if len(agentMessages) > 0 {
+					delta = "\n\n" + text
+				}
+				agentMessages = append(agentMessages, text)
+				result.Response = strings.Join(agentMessages, "\n\n")
+				if cb.OnTextDelta != nil {
+					cb.OnTextDelta(delta)
+				}
+			case "command_execution":
+				index := ensureTool(event.Item)
+				if cb.OnToolFinish != nil {
+					cb.OnToolFinish(index)
+				}
+			}
 		}
 	}
+}
+
+func marshalToolInput(command string) string {
+	data, err := json.Marshal(struct {
+		Command string `json:"command"`
+	}{
+		Command: command,
+	})
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func (m *Manager) saveLocked() error {

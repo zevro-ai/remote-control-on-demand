@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,6 +184,7 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 		sandbox,
 		model string,
 		dangerouslyBypassSandbox bool,
+		cb StreamCallback,
 	) (string, string, error) {
 		return "thread-123", "assistant reply", nil
 	}
@@ -215,6 +217,70 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 	}
 	if events[1].Role != "assistant" || events[1].Content != "assistant reply" {
 		t.Fatalf("assistant event = %#v", events[1])
+	}
+}
+
+func TestParseExecOutputEmitsStreamingToolAndTextEvents(t *testing.T) {
+	input := strings.NewReader(strings.Join([]string{
+		`{"type":"thread.started","thread_id":"thread-123"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I will inspect README.md."}}`,
+		`{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"sed -n '1,20p' README.md","status":"in_progress"}}`,
+		`{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"sed -n '1,20p' README.md","aggregated_output":"# RCOD","status":"completed"}}`,
+		`{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"RCOD: Remote Control On Demand"}}`,
+		`{"type":"turn.completed"}`,
+	}, "\n"))
+
+	var raw strings.Builder
+	var result execResult
+	var deltas []string
+	var events []chat.ToolCallEvent
+
+	parseExecOutput(input, &result, &raw, StreamCallback{
+		OnTextDelta: func(delta string) {
+			deltas = append(deltas, delta)
+		},
+		OnToolStart: func(index int, id, name string) {
+			events = append(events, chat.ToolCallEvent{Index: index, ID: id, Name: name})
+		},
+		OnToolDelta: func(index int, partialJSON string) {
+			events = append(events, chat.ToolCallEvent{Index: index, PartialJSON: partialJSON})
+		},
+		OnToolFinish: func(index int) {
+			events = append(events, chat.ToolCallEvent{Index: index})
+		},
+	})
+
+	if result.ThreadID != "thread-123" {
+		t.Fatalf("ThreadID = %q", result.ThreadID)
+	}
+
+	wantReply := "I will inspect README.md.\n\nRCOD: Remote Control On Demand"
+	if result.Response != wantReply {
+		t.Fatalf("Response = %q, want %q", result.Response, wantReply)
+	}
+
+	if !reflect.DeepEqual(deltas, []string{
+		"I will inspect README.md.",
+		"\n\nRCOD: Remote Control On Demand",
+	}) {
+		t.Fatalf("deltas = %#v", deltas)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+
+	if events[0].Index != 0 || events[0].ID != "item_1" || events[0].Name != "Bash" {
+		t.Fatalf("tool start = %#v", events[0])
+	}
+
+	if events[1].Index != 0 || events[1].PartialJSON != `{"command":"sed -n '1,20p' README.md"}` {
+		t.Fatalf("tool delta = %#v", events[1])
+	}
+
+	if events[2].Index != 0 {
+		t.Fatalf("tool finish = %#v", events[2])
 	}
 }
 
