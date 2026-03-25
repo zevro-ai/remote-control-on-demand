@@ -1137,6 +1137,11 @@ button {
   background: rgba(14, 26, 23, 0.78);
 }
 
+.message-composer.is-submitting {
+  border-color: rgba(74, 222, 128, 0.24);
+  background: rgba(10, 17, 13, 0.88);
+}
+
 .message-composer__mode-switch {
   display: inline-flex;
   align-items: center;
@@ -1158,6 +1163,11 @@ button {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   transition: all 150ms ease;
+}
+
+.message-composer__mode-switch button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .message-composer__mode-switch button.is-active {
@@ -1738,6 +1748,80 @@ button {
   color: var(--color-text-secondary);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.tool-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.tool-diff__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-diff__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.tool-diff__meta strong {
+  color: var(--color-text-primary);
+}
+
+.tool-diff__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tool-diff__panel {
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  overflow: hidden;
+  background: rgba(7, 10, 9, 0.9);
+}
+
+.tool-diff__panel--before {
+  border-color: rgba(248, 113, 113, 0.24);
+}
+
+.tool-diff__panel--after {
+  border-color: rgba(74, 222, 128, 0.24);
+}
+
+.tool-diff__label {
+  padding: 6px 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-text-muted);
+}
+
+.tool-diff__panel pre {
+  margin: 0;
+  padding: 10px;
+  min-height: 56px;
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 880px) {
+  .tool-diff__grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @keyframes spin-tool {

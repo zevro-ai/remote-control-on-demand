@@ -46,7 +46,7 @@ export function MessageInput({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentsRef = useRef<DraftAttachment[]>([]);
   const dragDepthRef = useRef(0);
 
@@ -64,9 +64,28 @@ export function MessageInput({
     attachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.preview_url));
     attachmentsRef.current = [];
     setAttachments([]);
-    if (inputRef.current) {
-      inputRef.current.value = "";
+    resetFileInput();
+  };
+
+  const resetFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
+  };
+
+  const hideAttachments = () => {
+    attachmentsRef.current = [];
+    setAttachments([]);
+    resetFileInput();
+  };
+
+  const restoreAttachments = (nextAttachments: DraftAttachment[]) => {
+    attachmentsRef.current = nextAttachments;
+    setAttachments(nextAttachments);
+  };
+
+  const revokeAttachments = (nextAttachments: DraftAttachment[]) => {
+    nextAttachments.forEach((attachment) => URL.revokeObjectURL(attachment.preview_url));
   };
 
   const appendFiles = (files: File[]) => {
@@ -90,10 +109,16 @@ export function MessageInput({
 
   const handleSubmit = async () => {
     const message = value.trim();
+    const sendCommand = onSendCommand;
     if (disabled || isSubmitting) return;
+    if (mode === "bash" && (!message || !sendCommand)) return;
+    if (mode === "prompt" && !message && attachments.length === 0) return;
 
     const total = normalizeRepeatCount(repeatCount);
     let activeIteration = 0;
+    const submittedMode = mode;
+    const submittedMessage = message;
+    const submittedAttachments = attachments;
 
     setSubmitError(null);
     setIsSubmitting(true);
@@ -101,30 +126,33 @@ export function MessageInput({
     setLoopTotal(total);
 
     try {
-      if (mode === "bash") {
-        if (!message || !onSendCommand) return;
+      if (submittedMode === "bash") {
+        setValue("");
         await repeatSequentially(total, async (iteration) => {
           activeIteration = iteration;
           setLoopIteration(iteration);
-          await onSendCommand(message);
+          await sendCommand!(submittedMessage);
         });
-        setValue("");
         return;
       }
 
-      if (!message && attachments.length === 0) return;
+      setValue("");
+      hideAttachments();
       await repeatSequentially(total, async (iteration) => {
         activeIteration = iteration;
         setLoopIteration(iteration);
-        await onSendPrompt(message, attachments);
+        await onSendPrompt(submittedMessage, submittedAttachments);
       });
-      clearAttachments();
-      setValue("");
+      revokeAttachments(submittedAttachments);
     } catch (error) {
+      setValue(submittedMessage);
+      if (submittedMode === "prompt") {
+        restoreAttachments(submittedAttachments);
+      }
       setSubmitError(
         toLoopActionErrorMessage(
           error,
-          mode === "bash" ? "Run" : "Send",
+          submittedMode === "bash" ? "Run" : "Send",
           activeIteration || 1,
           total
         )
@@ -261,7 +289,8 @@ export function MessageInput({
 
   return (
     <div
-      className={`message-composer ${isDragActive ? "is-dragging" : ""}`}
+      className={`message-composer ${isDragActive ? "is-dragging" : ""} ${isSubmitting ? "is-submitting" : ""}`}
+      aria-busy={isSubmitting}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -273,6 +302,7 @@ export function MessageInput({
             type="button"
             className={mode === "prompt" ? "is-active" : ""}
             onClick={() => switchMode("prompt")}
+            disabled={disabled || isSubmitting}
           >
             Prompt
           </button>
@@ -280,6 +310,7 @@ export function MessageInput({
             type="button"
             className={mode === "bash" ? "is-active" : ""}
             onClick={() => switchMode("bash")}
+            disabled={disabled || isSubmitting}
           >
             Bash
           </button>
@@ -301,7 +332,7 @@ export function MessageInput({
                 <strong>{attachment.name}</strong>
                 <span>{Math.max(1, Math.round(attachment.size / 1024))} KB</span>
               </div>
-              <button type="button" onClick={() => removeAttachment(index)}>
+              <button type="button" onClick={() => removeAttachment(index)} disabled={disabled || isSubmitting}>
                 x
               </button>
             </div>
@@ -345,7 +376,7 @@ export function MessageInput({
       {supportsImages && mode === "prompt" && (
         <>
           <input
-            ref={inputRef}
+            ref={fileInputRef}
             type="file"
             accept="image/*"
             multiple
@@ -354,7 +385,7 @@ export function MessageInput({
           />
           <button
             type="button"
-            onClick={() => inputRef.current?.click()}
+            onClick={() => fileInputRef.current?.click()}
             disabled={disabled || isSubmitting}
             className="message-composer__attach"
           >
