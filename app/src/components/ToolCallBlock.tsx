@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { extractToolDiff } from "../lib/toolCallDiff";
 
 const TOOL_COLORS: Record<string, string> = {
   Write: "var(--color-accent-cyan)",
@@ -17,7 +18,7 @@ interface Props {
   live?: boolean;
 }
 
-export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
+export function ToolCallBlock({ name, id, inputJSON, done, live }: Props) {
   const [expanded, setExpanded] = useState(false);
   const color = TOOL_COLORS[name] || "var(--color-text-secondary)";
 
@@ -39,10 +40,12 @@ export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
     return "";
   }, [parsed]);
 
+  const diffSections = useMemo(() => extractToolDiff(name, parsed), [name, parsed]);
+
   const isActive = live && !done;
 
   return (
-    <div className={`tool-call-block ${isActive ? "is-active" : ""}`}>
+    <div id={id || undefined} className={`tool-call-block ${isActive ? "is-active" : ""}`}>
       <button
         className="tool-call-block__header"
         onClick={() => setExpanded(!expanded)}
@@ -67,7 +70,30 @@ export function ToolCallBlock({ name, inputJSON, done, live }: Props) {
       </button>
       {expanded && inputJSON && (
         <div className="tool-call-block__body">
-          <pre>{parsed ? JSON.stringify(parsed, null, 2) : inputJSON}</pre>
+          {diffSections.length > 0 ? (
+            <div className="tool-diff">
+              {diffSections.map((section) => (
+                <section key={`${section.path}-${section.label}`} className="tool-diff__section">
+                  <div className="tool-diff__meta">
+                    <strong>{section.label}</strong>
+                    <span>{section.path}</span>
+                  </div>
+                  <div className="tool-diff__grid">
+                    <div className="tool-diff__panel tool-diff__panel--before">
+                      <div className="tool-diff__label">Before</div>
+                      <pre>{section.before || "(empty)"}</pre>
+                    </div>
+                    <div className="tool-diff__panel tool-diff__panel--after">
+                      <div className="tool-diff__label">After</div>
+                      <pre>{section.after || "(empty)"}</pre>
+                    </div>
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <pre>{parsed ? JSON.stringify(parsed, null, 2) : inputJSON}</pre>
+          )}
         </div>
       )}
     </div>
