@@ -266,7 +266,7 @@ export function resolveBootstrapResults(
 }
 
 async function fetchBootstrapData(): Promise<BootstrapData> {
-  const providers = await api.get<string[]>("/api/chat/providers").catch(() => ["claude", "codex"]);
+  const providers = await api.get<string[]>("/api/chat/providers");
   
   const chatPromises = providers.map(async (p) => {
     const sessions = await api.get<ChatSession[]>(`/api/chat/${p}/sessions`);

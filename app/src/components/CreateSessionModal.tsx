@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { FolderPicker } from "./FolderPicker";
 
 interface Props {
@@ -15,9 +15,16 @@ export function CreateSessionModal({
   onCreateSession,
 }: Props) {
   const providers = Object.keys(chatSessions).sort();
-  const [agent, setAgent] = useState<string>(providers[0] || "claude");
+  const [agent, setAgent] = useState<string>("");
+
+  useEffect(() => {
+    if (providers.length > 0 && !agent) {
+      setAgent(providers[0]);
+    }
+  }, [providers, agent]);
 
   const handleSelect = async (folder: string) => {
+    if (!agent) return;
     await onCreateSession(agent, folder);
     onClose();
   };
@@ -30,15 +37,19 @@ export function CreateSessionModal({
         <p>Select an AI agent and the repository to work in.</p>
 
         <div className="modal-agent-switch">
-          {providers.map((p) => (
-            <button
-              key={p}
-              onClick={() => setAgent(p)}
-              className={agent === p ? "is-active" : ""}
-            >
-              {p.charAt(0).toUpperCase() + p.slice(1)}
-            </button>
-          ))}
+          {providers.length === 0 ? (
+            <div className="sidebar-empty">Loading agents...</div>
+          ) : (
+            providers.map((p) => (
+              <button
+                key={p}
+                onClick={() => setAgent(p)}
+                className={agent === p ? "is-active" : ""}
+              >
+                {p.charAt(0).toUpperCase() + p.slice(1)}
+              </button>
+            ))
+          )}
         </div>
 
         <FolderPicker folders={folders} onSelect={handleSelect} />

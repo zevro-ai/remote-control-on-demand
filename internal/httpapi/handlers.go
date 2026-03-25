@@ -167,6 +167,7 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 
 	sess, ok := p.GetSession(id)
 	if !ok {
+		cleanupStoredAttachments(attachments)
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found after message sent"})
 		return
 	}
@@ -214,7 +215,7 @@ func (s *Server) handleRunChatCommand(w http.ResponseWriter, r *http.Request) {
 
 	sess, ok := p.GetSession(id)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found after message sent"})
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found after command sent"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
