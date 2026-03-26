@@ -147,8 +147,8 @@ journalctl --user -u rcod -f
 
 If you do not want to use the helper script, use the templates directly:
 
-- system unit: [packaging/systemd/rcod.service](/home/tomasz/public_html/zevro/remote-control-on-demand/packaging/systemd/rcod.service)
-- user unit: [packaging/systemd/rcod.user.service](/home/tomasz/public_html/zevro/remote-control-on-demand/packaging/systemd/rcod.user.service)
+- system unit: [packaging/systemd/rcod.service](../../packaging/systemd/rcod.service)
+- user unit: [packaging/systemd/rcod.user.service](../../packaging/systemd/rcod.user.service)
 
 Replace the placeholders before installing the unit.
 

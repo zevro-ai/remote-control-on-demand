@@ -124,7 +124,7 @@ if [[ "$MODE" == "system" ]]; then
 
   ensure_system_user "$SERVICE_USER" "$SERVICE_GROUP" "$STATE_DIR"
 
-  mkdir -p "$(dirname -- "$CONFIG_PATH")" "$STATE_DIR"
+  mkdir -p "$(dirname -- "$CONFIG_PATH")" "$STATE_DIR" "$(dirname -- "$BIN_PATH")"
   chown "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR"
   chmod 0700 "$STATE_DIR"
 
@@ -160,7 +160,7 @@ CONFIG_PATH="$(canonicalize_path "$CONFIG_PATH")"
 STATE_DIR="$(canonicalize_path "$STATE_DIR")"
 BIN_PATH="$(canonicalize_path "$BIN_PATH")"
 
-mkdir -p "$(dirname -- "$BIN_PATH")" "$(dirname -- "$UNIT_PATH")"
+mkdir -p "$(dirname -- "$UNIT_PATH")"
 
 echo "building rcod..."
 env \
