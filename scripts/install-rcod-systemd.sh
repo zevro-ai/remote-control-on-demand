@@ -171,7 +171,7 @@ env \
   GOCACHE="$GO_CACHE_DIR" \
   GOMODCACHE="$GO_MOD_CACHE" \
   GOTMPDIR="$GO_TMP_DIR" \
-  "$GO_BIN" build -o "$BIN_PATH" ./cmd/codexbot
+  "$GO_BIN" -C "$ROOT_DIR" build -o "$BIN_PATH" ./cmd/codexbot
 
 echo "writing systemd unit to $UNIT_PATH..."
 sed \
@@ -184,7 +184,13 @@ sed \
 
 echo "reloading systemd..."
 "${SYSTEMCTL[@]}" daemon-reload
-"${SYSTEMCTL[@]}" enable --now rcod.service
+"${SYSTEMCTL[@]}" enable rcod.service
+
+if "${SYSTEMCTL[@]}" is-active --quiet rcod.service; then
+  "${SYSTEMCTL[@]}" restart rcod.service
+else
+  "${SYSTEMCTL[@]}" start rcod.service
+fi
 
 echo
 echo "rcod service installed"
