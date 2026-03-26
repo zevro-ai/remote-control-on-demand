@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+PACKAGED_TEMPLATE_DIR="/usr/share/rcod/systemd"
 MODE="system"
 SERVICE_USER="rcod"
 SERVICE_GROUP=""
 CONFIG_PATH=""
 STATE_DIR=""
 BIN_PATH=""
+SKIP_BUILD="false"
 GO_BIN="${GO_BIN:-/usr/local/go/bin/go}"
 GO_CACHE_DIR="${GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/rcod/go-build}"
 GO_MOD_CACHE="${GOMODCACHE:-$HOME/go/pkg/mod}"
@@ -16,7 +19,7 @@ GO_TMP_DIR="${GOTMPDIR:-${TMPDIR:-/tmp}/rcod-go-tmp}"
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/install-rcod-systemd.sh [--mode system|user] [--config PATH] [--state-dir PATH] [--bin PATH] [--service-user USER]
+  scripts/install-rcod-systemd.sh [--mode system|user] [--config PATH] [--state-dir PATH] [--bin PATH] [--service-user USER] [--skip-build]
 
 Modes:
   system  Install /etc/systemd/system/rcod.service and run RCOD as a non-root user (default)
@@ -25,6 +28,7 @@ Modes:
 Examples:
   sudo scripts/install-rcod-systemd.sh --mode system --service-user rcod --config /etc/rcod/config.yaml
   scripts/install-rcod-systemd.sh --mode user --config "$HOME/.config/rcod/config.yaml"
+  sudo /usr/lib/rcod/install-rcod-systemd.sh --skip-build --mode system --service-user rcod --config /etc/rcod/config.yaml
 EOF
 }
 
@@ -61,6 +65,23 @@ ensure_system_user() {
     "$user"
 }
 
+resolve_template_path() {
+  local filename="$1"
+
+  if [[ -f "$ROOT_DIR/packaging/systemd/$filename" ]]; then
+    printf '%s\n' "$ROOT_DIR/packaging/systemd/$filename"
+    return
+  fi
+
+  if [[ -f "$PACKAGED_TEMPLATE_DIR/$filename" ]]; then
+    printf '%s\n' "$PACKAGED_TEMPLATE_DIR/$filename"
+    return
+  fi
+
+  echo "systemd template not found: $filename" >&2
+  exit 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)
@@ -82,6 +103,10 @@ while [[ $# -gt 0 ]]; do
     --service-user)
       SERVICE_USER="${2:-}"
       shift 2
+      ;;
+    --skip-build)
+      SKIP_BUILD="true"
+      shift
       ;;
     --help|-h)
       usage
@@ -113,7 +138,13 @@ if [[ "$MODE" == "system" ]]; then
 
   CONFIG_PATH="${CONFIG_PATH:-/etc/rcod/config.yaml}"
   STATE_DIR="${STATE_DIR:-/var/lib/rcod}"
-  BIN_PATH="${BIN_PATH:-/usr/local/bin/rcod}"
+  if [[ -z "$BIN_PATH" ]]; then
+    if [[ "$SKIP_BUILD" == "true" ]]; then
+      BIN_PATH="/usr/bin/rcod"
+    else
+      BIN_PATH="/usr/local/bin/rcod"
+    fi
+  fi
 
   if id -u "$SERVICE_USER" >/dev/null 2>&1; then
     SERVICE_GROUP="${SERVICE_GROUP:-$(id -gn "$SERVICE_USER")}"
@@ -121,7 +152,7 @@ if [[ "$MODE" == "system" ]]; then
     SERVICE_GROUP="${SERVICE_GROUP:-$SERVICE_USER}"
   fi
 
-  UNIT_TEMPLATE="$ROOT_DIR/packaging/systemd/rcod.service"
+  UNIT_TEMPLATE="$(resolve_template_path "rcod.service")"
   UNIT_PATH="/etc/systemd/system/rcod.service"
   SYSTEMCTL=(systemctl)
 
@@ -130,6 +161,9 @@ if [[ "$MODE" == "system" ]]; then
 
   ensure_system_user "$SERVICE_USER" "$SERVICE_GROUP" "$STATE_DIR"
 
+  CONFIG_DIR="$(cd -- "$(dirname -- "$CONFIG_PATH")" && pwd -P)"
+  chown "root:$SERVICE_GROUP" "$CONFIG_DIR"
+  chmod 0750 "$CONFIG_DIR"
   chown "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR"
   chmod 0700 "$STATE_DIR"
 
@@ -140,10 +174,16 @@ if [[ "$MODE" == "system" ]]; then
 else
   CONFIG_PATH="${CONFIG_PATH:-$HOME/.config/rcod/config.yaml}"
   STATE_DIR="${STATE_DIR:-$HOME/.local/state/rcod}"
-  BIN_PATH="${BIN_PATH:-$HOME/.local/bin/rcod}"
+  if [[ -z "$BIN_PATH" ]]; then
+    if [[ "$SKIP_BUILD" == "true" ]]; then
+      BIN_PATH="/usr/bin/rcod"
+    else
+      BIN_PATH="$HOME/.local/bin/rcod"
+    fi
+  fi
   SERVICE_USER="$(id -un)"
   SERVICE_GROUP="$(id -gn)"
-  UNIT_TEMPLATE="$ROOT_DIR/packaging/systemd/rcod.user.service"
+  UNIT_TEMPLATE="$(resolve_template_path "rcod.user.service")"
   UNIT_PATH="$HOME/.config/systemd/user/rcod.service"
   SYSTEMCTL=(systemctl --user)
 
@@ -156,24 +196,33 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$UNIT_TEMPLATE" ]]; then
-  echo "systemd template not found: $UNIT_TEMPLATE" >&2
-  exit 1
-fi
-
 CONFIG_PATH="$(canonicalize_path "$CONFIG_PATH")"
 STATE_DIR="$(canonicalize_path "$STATE_DIR")"
 BIN_PATH="$(canonicalize_path "$BIN_PATH")"
 
 mkdir -p "$(dirname -- "$UNIT_PATH")"
-mkdir -p "$GO_CACHE_DIR" "$GO_TMP_DIR"
 
-echo "building rcod..."
-env \
-  GOCACHE="$GO_CACHE_DIR" \
-  GOMODCACHE="$GO_MOD_CACHE" \
-  GOTMPDIR="$GO_TMP_DIR" \
-  "$GO_BIN" -C "$ROOT_DIR" build -o "$BIN_PATH" ./cmd/codexbot
+if [[ "$SKIP_BUILD" == "true" ]]; then
+  if [[ ! -x "$BIN_PATH" ]]; then
+    echo "installed rcod binary not found or not executable: $BIN_PATH" >&2
+    exit 1
+  fi
+  echo "using existing rcod binary at $BIN_PATH..."
+else
+  if [[ ! -f "$ROOT_DIR/go.mod" ]] || [[ ! -d "$ROOT_DIR/cmd/codexbot" ]]; then
+    echo "source build mode requires running from a repository checkout; use --skip-build for packaged installs" >&2
+    exit 1
+  fi
+
+  mkdir -p "$GO_CACHE_DIR" "$GO_TMP_DIR"
+
+  echo "building rcod..."
+  env \
+    GOCACHE="$GO_CACHE_DIR" \
+    GOMODCACHE="$GO_MOD_CACHE" \
+    GOTMPDIR="$GO_TMP_DIR" \
+    "$GO_BIN" -C "$ROOT_DIR" build -o "$BIN_PATH" ./cmd/codexbot
+fi
 
 echo "writing systemd unit to $UNIT_PATH..."
 sed \

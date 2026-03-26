@@ -52,6 +52,73 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+nfpms:
+  - id: rcod-deb
+    package_name: rcod
+    ids:
+      - rcod
+    formats:
+      - deb
+    bindir: /usr/bin
+    vendor: zevro.ai
+    homepage: https://github.com/zevro-ai/remote-control-on-demand
+    maintainer: zevro.ai <maintainer@zevro.ai>
+    description: |-
+      Remote Control On Demand (RCOD) lets you control Codex and Claude Code
+      sessions remotely from Telegram.
+    license: Apache 2.0
+    section: utils
+    priority: optional
+    file_name_template: "{{ .ConventionalFileName }}"
+    contents:
+      - src: ./scripts/install-rcod-systemd.sh
+        dst: /usr/lib/rcod/install-rcod-systemd.sh
+        file_info:
+          mode: 0755
+      - src: ./packaging/systemd/rcod.service
+        dst: /usr/share/rcod/systemd/rcod.service
+        file_info:
+          mode: 0644
+      - src: ./packaging/systemd/rcod.user.service
+        dst: /usr/share/rcod/systemd/rcod.user.service
+        file_info:
+          mode: 0644
+      - src: ./config.example.yaml
+        dst: /usr/share/doc/rcod/examples/config.example.yaml
+        file_info:
+          mode: 0644
+      - src: ./docs/deployment/systemd.md
+        dst: /usr/share/doc/rcod/systemd.md
+        file_info:
+          mode: 0644
+      - src: ./docs/deployment/deb.md
+        dst: /usr/share/doc/rcod/deb-package.md
+        file_info:
+          mode: 0644
+      - src: ./README.md
+        dst: /usr/share/doc/rcod/README.md
+        file_info:
+          mode: 0644
+      - src: ./SECURITY.md
+        dst: /usr/share/doc/rcod/SECURITY.md
+        file_info:
+          mode: 0644
+      - src: ./LICENSE
+        dst: /usr/share/doc/rcod/copyright
+        file_info:
+          mode: 0644
+      - dst: /etc/rcod
+        type: dir
+        file_info:
+          mode: 0755
+      - dst: /var/lib/rcod
+        type: dir
+        file_info:
+          mode: 0700
+    deb:
+      fields:
+        Bugs: https://github.com/zevro-ai/remote-control-on-demand/issues
+
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
 
