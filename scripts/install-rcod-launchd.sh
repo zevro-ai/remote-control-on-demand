@@ -76,7 +76,7 @@ resolve_user_home() {
     exit 1
   fi
 
-  home_dir="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  home_dir="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory:[[:space:]]*//p')"
   if [[ -z "$home_dir" || ! -d "$home_dir" ]]; then
     echo "failed to resolve home directory for user: $user" >&2
     exit 1
@@ -269,12 +269,12 @@ fi
 
 echo "writing launchd plist to $PLIST_PATH..."
 sed \
-  -e "s/<BIN_PATH>/$(escape_sed_replacement "$BIN_PATH")/g" \
-  -e "s/<CONFIG_PATH>/$(escape_sed_replacement "$CONFIG_PATH")/g" \
-  -e "s/<STATE_DIR>/$(escape_sed_replacement "$STATE_DIR")/g" \
-  -e "s/<LOG_DIR>/$(escape_sed_replacement "$LOG_DIR")/g" \
-  -e "s/<SERVICE_USER>/$(escape_sed_replacement "$SERVICE_USER")/g" \
-  -e "s/<USER_HOME>/$(escape_sed_replacement "$USER_HOME")/g" \
+  -e "s/@BIN_PATH@/$(escape_sed_replacement "$BIN_PATH")/g" \
+  -e "s/@CONFIG_PATH@/$(escape_sed_replacement "$CONFIG_PATH")/g" \
+  -e "s/@STATE_DIR@/$(escape_sed_replacement "$STATE_DIR")/g" \
+  -e "s/@LOG_DIR@/$(escape_sed_replacement "$LOG_DIR")/g" \
+  -e "s/@SERVICE_USER@/$(escape_sed_replacement "$SERVICE_USER")/g" \
+  -e "s/@USER_HOME@/$(escape_sed_replacement "$USER_HOME")/g" \
   "$TEMPLATE_PATH" >"$PLIST_PATH"
 
 if [[ "$MODE" == "daemon" ]]; then

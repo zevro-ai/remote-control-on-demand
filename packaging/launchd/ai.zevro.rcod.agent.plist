@@ -6,18 +6,18 @@
   <string>ai.zevro.rcod.agent</string>
   <key>ProgramArguments</key>
   <array>
-    <string><BIN_PATH></string>
+    <string>@BIN_PATH@</string>
     <string>--config</string>
-    <string><CONFIG_PATH></string>
+    <string>@CONFIG_PATH@</string>
     <string>--state-dir</string>
-    <string><STATE_DIR></string>
+    <string>@STATE_DIR@</string>
   </array>
   <key>WorkingDirectory</key>
-  <string><STATE_DIR></string>
+  <string>@STATE_DIR@</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:<USER_HOME>/.local/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:@USER_HOME@/.local/bin</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -31,8 +31,8 @@
   <key>ThrottleInterval</key>
   <integer>5</integer>
   <key>StandardOutPath</key>
-  <string><LOG_DIR>/rcod.stdout.log</string>
+  <string>@LOG_DIR@/rcod.stdout.log</string>
   <key>StandardErrorPath</key>
-  <string><LOG_DIR>/rcod.stderr.log</string>
+  <string>@LOG_DIR@/rcod.stderr.log</string>
 </dict>
 </plist>
