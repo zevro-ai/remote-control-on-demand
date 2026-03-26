@@ -42,7 +42,7 @@ go build -o rcod ./cmd/rcodbot
 ./rcod -config config.yaml
 ```
 
-For local native control helpers:
+For repo-local `rcodbot` helpers:
 
 ```bash
 scripts/start-rcodbot-native.sh config.yaml
@@ -180,17 +180,19 @@ RCOD supports both:
 
 - Debian/Ubuntu `systemd` deployments, including a system-wide unit that still runs as a non-root user and a per-user `systemctl --user` mode
 - Debian/Ubuntu `.deb` packages built by GoReleaser/nFPM for standard install and upgrade flows
-- macOS `launchd` templates for native background execution
+- macOS `launchd` deployments with a recommended boot-time `LaunchDaemon` that still runs as a normal macOS user, plus an optional per-user `LaunchAgent`
 
 Start with:
 
 - [docs/deployment/deb.md](./docs/deployment/deb.md)
+- [docs/deployment/launchd.md](./docs/deployment/launchd.md)
 - [docs/deployment/systemd.md](./docs/deployment/systemd.md)
 - [packaging/systemd/rcod.service](./packaging/systemd/rcod.service)
 - [packaging/systemd/rcod.user.service](./packaging/systemd/rcod.user.service)
 - [scripts/install-rcod-systemd.sh](./scripts/install-rcod-systemd.sh)
+- [scripts/install-rcod-launchd.sh](./scripts/install-rcod-launchd.sh)
 - [packaging/launchd/ai.zevro.rcod.plist](./packaging/launchd/ai.zevro.rcod.plist)
-- [packaging/launchd/ai.zevro.rcodbot.plist](./packaging/launchd/ai.zevro.rcodbot.plist)
+- [packaging/launchd/ai.zevro.rcod.agent.plist](./packaging/launchd/ai.zevro.rcod.agent.plist)
 
 ## Session Persistence
 
