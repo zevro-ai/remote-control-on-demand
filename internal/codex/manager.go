@@ -714,6 +714,10 @@ type execItem struct {
 	Command          string `json:"command,omitempty"`
 	AggregatedOutput string `json:"aggregated_output,omitempty"`
 	Status           string `json:"status,omitempty"`
+	Items            []struct {
+		Text      string `json:"text,omitempty"`
+		Completed bool   `json:"completed,omitempty"`
+	} `json:"items,omitempty"`
 }
 
 func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb StreamCallback) {
@@ -760,10 +764,14 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb S
 	}
 
 	emitToolDelta := func(entry *toolEntry, item execItem) {
-		if entry == nil || entry.deltaSent || cb.OnToolDelta == nil || item.Command == "" {
+		if entry == nil || entry.deltaSent || cb.OnToolDelta == nil {
 			return
 		}
-		cb.OnToolDelta(entry.index, marshalToolInput(item.Command))
+		payload := marshalToolInput(item)
+		if payload == "" {
+			return
+		}
+		cb.OnToolDelta(entry.index, payload)
 		entry.deltaSent = true
 	}
 
@@ -783,7 +791,7 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb S
 
 		switch event.Type {
 		case "item.started":
-			if event.Item.Type == "command_execution" {
+			if isStreamingToolItem(event.Item) {
 				entry := ensureTool(event.Type, event.Item)
 				emitToolDelta(entry, event.Item)
 			}
@@ -809,6 +817,12 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb S
 				if cb.OnToolFinish != nil {
 					cb.OnToolFinish(entry.index)
 				}
+			case "todo_list":
+				entry := ensureTool(event.Type, event.Item)
+				emitToolDelta(entry, event.Item)
+				if cb.OnToolFinish != nil {
+					cb.OnToolFinish(entry.index)
+				}
 			}
 		}
 	}
@@ -824,6 +838,9 @@ func toolNameForExecItem(item execItem) string {
 	case "command_execution":
 		// Codex currently models shell invocations as command_execution items.
 		return "Bash"
+	case "todo_list":
+		// Normalize Codex todo_list items to the TodoWrite tool semantics used in the dashboard.
+		return "TodoWrite"
 	case "":
 		return "tool"
 	default:
@@ -831,12 +848,45 @@ func toolNameForExecItem(item execItem) string {
 	}
 }
 
-func marshalToolInput(command string) string {
-	data, err := json.Marshal(struct {
-		Command string `json:"command"`
-	}{
-		Command: command,
-	})
+func isStreamingToolItem(item execItem) bool {
+	switch item.Type {
+	case "command_execution", "todo_list":
+		return true
+	default:
+		return false
+	}
+}
+
+func marshalToolInput(item execItem) string {
+	var payload any
+
+	switch item.Type {
+	case "command_execution":
+		if item.Command == "" {
+			return ""
+		}
+		payload = struct {
+			Command string `json:"command"`
+		}{
+			Command: item.Command,
+		}
+	case "todo_list":
+		if len(item.Items) == 0 {
+			return ""
+		}
+		payload = struct {
+			Todos []struct {
+				Text      string `json:"text,omitempty"`
+				Completed bool   `json:"completed,omitempty"`
+			} `json:"todos"`
+		}{
+			Todos: item.Items,
+		}
+	default:
+		return ""
+	}
+
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return ""
 	}

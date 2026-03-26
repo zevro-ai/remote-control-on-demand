@@ -1,4 +1,5 @@
 import type { ChatSession, StreamBlock } from "../api/types";
+import { isTodoToolBlock, isToolUseBlock } from "./todoProgress";
 
 export type { ChatSession };
 export type OverviewDensity = "compact" | "comfortable" | "focus";
@@ -119,6 +120,9 @@ export function buildSessionPreview(
 
     for (const block of message.blocks || []) {
       if (block.type === "tool_use") {
+        if (isTodoToolBlock(block)) {
+          continue;
+        }
         pushPreview(preview, "tool", formatToolLine(block.name, block.done));
       }
     }
@@ -127,7 +131,10 @@ export function buildSessionPreview(
   }
 
   for (const block of streamBlocks) {
-    if (block.type === "tool_use") {
+    if (isToolUseBlock(block)) {
+      if (isTodoToolBlock(block)) {
+        continue;
+      }
       pushPreview(preview, "tool", formatToolLine(block.name, block.done));
       continue;
     }

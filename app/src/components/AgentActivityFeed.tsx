@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Message, StreamBlock } from "../api/types";
 import { getAuthenticatedAssetURL } from "../api/client";
+import { isTodoToolBlock, isToolUseBlock } from "../lib/todoProgress";
 import { ToolCallBlock } from "./ToolCallBlock";
 
 interface Props {
@@ -11,15 +12,16 @@ interface Props {
 
 export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const visibleStreamBlocks = streamBlocks.filter((block) => !(isToolUseBlock(block) && isTodoToolBlock(block)));
 
   useEffect(() => {
     const el = containerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, streamBlocks.length, streamBlocks]);
+  }, [messages.length, visibleStreamBlocks.length, visibleStreamBlocks]);
 
   return (
     <div ref={containerRef} className="activity-feed">
-      {messages.length === 0 && streamBlocks.length === 0 && (
+      {!busy && messages.length === 0 && visibleStreamBlocks.length === 0 && (
         <div className="stream-placeholder">No messages yet. Send the first prompt.</div>
       )}
 
@@ -39,6 +41,7 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
             <>
               {msg.blocks?.map((block, j) =>
                 block.type === "tool_use" ? (
+                  isTodoToolBlock(block) ? null : (
                   <ToolCallBlock
                     key={`msg-${i}-tool-${j}`}
                     name={block.name}
@@ -46,6 +49,7 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
                     inputJSON={block.inputJSON}
                     done={block.done}
                   />
+                  )
                 ) : null
               )}
               <AssistantText content={msg.content} />
@@ -54,15 +58,19 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
         </div>
       ))}
 
-      {streamBlocks.map((block, i) => {
+      {visibleStreamBlocks.map((block, i) => {
         if (block.type === "text") {
           return (
             <div key={`stream-${i}`} className="text-stream-block">
               {block.content}
-              {busy && i === streamBlocks.length - 1 && <span className="cursor-blink" />}
+              {busy && i === visibleStreamBlocks.length - 1 && <span className="cursor-blink" />}
             </div>
           );
         }
+        if (!isToolUseBlock(block)) {
+          return null;
+        }
+
         return (
           <ToolCallBlock
             key={`tool-${block.index}`}
@@ -75,7 +83,7 @@ export function AgentActivityFeed({ messages, streamBlocks, busy }: Props) {
         );
       })}
 
-      {busy && streamBlocks.length === 0 && (
+      {busy && visibleStreamBlocks.length === 0 && (
         <div className="thinking-indicator">
           <span className="tool-spinner" />
           <span style={{ color: "var(--color-text-muted)", fontSize: "0.82rem", marginLeft: "8px" }}>
