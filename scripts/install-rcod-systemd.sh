@@ -9,6 +9,9 @@ CONFIG_PATH=""
 STATE_DIR=""
 BIN_PATH=""
 GO_BIN="${GO_BIN:-/usr/local/go/bin/go}"
+GO_CACHE_DIR="${GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/rcod/go-build}"
+GO_MOD_CACHE="${GOMODCACHE:-$HOME/go/pkg/mod}"
+GO_TMP_DIR="${GOTMPDIR:-${TMPDIR:-/tmp}/rcod-go-tmp}"
 
 usage() {
   cat <<'EOF'
@@ -161,13 +164,14 @@ STATE_DIR="$(canonicalize_path "$STATE_DIR")"
 BIN_PATH="$(canonicalize_path "$BIN_PATH")"
 
 mkdir -p "$(dirname -- "$UNIT_PATH")"
+mkdir -p "$GO_CACHE_DIR" "$GO_TMP_DIR"
 
 echo "building rcod..."
 env \
-  GOCACHE="${GOCACHE:-$ROOT_DIR/.gocache}" \
-  GOMODCACHE="${GOMODCACHE:-$HOME/go/pkg/mod}" \
-  GOTMPDIR="${GOTMPDIR:-$ROOT_DIR/.gotmp}" \
-  "$GO_BIN" build -o "$BIN_PATH" ./cmd/bot
+  GOCACHE="$GO_CACHE_DIR" \
+  GOMODCACHE="$GO_MOD_CACHE" \
+  GOTMPDIR="$GO_TMP_DIR" \
+  "$GO_BIN" build -o "$BIN_PATH" ./cmd/codexbot
 
 echo "writing systemd unit to $UNIT_PATH..."
 sed \

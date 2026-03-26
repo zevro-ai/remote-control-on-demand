@@ -85,7 +85,7 @@ sudo scripts/install-rcod-systemd.sh \
 
 The helper will:
 
-- build `cmd/bot`
+- build `cmd/codexbot`
 - install the binary
 - create or reuse the service user
 - create the state directory
