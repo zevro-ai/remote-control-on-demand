@@ -34,11 +34,10 @@ sudo apt install ./rcod_<version>_linux_amd64.deb
 Start from the packaged example:
 
 ```bash
-sudo install -d -m 0750 /etc/rcod
 sudo install -m 0640 /usr/share/doc/rcod/examples/config.example.yaml /etc/rcod/config.yaml
 ```
 
-Then edit `/etc/rcod/config.yaml` with your Telegram token, allowed user ID, repository base folder, and any API settings you need.
+The package already creates `/etc/rcod`. Then edit `/etc/rcod/config.yaml` with your Telegram token, allowed user ID, repository base folder, and any API settings you need.
 
 ### 2. Install the systemd unit
 
