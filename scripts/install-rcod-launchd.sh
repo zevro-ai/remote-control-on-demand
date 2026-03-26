@@ -35,8 +35,14 @@ EOF
 
 canonicalize_path() {
   local input="$1"
+  local parent_dir
   local dir
-  dir="$(cd -- "$(dirname -- "$input")" && pwd -P)"
+  parent_dir="$(dirname -- "$input")"
+  if [[ ! -d "$parent_dir" ]]; then
+    echo "path parent directory does not exist: $parent_dir" >&2
+    return 1
+  fi
+  dir="$(cd -- "$parent_dir" && pwd -P)"
   printf '%s/%s\n' "$dir" "$(basename -- "$input")"
 }
 
@@ -65,14 +71,12 @@ resolve_user_home() {
   local user="$1"
   local home_dir=""
 
-  if command -v dscl >/dev/null 2>&1; then
-    home_dir="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  if ! command -v dscl >/dev/null 2>&1; then
+    echo "dscl is required to resolve macOS home directories" >&2
+    exit 1
   fi
 
-  if [[ -z "$home_dir" ]]; then
-    home_dir="$(eval "printf '%s' \"~$user\"")"
-  fi
-
+  home_dir="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
   if [[ -z "$home_dir" || ! -d "$home_dir" ]]; then
     echo "failed to resolve home directory for user: $user" >&2
     exit 1

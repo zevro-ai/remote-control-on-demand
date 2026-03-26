@@ -1,6 +1,9 @@
 package runtimepaths
 
-import "path/filepath"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 type LaunchdMode string
 
@@ -52,7 +55,7 @@ func DefaultMacOSLaunchdLayout(mode LaunchdMode, machine, userHome string, optHo
 			layout.BinPath = filepath.Join(userHome, ".local", "bin", "rcod")
 		}
 	default:
-		return MacOSLaunchdLayout{}
+		panic(fmt.Sprintf("runtimepaths: unknown LaunchdMode %q", mode))
 	}
 
 	return layout

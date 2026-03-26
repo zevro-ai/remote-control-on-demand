@@ -44,6 +44,17 @@ func TestDefaultMacOSLaunchdLayoutForDaemon(t *testing.T) {
 	}
 }
 
+func TestDefaultMacOSLaunchdLayoutForDaemonOnAppleSilicon(t *testing.T) {
+	got := DefaultMacOSLaunchdLayout(LaunchdModeDaemon, "arm64", "/Users/alice", false, false)
+
+	if got.BinPath != filepath.Join("/opt", "homebrew", "bin", "rcod") {
+		t.Fatalf("BinPath = %q", got.BinPath)
+	}
+	if got.ConfigPath != filepath.Join("/opt", "homebrew", "etc", "rcod", "config.yaml") {
+		t.Fatalf("ConfigPath = %q", got.ConfigPath)
+	}
+}
+
 func TestDefaultMacOSLaunchdLayoutForAgentBuildsIntoLocalBin(t *testing.T) {
 	got := DefaultMacOSLaunchdLayout(LaunchdModeAgent, "arm64", "/Users/alice", false, false)
 
