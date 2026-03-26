@@ -14,7 +14,7 @@ func ResolveStateDir(configPath, override string) string {
 	}
 
 	configDir := filepath.Dir(strings.TrimSpace(configPath))
-	if configDir == "." || configDir == "" {
+	if configDir == "." {
 		return "."
 	}
 
