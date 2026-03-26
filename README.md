@@ -6,7 +6,7 @@
 
 Manage [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions remotely via Telegram. RCOD runs on your machine or server, starts `claude rc` inside selected git repositories, and sends status, logs, crashes, and Claude session links back to your phone.
 
-This repo also includes a Codex-focused Telegram bot that lets you chat with Codex directly inside a selected repository.
+This repo also includes the `rcodbot` Telegram entrypoint that lets you chat with Codex directly inside a selected repository.
 
 Built by [zevro.ai](https://zevro.ai).
 
@@ -24,9 +24,9 @@ Built by [zevro.ai](https://zevro.ai).
 - Paginates repository pickers and supports unique partial project matches
 - Always launches Claude with `--permission-mode bypassPermissions`
 
-## Codex Telegram Chat
+## RCOD Bot Chat
 
-The `cmd/codexbot` entrypoint exposes Telegram as a chat interface for Codex:
+The `cmd/rcodbot` entrypoint exposes Telegram as a chat interface for Codex:
 
 - create a Codex chat session for a repo with `/new` or `/folders`
 - switch between chat sessions with `/sessions` and `/use`
@@ -38,17 +38,17 @@ Build and run it with:
 
 ```bash
 cd app && npm ci && npm run build
-go build -o rcod ./cmd/codexbot
+go build -o rcod ./cmd/rcodbot
 ./rcod -config config.yaml
 ```
 
 For local native control helpers:
 
 ```bash
-scripts/start-codexbot-native.sh config.yaml
-scripts/status-codexbot-native.sh
-scripts/reset-codexbot-native.sh config.yaml
-scripts/install-codexbot-native-launchd.sh config.yaml
+scripts/start-rcodbot-native.sh config.yaml
+scripts/status-rcodbot-native.sh
+scripts/reset-rcodbot-native.sh config.yaml
+scripts/install-rcodbot-native-launchd.sh config.yaml
 ```
 
 ## How It Works
@@ -64,12 +64,12 @@ You (Telegram) -> RCOD bot -> claude rc (inside your git repo)
 | --- | --- |
 | Go 1.25+ | Needed only when building from source |
 | Claude Code CLI | Install with `npm install -g @anthropic-ai/claude-code` |
-| Codex CLI | Needed for `cmd/codexbot`; install it and keep `codex` in your `PATH` |
+| Codex CLI | Needed for `cmd/rcodbot`; install it and keep `codex` in your `PATH` |
 | Telegram bot token | Create one via [@BotFather](https://t.me/BotFather) |
 | Telegram user ID | Get it from [@userinfobot](https://t.me/userinfobot) |
 
 `claude` must be available in your `PATH`.
-For `codexbot`, `codex` must also be available in your `PATH`.
+For `rcodbot`, `codex` must also be available in your `PATH`.
 
 ## Quick Start
 
@@ -77,7 +77,7 @@ For `codexbot`, `codex` must also be available in your `PATH`.
 git clone https://github.com/zevro-ai/remote-control-on-demand.git
 cd remote-control-on-demand
 cd app && npm ci && npm run build && cd ..
-go build -o rcod ./cmd/codexbot
+go build -o rcod ./cmd/rcodbot
 ./rcod
 ```
 
@@ -116,7 +116,7 @@ See [config.example.yaml](./config.example.yaml) for a fuller example with notif
 | `telegram.token` | Bot token from @BotFather |
 | `telegram.allowed_user_id` | Only this Telegram user can control the bot |
 | `rc.base_folder` | Directory RCOD scans for git repositories |
-| `rc.permission_mode` | Codex bot access mode: `workspace-write` (default), `read-only`, `danger-full-access`, or `bypassPermissions` |
+| `rc.permission_mode` | `rcodbot` access mode for Codex sessions: `workspace-write` (default), `read-only`, `danger-full-access`, or `bypassPermissions` |
 | `rc.auto_restart` | Enables automatic restart for crashed sessions |
 | `rc.max_restarts` | Maximum restart attempts before giving up |
 | `rc.restart_delay_seconds` | Delay between restart attempts |
@@ -190,6 +190,7 @@ Start with:
 - [packaging/systemd/rcod.user.service](./packaging/systemd/rcod.user.service)
 - [scripts/install-rcod-systemd.sh](./scripts/install-rcod-systemd.sh)
 - [packaging/launchd/ai.zevro.rcod.plist](./packaging/launchd/ai.zevro.rcod.plist)
+- [packaging/launchd/ai.zevro.rcodbot.plist](./packaging/launchd/ai.zevro.rcodbot.plist)
 
 ## Session Persistence
 
@@ -212,7 +213,7 @@ If you do not use `make`, the equivalent commands are:
 
 ```bash
 cd app && npm ci && npm test && npm run build && cd ..
-go build -o rcod ./cmd/codexbot
+go build -o rcod ./cmd/rcodbot
 go test ./...
 go vet ./...
 gofmt -w cmd internal

@@ -21,7 +21,7 @@ Remote Control On Demand (RCOD) — a Go application that manages `claude rc` se
 ```bash
 # Build
 cd app && npm ci && npm run build && cd ..
-go build -o rcod ./cmd/codexbot
+go build -o rcod ./cmd/rcodbot
 
 # Run (auto-detects config.yaml in current directory)
 ./rcod
@@ -31,7 +31,7 @@ go build -o rcod ./cmd/codexbot
 
 # Development run
 cd app && npm ci && npm run build && cd ..
-go run ./cmd/codexbot
+go run ./cmd/rcodbot
 
 # Run all tests
 go test ./...
@@ -51,7 +51,7 @@ The app follows a layered architecture with four core packages under `internal/`
 - **`session/`** — Session lifecycle management (start/stop/crash/auto-restart), ring buffer for output capture (500 lines), URL scanner that detects `claude.ai` URLs in process output
 - **`process/`** — Spawns `claude rc` subprocesses with process group isolation (`Setpgid=true`), always using `--permission-mode bypassPermissions`, and handles graceful shutdown
 
-**Entry point:** `cmd/codexbot/main.go` — parses flags, loads config (or runs wizard), wires up the worker managers plus HTTP dashboard, and handles OS signals for graceful shutdown.
+**Entry point:** `cmd/rcodbot/main.go` — parses flags, loads config (or runs wizard), wires up the worker managers plus HTTP dashboard, and handles OS signals for graceful shutdown.
 
 **Key data flow:** Process output → ring buffer + URL scanner → notification channel (buffered, cap 100) → bot goroutine → Telegram message.
 

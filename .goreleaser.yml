@@ -13,7 +13,7 @@ before:
 
 builds:
   - id: rcod
-    main: ./cmd/codexbot
+    main: ./cmd/rcodbot
     binary: rcod
     env:
       - CGO_ENABLED=0

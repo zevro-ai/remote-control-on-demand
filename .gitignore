@@ -3,6 +3,7 @@
 /rcod
 /ralph
 /codexbot
+/rcodbot
 /remote-control-on-demand
 *.exe
 dist/
@@ -17,7 +18,7 @@ sessions.json
 .gocache/
 .gomodcache/
 .gotmp/
-.codexbot/
+.rcodbot/
 
 # Frontend
 node_modules/

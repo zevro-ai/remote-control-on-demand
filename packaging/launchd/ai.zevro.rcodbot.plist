@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>ai.zevro.codexbot</string>
+  <string>ai.zevro.rcodbot</string>
   <key>ProgramArguments</key>
   <array>
-    <string><REPO_PATH>/codexbot</string>
+    <string><REPO_PATH>/rcodbot</string>
     <string>--config</string>
     <string><CONFIG_PATH></string>
   </array>
@@ -17,8 +17,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string><LOG_PATH>/codexbot.stdout.log</string>
+  <string><LOG_PATH>/rcodbot.stdout.log</string>
   <key>StandardErrorPath</key>
-  <string><LOG_PATH>/codexbot.stderr.log</string>
+  <string><LOG_PATH>/rcodbot.stderr.log</string>
 </dict>
 </plist>

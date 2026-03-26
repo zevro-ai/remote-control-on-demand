@@ -1,4 +1,4 @@
-package codexbot
+package rcodbot
 
 import (
 	"strings"

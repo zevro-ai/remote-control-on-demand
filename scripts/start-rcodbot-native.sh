@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE_DIR="$ROOT_DIR/.codexbot"
-PID_FILE="$STATE_DIR/codexbot.pid"
-LOG_FILE="$STATE_DIR/codexbot.log"
-BIN_PATH="$ROOT_DIR/codexbot"
+STATE_DIR="$ROOT_DIR/.rcodbot"
+PID_FILE="$STATE_DIR/rcodbot.pid"
+LOG_FILE="$STATE_DIR/rcodbot.log"
+BIN_PATH="$ROOT_DIR/rcodbot"
 CONFIG_PATH="${1:-$ROOT_DIR/config.yaml}"
 GO_BIN="${GO_BIN:-/usr/local/go/bin/go}"
 
@@ -73,7 +73,7 @@ stop_existing_instances() {
   if [[ -f "$PID_FILE" ]]; then
     pidfile_pid="$(cat "$PID_FILE")"
     if [[ -n "$pidfile_pid" ]]; then
-      stop_pid "$pidfile_pid" "pidfile codexbot" || return 1
+      stop_pid "$pidfile_pid" "pidfile rcodbot" || return 1
     fi
     rm -f "$PID_FILE"
   fi
@@ -84,11 +84,11 @@ stop_existing_instances() {
       continue
     fi
     found_running=true
-    stop_pid "$pid" "existing codexbot for $CONFIG_PATH" || return 1
+    stop_pid "$pid" "existing rcodbot for $CONFIG_PATH" || return 1
   done < <(find_existing_pids)
 
   if [[ "$found_running" == true ]]; then
-    echo "previous codexbot instances stopped"
+    echo "previous rcodbot instances stopped"
   fi
 }
 
@@ -101,18 +101,18 @@ fi
 
 CONFIG_PATH="$(canonicalize_path "$CONFIG_PATH")"
 
-echo "building codexbot..."
+echo "building rcodbot..."
 env \
   GOPROXY="${GOPROXY:-off}" \
   GONOSUMDB="${GONOSUMDB:-*}" \
   GOCACHE="${GOCACHE:-$ROOT_DIR/.gocache}" \
   GOMODCACHE="${GOMODCACHE:-$HOME/go/pkg/mod}" \
   GOTMPDIR="${GOTMPDIR:-$ROOT_DIR/.gotmp}" \
-  "$GO_BIN" build -o "$BIN_PATH" ./cmd/codexbot
+  "$GO_BIN" build -o "$BIN_PATH" ./cmd/rcodbot
 
 stop_existing_instances
 
-echo "starting codexbot..."
+echo "starting rcodbot..."
 (
   cd "$ROOT_DIR"
   nohup "$BIN_PATH" -config "$CONFIG_PATH" >>"$LOG_FILE" 2>&1 &
@@ -123,10 +123,10 @@ sleep 2
 
 STARTED_PID="$(cat "$PID_FILE")"
 if kill -0 "$STARTED_PID" 2>/dev/null; then
-  echo "codexbot started (pid $STARTED_PID)"
+  echo "rcodbot started (pid $STARTED_PID)"
   echo "log: $LOG_FILE"
   exit 0
 fi
 
-echo "codexbot failed to stay up; see $LOG_FILE" >&2
+echo "rcodbot failed to stay up; see $LOG_FILE" >&2
 exit 1
