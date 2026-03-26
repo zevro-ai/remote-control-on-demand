@@ -44,6 +44,8 @@ That keeps secrets/config under `/etc` and mutable session state under `/var/lib
 - a valid `config.yaml`
 - the runtime user must have read/write access to the repositories under `rc.base_folder`
 
+If you installed RCOD from the Debian/Ubuntu `.deb` package, Go is not required. Use the packaged helper with `--skip-build` instead.
+
 For system mode, remember that the service user also needs access to:
 
 - the configured `rc.base_folder`
@@ -94,6 +96,17 @@ The helper will:
 - run `systemctl enable rcod.service`
 - restart the service if it is already active, otherwise start it
 
+If you installed RCOD from a `.deb` package, use the packaged helper instead:
+
+```bash
+sudo /usr/lib/rcod/install-rcod-systemd.sh \
+  --skip-build \
+  --mode system \
+  --service-user rcod \
+  --config /etc/rcod/config.yaml \
+  --state-dir /var/lib/rcod
+```
+
 ### 3. Day-2 operations
 
 ```bash
@@ -126,6 +139,17 @@ scripts/install-rcod-systemd.sh \
 ```
 
 The helper will render `~/.config/systemd/user/rcod.service`, enable it, and then either restart or start it depending on whether it is already active.
+
+If you prefer to reuse the packaged binary for a user service, run:
+
+```bash
+/usr/lib/rcod/install-rcod-systemd.sh \
+  --skip-build \
+  --mode user \
+  --config "$HOME/.config/rcod/config.yaml" \
+  --state-dir "$HOME/.local/state/rcod" \
+  --bin /usr/bin/rcod
+```
 
 ### 3. Keep it alive after logout
 
@@ -181,6 +205,8 @@ Or for user mode:
 git pull
 scripts/install-rcod-systemd.sh --mode user --config "$HOME/.config/rcod/config.yaml"
 ```
+
+If you upgrade via the packaged `.deb`, see [deb.md](./deb.md) for the package-based flow.
 
 ## Troubleshooting
 

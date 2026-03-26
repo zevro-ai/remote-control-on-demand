@@ -1,6 +1,6 @@
 BINARY := rcod
 
-.PHONY: build test vet fmt clean
+.PHONY: build test vet fmt clean package-deb
 
 build:
 	cd app && npm ci && npm run build
@@ -18,3 +18,6 @@ fmt:
 
 clean:
 	rm -f $(BINARY)
+
+package-deb:
+	goreleaser release --snapshot --clean --skip=publish

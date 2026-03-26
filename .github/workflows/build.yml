@@ -56,3 +56,10 @@ jobs:
 
       - name: Test
         run: go test -v ./...
+
+      - name: Validate release packaging
+        if: matrix.os == 'ubuntu-latest'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --snapshot --clean --skip=publish
