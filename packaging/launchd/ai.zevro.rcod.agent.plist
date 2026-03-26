@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>ai.zevro.rcod</string>
+  <string>ai.zevro.rcod.agent</string>
   <key>ProgramArguments</key>
   <array>
     <string>@BIN_PATH@</string>
@@ -30,8 +30,6 @@
   <string>Background</string>
   <key>ThrottleInterval</key>
   <integer>5</integer>
-  <key>UserName</key>
-  <string>@SERVICE_USER@</string>
   <key>StandardOutPath</key>
   <string>@LOG_DIR@/rcod.stdout.log</string>
   <key>StandardErrorPath</key>
