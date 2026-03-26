@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi"
 	"github.com/zevro-ai/remote-control-on-demand/internal/process"
+	"github.com/zevro-ai/remote-control-on-demand/internal/runtimepaths"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 )
 
@@ -59,6 +59,7 @@ func startupBanner(c, w, d string) string {
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
+	stateDir := flag.String("state-dir", "", "directory for runtime state files (defaults to the config directory)")
 	flag.Parse()
 
 	var cfg *config.Config
@@ -80,7 +81,12 @@ func main() {
 	}
 
 	runner := process.NewRunner()
-	sessionStatePath := filepath.Join(filepath.Dir(*configPath), "sessions.json")
+	resolvedStateDir := runtimepaths.ResolveStateDir(*configPath, *stateDir)
+	if err := os.MkdirAll(resolvedStateDir, 0700); err != nil {
+		log.Fatalf("Creating state directory: %v", err)
+	}
+
+	sessionStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "sessions.json")
 	sessionMgr := session.NewManager(
 		runner,
 		cfg.RC.BaseFolder,
@@ -94,14 +100,14 @@ func main() {
 		log.Printf("Warning: Failed to restore Claude sessions: %v", err)
 	}
 
-	codexStatePath := filepath.Join(filepath.Dir(*configPath), "codex_sessions.json")
+	codexStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "codex_sessions.json")
 	codexMgr := codex.NewManager(cfg.RC.BaseFolder, codexStatePath)
 	codexMgr.ConfigurePermissionMode(cfg.RC.PermissionMode)
 	if err := codexMgr.Restore(); err != nil {
 		log.Fatalf("Restoring Codex sessions: %v", err)
 	}
 
-	claudeStatePath := filepath.Join(filepath.Dir(*configPath), "claude_sessions.json")
+	claudeStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "claude_sessions.json")
 	claudeMgr := claudechat.NewManager(cfg.RC.BaseFolder, claudeStatePath)
 	claudeMgr.ConfigurePermissionMode(cfg.RC.PermissionMode)
 	if err := claudeMgr.Restore(); err != nil {
