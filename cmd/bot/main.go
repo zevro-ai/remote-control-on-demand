@@ -6,13 +6,13 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/bot"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 	"github.com/zevro-ai/remote-control-on-demand/internal/process"
+	"github.com/zevro-ai/remote-control-on-demand/internal/runtimepaths"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 )
 
@@ -54,6 +54,7 @@ func printBanner() {
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
+	stateDir := flag.String("state-dir", "", "directory for runtime state files (defaults to the config directory)")
 	flag.Parse()
 
 	var cfg *config.Config
@@ -75,7 +76,12 @@ func main() {
 	}
 
 	runner := process.NewRunner()
-	statePath := filepath.Join(filepath.Dir(*configPath), "sessions.json")
+	resolvedStateDir := runtimepaths.ResolveStateDir(*configPath, *stateDir)
+	if err := os.MkdirAll(resolvedStateDir, 0700); err != nil {
+		log.Fatalf("Creating state directory: %v", err)
+	}
+
+	statePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "sessions.json")
 	mgr := session.NewManager(
 		runner,
 		cfg.RC.BaseFolder,

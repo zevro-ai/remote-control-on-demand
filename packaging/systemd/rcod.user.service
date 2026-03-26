@@ -1,14 +1,10 @@
 [Unit]
-Description=RCOD - Remote Control On Demand
-Wants=network-online.target
-After=network-online.target
+Description=RCOD - Remote Control On Demand (user service)
 
 [Service]
 Type=simple
-User=<SERVICE_USER>
-Group=<SERVICE_GROUP>
 WorkingDirectory=<STATE_DIR>
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:%h/.local/bin
 ExecStart=<BIN_PATH> --config <CONFIG_PATH> --state-dir <STATE_DIR>
 Restart=on-failure
 RestartSec=5s
@@ -19,4 +15,4 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

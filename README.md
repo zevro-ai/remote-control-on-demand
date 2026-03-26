@@ -176,7 +176,18 @@ Commands also accept direct arguments, for example `/start my-project` or `/kill
 
 ## Running as a Service
 
-Service templates live in [packaging/systemd/rcod.service](./packaging/systemd/rcod.service) and [packaging/launchd/ai.zevro.rcod.plist](./packaging/launchd/ai.zevro.rcod.plist). Replace the placeholder paths with your own values before installing them.
+RCOD supports both:
+
+- Debian/Ubuntu `systemd` deployments, including a system-wide unit that still runs as a non-root user and a per-user `systemctl --user` mode
+- macOS `launchd` templates for native background execution
+
+Start with:
+
+- [docs/deployment/systemd.md](./docs/deployment/systemd.md)
+- [packaging/systemd/rcod.service](./packaging/systemd/rcod.service)
+- [packaging/systemd/rcod.user.service](./packaging/systemd/rcod.user.service)
+- [scripts/install-rcod-systemd.sh](./scripts/install-rcod-systemd.sh)
+- [packaging/launchd/ai.zevro.rcod.plist](./packaging/launchd/ai.zevro.rcod.plist)
 
 ## Session Persistence
 
