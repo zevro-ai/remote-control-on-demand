@@ -341,7 +341,7 @@ func (r *Runner) runTestsAndBuilds(ctx context.Context) (bool, string, error) {
 			fmt.Sprintf("GOOS=%s", t.goos),
 			fmt.Sprintf("GOARCH=%s", t.goarch),
 		}
-		for _, pkg := range []string{"./cmd/codexbot", "./cmd/ralph"} {
+		for _, pkg := range []string{"./cmd/rcodbot", "./cmd/ralph"} {
 			stdout, stderr, exitCode, err = r.runner.Run(ctx, r.cfg.Dir, env, "go", "build", pkg)
 			output.WriteString(fmt.Sprintf("\n=== build %s %s/%s ===\n", pkg, t.goos, t.goarch))
 			output.WriteString(stdout)

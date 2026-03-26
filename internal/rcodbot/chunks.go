@@ -1,4 +1,4 @@
-package codexbot
+package rcodbot
 
 func splitChunks(text string, maxLen int) []string {
 	runes := []rune(text)

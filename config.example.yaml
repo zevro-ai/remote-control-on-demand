@@ -9,7 +9,7 @@ telegram:
 
 rc:
   base_folder: "/home/user/Projects"
-  permission_mode: "workspace-write"  # codexbot only; use bypassPermissions only for full local access
+  permission_mode: "workspace-write"  # rcodbot only; use bypassPermissions only for full local access
   auto_restart: true
   max_restarts: 3
   restart_delay_seconds: 5
@@ -28,4 +28,3 @@ rc:
   #     - name: "error"
   #       regex: "(?i)(error:|fatal|panic:)"
   #       # once: false (default) — notify every match (throttled to max once per 30s)
-

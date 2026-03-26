@@ -209,7 +209,7 @@ if [[ "$SKIP_BUILD" == "true" ]]; then
   fi
   echo "using existing rcod binary at $BIN_PATH..."
 else
-  if [[ ! -f "$ROOT_DIR/go.mod" ]] || [[ ! -d "$ROOT_DIR/cmd/codexbot" ]]; then
+  if [[ ! -f "$ROOT_DIR/go.mod" ]] || [[ ! -d "$ROOT_DIR/cmd/rcodbot" ]]; then
     echo "source build mode requires running from a repository checkout; use --skip-build for packaged installs" >&2
     exit 1
   fi
@@ -221,7 +221,7 @@ else
     GOCACHE="$GO_CACHE_DIR" \
     GOMODCACHE="$GO_MOD_CACHE" \
     GOTMPDIR="$GO_TMP_DIR" \
-    "$GO_BIN" -C "$ROOT_DIR" build -o "$BIN_PATH" ./cmd/codexbot
+    "$GO_BIN" -C "$ROOT_DIR" build -o "$BIN_PATH" ./cmd/rcodbot
 fi
 
 echo "writing systemd unit to $UNIT_PATH..."

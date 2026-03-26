@@ -1,4 +1,4 @@
-package codexbot
+package rcodbot
 
 import (
 	"context"
@@ -124,7 +124,7 @@ func (b *Bot) registerCommands() {
 
 func (b *Bot) sendWelcome() {
 	var sb strings.Builder
-	sb.WriteString("<b>RCOD + Codex bot is online</b>\n\n")
+	sb.WriteString("<b>RCOD bot is online</b>\n\n")
 	sb.WriteString("<b>Claude remote control</b>\n")
 	sb.WriteString("Use <code>/start</code>, <code>/list</code>, <code>/status</code>, <code>/logs</code>, <code>/restart</code>, <code>/kill</code>, or <code>/folders</code>.\n\n")
 	sb.WriteString("<b>Codex chat</b>\n")

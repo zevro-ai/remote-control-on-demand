@@ -46,7 +46,7 @@ func NewServer(cfg config.APIConfig, sessionMgr *session.Manager, claudeMgr *cla
 		sessionMgr: sessionMgr,
 		providers:  providers,
 		hub:        newHub(),
-		uploadDir:  filepath.Join(".codexbot", "uploads"),
+		uploadDir:  filepath.Join(".rcodbot", "uploads"),
 		spaFS:      spaFS,
 	}
 }

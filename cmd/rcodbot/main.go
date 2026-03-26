@@ -12,10 +12,10 @@ import (
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
-	"github.com/zevro-ai/remote-control-on-demand/internal/codexbot"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi"
 	"github.com/zevro-ai/remote-control-on-demand/internal/process"
+	"github.com/zevro-ai/remote-control-on-demand/internal/rcodbot"
 	"github.com/zevro-ai/remote-control-on-demand/internal/runtimepaths"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 )
@@ -114,15 +114,15 @@ func main() {
 		log.Fatalf("Restoring Claude chat sessions: %v", err)
 	}
 
-	var notifier codexbot.Notifier
+	var notifier rcodbot.Notifier
 	if cfg.Telegram.Token != "" {
-		bt, err := codexbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr)
+		bt, err := rcodbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr)
 		if err != nil {
 			log.Fatalf("Creating bot: %v", err)
 		}
 		notifier = bt
 	} else {
-		notifier = codexbot.NopBot()
+		notifier = rcodbot.NopBot()
 	}
 
 	var httpSrv *httpapi.Server
@@ -144,7 +144,7 @@ func main() {
 		claudeMgr.Shutdown()
 		codexMgr.Shutdown()
 		stopped := sessionMgr.StopAll()
-		notifier.SendMessage(fmt.Sprintf("<b>RCOD + Codex bot stopped.</b>\nClosed Claude sessions: <code>%d</code>", stopped))
+		notifier.SendMessage(fmt.Sprintf("<b>RCOD bot stopped.</b>\nClosed Claude sessions: <code>%d</code>", stopped))
 		notifier.Stop()
 	}()
 
