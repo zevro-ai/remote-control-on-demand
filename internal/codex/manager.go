@@ -719,25 +719,52 @@ type execItem struct {
 func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb StreamCallback) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	toolIndexes := make(map[string]int)
-	var toolCount int
+	toolEntries := make(map[string]*toolEntry)
+	var nextToolIndex int
+	var nextAnonymousTool int
+	var anonymousQueue []string
 	var agentMessages []string
 
-	ensureTool := func(item execItem) int {
-		if index, ok := toolIndexes[item.ID]; ok {
-			return index
+	resolveToolKey := func(eventType string, item execItem) string {
+		if strings.TrimSpace(item.ID) != "" {
+			return item.ID
 		}
 
-		index := toolCount
-		toolCount++
-		toolIndexes[item.ID] = index
+		if eventType == "item.completed" && len(anonymousQueue) > 0 {
+			key := anonymousQueue[0]
+			anonymousQueue = anonymousQueue[1:]
+			return key
+		}
+
+		key := fmt.Sprintf("anonymous-%d", nextAnonymousTool)
+		nextAnonymousTool++
+		if eventType == "item.started" {
+			anonymousQueue = append(anonymousQueue, key)
+		}
+		return key
+	}
+
+	ensureTool := func(eventType string, item execItem) *toolEntry {
+		key := resolveToolKey(eventType, item)
+		if entry, ok := toolEntries[key]; ok {
+			return entry
+		}
+
+		entry := &toolEntry{index: nextToolIndex}
+		nextToolIndex++
+		toolEntries[key] = entry
 		if cb.OnToolStart != nil {
-			cb.OnToolStart(index, item.ID, "Bash")
+			cb.OnToolStart(entry.index, item.ID, toolNameForExecItem(item))
 		}
-		if cb.OnToolDelta != nil && item.Command != "" {
-			cb.OnToolDelta(index, marshalToolInput(item.Command))
+		return entry
+	}
+
+	emitToolDelta := func(entry *toolEntry, item execItem) {
+		if entry == nil || entry.deltaSent || cb.OnToolDelta == nil || item.Command == "" {
+			return
 		}
-		return index
+		cb.OnToolDelta(entry.index, marshalToolInput(item.Command))
+		entry.deltaSent = true
 	}
 
 	for scanner.Scan() {
@@ -757,7 +784,8 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb S
 		switch event.Type {
 		case "item.started":
 			if event.Item.Type == "command_execution" {
-				ensureTool(event.Item)
+				entry := ensureTool(event.Type, event.Item)
+				emitToolDelta(entry, event.Item)
 			}
 		case "item.completed":
 			switch event.Item.Type {
@@ -776,12 +804,30 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb S
 					cb.OnTextDelta(delta)
 				}
 			case "command_execution":
-				index := ensureTool(event.Item)
+				entry := ensureTool(event.Type, event.Item)
+				emitToolDelta(entry, event.Item)
 				if cb.OnToolFinish != nil {
-					cb.OnToolFinish(index)
+					cb.OnToolFinish(entry.index)
 				}
 			}
 		}
+	}
+}
+
+type toolEntry struct {
+	index     int
+	deltaSent bool
+}
+
+func toolNameForExecItem(item execItem) string {
+	switch item.Type {
+	case "command_execution":
+		// Codex currently models shell invocations as command_execution items.
+		return "Bash"
+	case "":
+		return "tool"
+	default:
+		return item.Type
 	}
 }
 

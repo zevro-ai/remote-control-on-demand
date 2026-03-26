@@ -284,6 +284,98 @@ func TestParseExecOutputEmitsStreamingToolAndTextEvents(t *testing.T) {
 	}
 }
 
+func TestParseExecOutputBackfillsCommandDeltaFromCompletedEvent(t *testing.T) {
+	input := strings.NewReader(strings.Join([]string{
+		`{"type":"thread.started","thread_id":"thread-123"}`,
+		`{"type":"item.started","item":{"id":"item_1","type":"command_execution","status":"in_progress"}}`,
+		`{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"pwd","status":"completed"}}`,
+	}, "\n"))
+
+	var raw strings.Builder
+	var result execResult
+	var events []chat.ToolCallEvent
+
+	parseExecOutput(input, &result, &raw, StreamCallback{
+		OnToolStart: func(index int, id, name string) {
+			events = append(events, chat.ToolCallEvent{Index: index, ID: id, Name: name})
+		},
+		OnToolDelta: func(index int, partialJSON string) {
+			events = append(events, chat.ToolCallEvent{Index: index, PartialJSON: partialJSON})
+		},
+		OnToolFinish: func(index int) {
+			events = append(events, chat.ToolCallEvent{Index: index})
+		},
+	})
+
+	if result.ThreadID != "thread-123" {
+		t.Fatalf("ThreadID = %q", result.ThreadID)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+
+	if events[0].Index != 0 || events[0].ID != "item_1" || events[0].Name != "Bash" {
+		t.Fatalf("tool start = %#v", events[0])
+	}
+
+	if events[1].Index != 0 || events[1].PartialJSON != `{"command":"pwd"}` {
+		t.Fatalf("tool delta = %#v", events[1])
+	}
+
+	if events[2].Index != 0 {
+		t.Fatalf("tool finish = %#v", events[2])
+	}
+}
+
+func TestParseExecOutputHandlesAnonymousCommandExecutionItems(t *testing.T) {
+	input := strings.NewReader(strings.Join([]string{
+		`{"type":"item.started","item":{"id":"","type":"command_execution","command":"ls","status":"in_progress"}}`,
+		`{"type":"item.completed","item":{"id":"","type":"command_execution","command":"ls","status":"completed"}}`,
+		`{"type":"item.started","item":{"id":"","type":"command_execution","command":"pwd","status":"in_progress"}}`,
+		`{"type":"item.completed","item":{"id":"","type":"command_execution","command":"pwd","status":"completed"}}`,
+	}, "\n"))
+
+	var raw strings.Builder
+	var result execResult
+	var events []chat.ToolCallEvent
+
+	parseExecOutput(input, &result, &raw, StreamCallback{
+		OnToolStart: func(index int, id, name string) {
+			events = append(events, chat.ToolCallEvent{Index: index, ID: id, Name: name})
+		},
+		OnToolDelta: func(index int, partialJSON string) {
+			events = append(events, chat.ToolCallEvent{Index: index, PartialJSON: partialJSON})
+		},
+		OnToolFinish: func(index int) {
+			events = append(events, chat.ToolCallEvent{Index: index})
+		},
+	})
+
+	if len(events) != 6 {
+		t.Fatalf("events = %d, want 6", len(events))
+	}
+
+	if events[0].Index != 0 || events[0].Name != "Bash" {
+		t.Fatalf("first anonymous start = %#v", events[0])
+	}
+	if events[1].PartialJSON != `{"command":"ls"}` {
+		t.Fatalf("first anonymous delta = %#v", events[1])
+	}
+	if events[2].Index != 0 {
+		t.Fatalf("first anonymous finish = %#v", events[2])
+	}
+	if events[3].Index != 1 || events[3].Name != "Bash" {
+		t.Fatalf("second anonymous start = %#v", events[3])
+	}
+	if events[4].PartialJSON != `{"command":"pwd"}` {
+		t.Fatalf("second anonymous delta = %#v", events[4])
+	}
+	if events[5].Index != 1 {
+		t.Fatalf("second anonymous finish = %#v", events[5])
+	}
+}
+
 func TestRunCommandEmitsUserAndAssistantEvents(t *testing.T) {
 	baseDir := t.TempDir()
 	repoDir := filepath.Join(baseDir, "demo")
