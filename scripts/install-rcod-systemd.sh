@@ -36,7 +36,7 @@ canonicalize_path() {
 }
 
 escape_sed_replacement() {
-  printf '%s' "$1" | sed 's/[\/&]/\\&/g'
+  printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
 }
 
 ensure_system_user() {

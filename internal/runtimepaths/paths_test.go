@@ -23,6 +23,14 @@ func TestResolveStateDirUsesOverride(t *testing.T) {
 	}
 }
 
+func TestResolveStateDirDefaultsToCurrentDirectoryForBareConfigFilename(t *testing.T) {
+	got := ResolveStateDir("config.yaml", "")
+
+	if got != "." {
+		t.Fatalf("ResolveStateDir() = %q", got)
+	}
+}
+
 func TestResolveStatePathUsesResolvedDirectory(t *testing.T) {
 	got := ResolveStatePath("/etc/rcod/config.yaml", "/var/lib/rcod", "sessions.json")
 
