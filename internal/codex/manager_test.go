@@ -376,6 +376,45 @@ func TestParseExecOutputHandlesAnonymousCommandExecutionItems(t *testing.T) {
 	}
 }
 
+func TestParseExecOutputEmitsTodoListAsTodoWriteTool(t *testing.T) {
+	input := strings.NewReader(strings.Join([]string{
+		`{"type":"item.started","item":{"id":"item_7","type":"todo_list","items":[{"text":"Inspect config","completed":true},{"text":"Write tests","completed":false}]}}`,
+		`{"type":"item.completed","item":{"id":"item_7","type":"todo_list","items":[{"text":"Inspect config","completed":true},{"text":"Write tests","completed":false}]}}`,
+	}, "\n"))
+
+	var raw strings.Builder
+	var result execResult
+	var events []chat.ToolCallEvent
+
+	parseExecOutput(input, &result, &raw, StreamCallback{
+		OnToolStart: func(index int, id, name string) {
+			events = append(events, chat.ToolCallEvent{Index: index, ID: id, Name: name})
+		},
+		OnToolDelta: func(index int, partialJSON string) {
+			events = append(events, chat.ToolCallEvent{Index: index, PartialJSON: partialJSON})
+		},
+		OnToolFinish: func(index int) {
+			events = append(events, chat.ToolCallEvent{Index: index})
+		},
+	})
+
+	if len(events) != 3 {
+		t.Fatalf("events = %d, want 3", len(events))
+	}
+
+	if events[0].Index != 0 || events[0].ID != "item_7" || events[0].Name != "TodoWrite" {
+		t.Fatalf("todo start = %#v", events[0])
+	}
+
+	if events[1].Index != 0 || events[1].PartialJSON != `{"todos":[{"text":"Inspect config","completed":true},{"text":"Write tests"}]}` {
+		t.Fatalf("todo delta = %#v", events[1])
+	}
+
+	if events[2].Index != 0 {
+		t.Fatalf("todo finish = %#v", events[2])
+	}
+}
+
 func TestRunCommandEmitsUserAndAssistantEvents(t *testing.T) {
 	baseDir := t.TempDir()
 	repoDir := filepath.Join(baseDir, "demo")

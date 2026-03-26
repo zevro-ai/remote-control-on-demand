@@ -1,8 +1,10 @@
 import { useMemo } from "react";
 import type { ChatSession, DraftAttachment, StreamBlock } from "../api/types";
+import { extractTodoProgress } from "../lib/todoProgress";
 import { AgentBadge } from "./AgentBadge";
 import { AgentActivityFeed } from "./AgentActivityFeed";
 import { MessageInput } from "./MessageInput";
+import { TodoProgressPanel } from "./TodoProgressPanel";
 
 interface Props {
   type: string;
@@ -17,6 +19,7 @@ interface Props {
 export function SessionPanel(props: Props) {
   const { session, type, streamBlocks } = props;
   const messages = session.messages || [];
+  const todoProgress = useMemo(() => extractTodoProgress(streamBlocks), [streamBlocks]);
 
   const telemetry = useMemo(
     () => [
@@ -43,6 +46,11 @@ export function SessionPanel(props: Props) {
         </div>
 
         <div className="session-panel__header-actions">
+          {todoProgress && (
+            <div className="session-panel__summary-pill">
+              {todoProgress.completedCount}/{todoProgress.totalCount} items
+            </div>
+          )}
           <div className={`live-pill ${session.busy ? "is-live" : ""}`}>
             {session.busy ? "Streaming" : "Standby"}
           </div>
@@ -73,6 +81,8 @@ export function SessionPanel(props: Props) {
               </div>
             ))}
           </div>
+
+          {todoProgress && <TodoProgressPanel progress={todoProgress} />}
 
           <div className="wiretap">
             <div className="wiretap__header">Wire Tap</div>

@@ -64,6 +64,26 @@ describe("buildSessionPreview", () => {
     ]);
   });
 
+  it("skips todo progress blocks in the terminal preview", () => {
+    const streamBlocks: StreamBlock[] = [
+      {
+        type: "tool_use",
+        index: 0,
+        id: "todo-1",
+        name: "TodoWrite",
+        inputJSON: `{"todos":[{"text":"Inspect config","completed":true},{"text":"Write tests","completed":false}]}`,
+        done: false,
+      },
+      { type: "text", content: "streamed answer" },
+    ];
+
+    const preview = buildSessionPreview(createSession({ busy: true }), streamBlocks, 4);
+
+    expect(preview).toEqual([
+      { tone: "assistant", text: "streamed answer" },
+    ]);
+  });
+
   it("falls back to an empty terminal line when nothing happened yet", () => {
     expect(buildSessionPreview(createSession(), [], getPreviewLineCount("compact"))).toEqual([
       { tone: "system", text: "awaiting first prompt" },

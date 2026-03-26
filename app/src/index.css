@@ -909,6 +909,18 @@ button {
   gap: 8px;
 }
 
+.session-panel__summary-pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(103, 232, 249, 0.28);
+  background: rgba(103, 232, 249, 0.1);
+  color: var(--color-accent-cyan);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 /* Live pill */
 .live-pill {
   border-radius: 20px;
@@ -1072,6 +1084,105 @@ button {
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--color-text-primary);
+}
+
+.todo-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 14px 12px 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(103, 232, 249, 0.14);
+  background:
+    linear-gradient(180deg, rgba(7, 14, 18, 0.96), rgba(8, 12, 16, 0.9));
+}
+
+.todo-progress__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.todo-progress__header .session-window__title {
+  padding: 0;
+  border: 0;
+}
+
+.todo-progress__header p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.todo-progress__summary {
+  flex-shrink: 0;
+  min-width: 54px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(6, 22, 26, 0.92);
+  color: var(--color-accent-cyan);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.todo-progress__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.todo-progress__item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(15, 20, 24, 0.76);
+}
+
+.todo-progress__item.is-active {
+  border-color: rgba(251, 191, 36, 0.28);
+  background: rgba(46, 38, 9, 0.44);
+}
+
+.todo-progress__item.is-done {
+  background: rgba(12, 26, 19, 0.72);
+}
+
+.todo-progress__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.todo-progress__item.is-active .todo-progress__status {
+  color: var(--color-accent-orange);
+}
+
+.todo-progress__item.is-done .todo-progress__status {
+  color: var(--color-accent-green);
+}
+
+.todo-progress__text {
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.todo-progress__item.is-done .todo-progress__text {
+  color: var(--color-text-secondary);
 }
 
 /* ========== WIRETAP ========== */
