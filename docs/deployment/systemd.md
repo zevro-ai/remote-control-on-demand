@@ -91,7 +91,8 @@ The helper will:
 - create the state directory
 - render `/etc/systemd/system/rcod.service`
 - run `systemctl daemon-reload`
-- run `systemctl enable --now rcod.service`
+- run `systemctl enable rcod.service`
+- restart the service if it is already active, otherwise start it
 
 ### 3. Day-2 operations
 
@@ -124,7 +125,7 @@ scripts/install-rcod-systemd.sh \
   --bin "$HOME/.local/bin/rcod"
 ```
 
-The helper will render `~/.config/systemd/user/rcod.service` and enable it with `systemctl --user enable --now`.
+The helper will render `~/.config/systemd/user/rcod.service`, enable it, and then either restart or start it depending on whether it is already active.
 
 ### 3. Keep it alive after logout
 
