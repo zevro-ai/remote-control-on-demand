@@ -62,7 +62,7 @@ nfpms:
     bindir: /usr/bin
     vendor: zevro.ai
     homepage: https://github.com/zevro-ai/remote-control-on-demand
-    maintainer: zevro.ai
+    maintainer: zevro.ai <maintainer@zevro.ai>
     description: |-
       Remote Control On Demand (RCOD) lets you control Codex and Claude Code
       sessions remotely from Telegram.
@@ -110,7 +110,7 @@ nfpms:
       - dst: /etc/rcod
         type: dir
         file_info:
-          mode: 0750
+          mode: 0755
       - dst: /var/lib/rcod
         type: dir
         file_info:

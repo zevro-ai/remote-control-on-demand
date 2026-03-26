@@ -161,6 +161,8 @@ if [[ "$MODE" == "system" ]]; then
 
   ensure_system_user "$SERVICE_USER" "$SERVICE_GROUP" "$STATE_DIR"
 
+  chown "root:$SERVICE_GROUP" "$(dirname -- "$CONFIG_PATH")"
+  chmod 0750 "$(dirname -- "$CONFIG_PATH")"
   chown "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR"
   chmod 0700 "$STATE_DIR"
 
