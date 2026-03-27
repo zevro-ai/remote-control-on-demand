@@ -40,15 +40,26 @@ export function CreateSessionModal({
           {providers.length === 0 ? (
             <div className="sidebar-empty">Loading agents...</div>
           ) : (
-            providers.map((p) => (
-              <button
-                key={p}
-                onClick={() => setAgent(p)}
-                className={agent === p ? "is-active" : ""}
-              >
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </button>
-            ))
+            providers.map((p) => {
+              const providerMeta = getProviderMeta(p);
+              return (
+                <button
+                  key={p}
+                  onClick={() => setAgent(p)}
+                  className={agent === p ? "is-active" : ""}
+                >
+                  <span className="modal-agent-switch__name">{providerMeta.name}</span>
+                  {providerMeta.capabilities.length > 0 && (
+                    <>
+                      {" "}
+                      <span className="modal-agent-switch__meta">
+                        {providerMeta.capabilities.join(" • ")}
+                      </span>
+                    </>
+                  )}
+                </button>
+              );
+            })
           )}
         </div>
 
@@ -60,4 +71,29 @@ export function CreateSessionModal({
       </div>
     </div>
   );
+}
+
+function getProviderMeta(provider: string) {
+  switch (provider) {
+    case "claude":
+      return {
+        name: "Claude",
+        capabilities: ["bash", "streaming"],
+      };
+    case "codex":
+      return {
+        name: "Codex",
+        capabilities: ["images", "bash", "streaming"],
+      };
+    case "gemini":
+      return {
+        name: "Gemini",
+        capabilities: ["streaming"],
+      };
+    default:
+      return {
+        name: provider.charAt(0).toUpperCase() + provider.slice(1),
+        capabilities: [],
+      };
+  }
 }
