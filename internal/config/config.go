@@ -18,9 +18,9 @@ type APIConfig struct {
 }
 
 type APIAuthConfig struct {
-	SessionSecret string             `yaml:"session_secret,omitempty"`
-	OIDC          *OIDCAuthConfig    `yaml:"oidc,omitempty"`
-	GitHub        *GitHubAuthConfig  `yaml:"github,omitempty"`
+	SessionSecret string            `yaml:"session_secret,omitempty"`
+	OIDC          *OIDCAuthConfig   `yaml:"oidc,omitempty"`
+	GitHub        *GitHubAuthConfig `yaml:"github,omitempty"`
 }
 
 type OIDCAuthConfig struct {

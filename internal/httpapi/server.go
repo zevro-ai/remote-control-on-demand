@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
-	"github.com/zevro-ai/remote-control-on-demand/internal/httpauth"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi/dashboard"
+	"github.com/zevro-ai/remote-control-on-demand/internal/httpauth"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
 
