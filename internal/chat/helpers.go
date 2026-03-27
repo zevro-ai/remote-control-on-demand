@@ -90,6 +90,9 @@ func ResolveProjectPath(baseFolder, folder string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("resolving folder %q: %w", folder, err)
 	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+		return "", "", fmt.Errorf("folder %q must stay within rc.base_folder", folder)
+	}
 	relResolved, err := filepath.Rel(baseResolved, targetResolved)
 	if err != nil {
 		return "", "", fmt.Errorf("resolving folder %q: %w", folder, err)

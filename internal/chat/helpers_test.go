@@ -20,6 +20,25 @@ func TestResolveProjectPathRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestResolveProjectPathRejectsLexicalEscapeEvenIfSymlinkResolvesInsideBase(t *testing.T) {
+	baseDir := t.TempDir()
+	insideDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(insideDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(demo): %v", err)
+	}
+
+	aliasDir := t.TempDir()
+	linkPath := filepath.Join(aliasDir, "demo-link")
+	if err := os.Symlink(insideDir, linkPath); err != nil {
+		t.Skipf("Symlink() unsupported in this environment: %v", err)
+	}
+
+	folder := filepath.Join("..", filepath.Base(aliasDir), "demo-link")
+	if _, _, err := ResolveProjectPath(baseDir, folder); err == nil {
+		t.Fatal("expected lexical escape through sibling symlink path to be rejected")
+	}
+}
+
 func TestResolveProjectPathAllowsMissingChildWithinResolvedBase(t *testing.T) {
 	baseDir := t.TempDir()
 	realBase := filepath.Join(baseDir, "real")
