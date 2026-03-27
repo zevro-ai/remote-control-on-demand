@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 )
@@ -475,6 +476,14 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 		t.Fatalf("CreateSession(three): %v", err)
 	}
 	_ = first
+
+	if _, err := mgr.SetActive(second.ID); err != nil {
+		t.Fatalf("SetActive(second): %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if _, err := mgr.SetActive(third.ID); err != nil {
+		t.Fatalf("SetActive(third): %v", err)
+	}
 
 	if err := mgr.DeleteSession(third.ID); err != nil {
 		t.Fatalf("DeleteSession(): %v", err)
