@@ -10,7 +10,35 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
+
+func TestManagerMetadata(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(t.TempDir(), "")
+	metadata := mgr.Metadata()
+
+	if metadata.ID != "codex" {
+		t.Fatalf("metadata.ID = %q, want %q", metadata.ID, "codex")
+	}
+	if metadata.DisplayName != "Codex" {
+		t.Fatalf("metadata.DisplayName = %q, want %q", metadata.DisplayName, "Codex")
+	}
+	if metadata.Chat == nil {
+		t.Fatal("metadata.Chat = nil, want chat capabilities")
+	}
+	want := provider.ChatCapabilities{
+		StreamingDeltas:   true,
+		ToolCallStreaming: true,
+		ShellCommandExec:  true,
+		ThreadResume:      true,
+		ImageAttachments:  true,
+	}
+	if *metadata.Chat != want {
+		t.Fatalf("metadata.Chat = %#v, want %#v", *metadata.Chat, want)
+	}
+}
 
 func TestBuildCodexArgsNewSessionDangerousBypass(t *testing.T) {
 	sess := &chat.Session{RelName: "remote-control-on-demand"}

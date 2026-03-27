@@ -92,21 +92,7 @@ func testProviders(t *testing.T, sessionMgr *session.Manager, claudeMgr *claudec
 	}
 
 	if codexMgr != nil {
-		codexProvider, err := provider.NewChatAdapter(provider.Metadata{
-			ID:          "codex",
-			DisplayName: "Codex",
-			Chat: &provider.ChatCapabilities{
-				StreamingDeltas:   true,
-				ToolCallStreaming: true,
-				ShellCommandExec:  true,
-				ThreadResume:      true,
-				ImageAttachments:  true,
-			},
-		}, codexMgr)
-		if err != nil {
-			t.Fatalf("NewChatAdapter(codex): %v", err)
-		}
-		if err := registry.RegisterChat(codexProvider); err != nil {
+		if err := registry.RegisterChat(codexMgr); err != nil {
 			t.Fatalf("RegisterChat(codex): %v", err)
 		}
 	}
