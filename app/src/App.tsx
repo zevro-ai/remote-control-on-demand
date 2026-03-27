@@ -39,6 +39,7 @@ export default function App() {
     <SessionsContext.Provider value={{ state, dispatch, actions }}>
       <div className="app-shell">
         <Sidebar
+          providers={state.providers}
           chatSessions={state.chatSessions}
           connected={connected}
           focusedPanel={focusedPanel}
@@ -66,6 +67,7 @@ export default function App() {
             </div>
           ) : (
             <PanelLayout
+              providers={state.providers}
               chatSessions={state.chatSessions}
               focusedPanel={focusedPanel}
               density={density}
@@ -80,6 +82,7 @@ export default function App() {
           <CreateSessionModal
             folders={folders}
             chatSessions={state.chatSessions}
+            providers={state.providers}
             onClose={() => setShowModal(false)}
             onCreateSession={onCreateSession}
           />

@@ -1,4 +1,5 @@
 import type { ChatSession, StreamBlock } from "../api/types";
+import { getProviderDisplayName, getSessionProviderID } from "./providers";
 import { isTodoToolBlock, isToolUseBlock } from "./todoProgress";
 
 export type { ChatSession };
@@ -87,7 +88,10 @@ export function resolveFocusedSession(
     return null;
   }
 
-  return allSessions.find((s) => s.id === focusedPanel.sessionId && s.agent === focusedPanel.type) || null;
+  return allSessions.find((session) => (
+    session.id === focusedPanel.sessionId &&
+    getSessionProviderID(session) === focusedPanel.type
+  )) || null;
 }
 
 export function buildSessionPreview(
@@ -143,7 +147,7 @@ export function buildSessionPreview(
   }
 
   if (session.busy && streamBlocks.length === 0) {
-    pushPreview(preview, "system", `${session.agent} is thinking...`);
+    pushPreview(preview, "system", `${getProviderDisplayName(session)} is thinking...`);
   }
 
   if (preview.length === 0) {

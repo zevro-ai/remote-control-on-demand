@@ -1,9 +1,17 @@
 import { useState, useEffect } from "react";
+import type { ChatSession, ProviderMetadata } from "../api/types";
+import {
+  getProviderDisplayName,
+  getProviderMetadata,
+  listProviderIDs,
+  summarizeProviderCapabilities,
+} from "../lib/providers";
 import { FolderPicker } from "./FolderPicker";
 
 interface Props {
   folders: string[];
-  chatSessions: Record<string, any>;
+  chatSessions: Record<string, ChatSession[]>;
+  providers: Record<string, ProviderMetadata>;
   onClose: () => void;
   onCreateSession: (provider: string, folder: string) => Promise<void>;
 }
@@ -11,21 +19,24 @@ interface Props {
 export function CreateSessionModal({
   folders,
   chatSessions,
+  providers,
   onClose,
   onCreateSession,
 }: Props) {
-  const providers = Object.keys(chatSessions).sort();
-  const [agent, setAgent] = useState<string>("");
+  const providerList = listProviderIDs(providers, chatSessions).map((providerID) =>
+    getProviderMetadata(providerID, providers)
+  );
+  const [providerID, setProviderID] = useState<string>("");
 
   useEffect(() => {
-    if (providers.length > 0 && !agent) {
-      setAgent(providers[0]);
+    if (providerList.length > 0 && !providerID) {
+      setProviderID(providerList[0].id);
     }
-  }, [providers, agent]);
+  }, [providerList, providerID]);
 
   const handleSelect = async (folder: string) => {
-    if (!agent) return;
-    await onCreateSession(agent, folder);
+    if (!providerID) return;
+    await onCreateSession(providerID, folder);
     onClose();
   };
 
@@ -33,20 +44,21 @@ export function CreateSessionModal({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-shell" onClick={(e) => e.stopPropagation()}>
         <div className="modal-kicker">New session</div>
-        <h2>Choose agent & repository</h2>
-        <p>Select an AI agent and the repository to work in.</p>
+        <h2>Choose provider & repository</h2>
+        <p>Select a chat provider and the repository to work in.</p>
 
         <div className="modal-agent-switch">
-          {providers.length === 0 ? (
-            <div className="sidebar-empty">Loading agents...</div>
+          {providerList.length === 0 ? (
+            <div className="sidebar-empty">No providers available yet.</div>
           ) : (
-            providers.map((p) => (
+            providerList.map((provider) => (
               <button
-                key={p}
-                onClick={() => setAgent(p)}
-                className={agent === p ? "is-active" : ""}
+                key={provider.id}
+                onClick={() => setProviderID(provider.id)}
+                className={providerID === provider.id ? "is-active" : ""}
               >
-                {p.charAt(0).toUpperCase() + p.slice(1)}
+                <strong>{getProviderDisplayName(provider, providers)}</strong>
+                <span>{summarizeProviderCapabilities(provider)}</span>
               </button>
             ))
           )}
