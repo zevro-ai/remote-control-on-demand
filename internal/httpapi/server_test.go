@@ -86,20 +86,7 @@ func testProviders(t *testing.T, sessionMgr *session.Manager, claudeMgr *claudec
 	}
 
 	if claudeMgr != nil {
-		claudeProvider, err := provider.NewChatAdapter(provider.Metadata{
-			ID:          "claude",
-			DisplayName: "Claude",
-			Chat: &provider.ChatCapabilities{
-				StreamingDeltas:  true,
-				ShellCommandExec: true,
-				ThreadResume:     true,
-				ImageAttachments: true,
-			},
-		}, claudeMgr)
-		if err != nil {
-			t.Fatalf("NewChatAdapter(claude): %v", err)
-		}
-		if err := registry.RegisterChat(claudeProvider); err != nil {
+		if err := registry.RegisterChat(claudeMgr); err != nil {
 			t.Fatalf("RegisterChat(claude): %v", err)
 		}
 	}
