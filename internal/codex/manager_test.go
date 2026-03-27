@@ -105,8 +105,12 @@ func TestBuildCodexArgsNewSessionWithImages(t *testing.T) {
 
 func TestBuildCodexArgsResumeDangerousBypass(t *testing.T) {
 	sess := &chat.Session{
-		RelName:  "remote-control-on-demand",
-		ThreadID: "thread-123",
+		RelName:     "remote-control-on-demand",
+		ThreadID:    "thread-123",
+		ThreadReady: true,
+		Messages: []chat.Message{
+			{Role: "assistant", Kind: "text", Content: "done"},
+		},
 	}
 
 	got := buildCodexArgs(sess, "Działaj", nil, "workspace-write", "gpt-5", true)
@@ -128,8 +132,12 @@ func TestBuildCodexArgsResumeDangerousBypass(t *testing.T) {
 
 func TestBuildCodexArgsResumeWithImages(t *testing.T) {
 	sess := &chat.Session{
-		RelName:  "remote-control-on-demand",
-		ThreadID: "thread-123",
+		RelName:     "remote-control-on-demand",
+		ThreadID:    "thread-123",
+		ThreadReady: true,
+		Messages: []chat.Message{
+			{Role: "assistant", Kind: "text", Content: "done"},
+		},
 	}
 
 	got := buildCodexArgs(sess, "Opisz obrazek", []chat.Attachment{
@@ -245,6 +253,107 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 	}
 	if events[1].Role != "assistant" || events[1].Content != "assistant reply" {
 		t.Fatalf("assistant event = %#v", events[1])
+	}
+}
+
+func TestSendStartsNewCodexSessionWithoutResumeID(t *testing.T) {
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	sess, err := mgr.CreateSession("demo")
+	if err != nil {
+		t.Fatalf("CreateSession(): %v", err)
+	}
+	if sess.ThreadID == "" {
+		t.Fatal("new session ThreadID = empty, want generated placeholder before first Codex reply")
+	}
+
+	previousRunCodexFn := runCodexFn
+	runCodexFn = func(
+		ctx context.Context,
+		snapshot *chat.Session,
+		prompt string,
+		attachments []chat.Attachment,
+		sandbox,
+		model string,
+		dangerouslyBypassSandbox bool,
+		cb StreamCallback,
+	) (string, string, error) {
+		args := buildCodexArgs(snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox)
+		if len(args) > 1 && args[1] == "resume" {
+			t.Fatalf("buildCodexArgs() unexpectedly chose resume path: %#v", args)
+		}
+		return "019d3066-632d-7d83-8be4-725ab37de218", "assistant reply", nil
+	}
+	t.Cleanup(func() {
+		runCodexFn = previousRunCodexFn
+	})
+
+	updated, _, err := mgr.Send(context.Background(), sess.ID, "ping", nil)
+	if err != nil {
+		t.Fatalf("Send(): %v", err)
+	}
+	if updated.ThreadID != "019d3066-632d-7d83-8be4-725ab37de218" {
+		t.Fatalf("updated.ThreadID = %q", updated.ThreadID)
+	}
+	if !updated.ThreadReady {
+		t.Fatal("updated.ThreadReady = false, want true after first successful Codex reply")
+	}
+}
+
+func TestBuildCodexArgsLegacyThreadIDWithoutAssistantReplyStartsFreshExec(t *testing.T) {
+	sess := &chat.Session{
+		RelName:  "remote-control-on-demand",
+		ThreadID: "legacy-random-uuid",
+		Messages: []chat.Message{
+			{Role: "user", Kind: "text", Content: "first prompt"},
+		},
+	}
+
+	got := buildCodexArgs(sess, "continue", nil, "workspace-write", "gpt-5", false)
+	want := []string{
+		"exec",
+		"--json",
+		"--sandbox",
+		"workspace-write",
+		"--model",
+		"gpt-5",
+		initialPrompt(sess, "continue"),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildCodexArgs() mismatch\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestBuildCodexArgsResumesThreadReadySessionWithoutAssistantTextInWindow(t *testing.T) {
+	sess := &chat.Session{
+		RelName:     "remote-control-on-demand",
+		ThreadID:    "019d-real-thread",
+		ThreadReady: true,
+		Messages: []chat.Message{
+			{Role: "user", Kind: "bash", Content: "ls"},
+			{Role: "assistant", Kind: "bash_result", Content: "file.txt"},
+		},
+	}
+
+	got := buildCodexArgs(sess, "continue", nil, "workspace-write", "gpt-5", false)
+	want := []string{
+		"exec",
+		"resume",
+		"--json",
+		"--model",
+		"gpt-5",
+		"019d-real-thread",
+		"continue",
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildCodexArgs() mismatch\n got: %#v\nwant: %#v", got, want)
 	}
 }
 

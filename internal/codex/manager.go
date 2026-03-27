@@ -202,6 +202,7 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []cha
 	clone, saveErr := request.Complete(func(current *chat.Session) *chat.Message {
 		if threadID != "" {
 			current.ThreadID = threadID
+			current.ThreadReady = true
 		}
 		if err != nil || reply == "" {
 			return nil
@@ -369,7 +370,7 @@ func buildCodexArgs(
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
 
-	if sess.ThreadID == "" {
+	if !sess.ThreadReady || sess.ThreadID == "" {
 		args = append(args, "--json")
 		if !dangerouslyBypassSandbox {
 			args = append(args, "--sandbox", sandbox)

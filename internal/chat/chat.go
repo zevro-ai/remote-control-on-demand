@@ -47,14 +47,15 @@ type Message struct {
 }
 
 type Session struct {
-	ID        string    `json:"id"`
-	Folder    string    `json:"folder"`
-	RelName   string    `json:"rel_name"`
-	ThreadID  string    `json:"thread_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Busy      bool      `json:"busy"`
-	Messages  []Message `json:"messages,omitempty"`
+	ID          string    `json:"id"`
+	Folder      string    `json:"folder"`
+	RelName     string    `json:"rel_name"`
+	ThreadID    string    `json:"thread_id,omitempty"`
+	ThreadReady bool      `json:"thread_ready,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Busy        bool      `json:"busy"`
+	Messages    []Message `json:"messages,omitempty"`
 }
 
 type ToolCallEvent struct {

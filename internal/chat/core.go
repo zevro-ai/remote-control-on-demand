@@ -131,6 +131,9 @@ func (c *Core) Restore() error {
 			continue
 		}
 		sess.Busy = false
+		if !sess.ThreadReady && sess.ThreadID != "" && sessionHasAssistantTextReply(sess) {
+			sess.ThreadReady = true
+		}
 		c.sessions[sess.ID] = sess
 	}
 	if _, ok := c.sessions[c.activeSessionID]; !ok {
@@ -140,7 +143,20 @@ func (c *Core) Restore() error {
 	return nil
 }
 
+func sessionHasAssistantTextReply(sess *Session) bool {
+	for _, msg := range sess.Messages {
+		if msg.Role == "assistant" && msg.Kind == "text" {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Core) CreateSession(folder string) (*Session, error) {
+	threadID, err := GenerateUUID()
+	if err != nil {
+		return nil, fmt.Errorf("generating thread ID: %w", err)
+	}
 	fullPath, relName, err := ResolveProjectPath(c.baseFolder, folder)
 	if err != nil {
 		return nil, err
@@ -160,12 +176,6 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 	if err != nil {
 		c.mu.Unlock()
 		return nil, fmt.Errorf("generating session ID: %w", err)
-	}
-
-	threadID, err := GenerateUUID()
-	if err != nil {
-		c.mu.Unlock()
-		return nil, fmt.Errorf("generating thread ID: %w", err)
 	}
 
 	now := time.Now()
