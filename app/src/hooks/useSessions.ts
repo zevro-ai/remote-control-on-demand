@@ -322,10 +322,9 @@ async function loadProviders() {
 }
 
 async function fetchBootstrapData(): Promise<BootstrapData> {
-  const [providerResult, sessionsResult] = await Promise.allSettled([
-    loadProviders(),
-    api.get<Session[]>("/api/sessions"),
-  ]);
+  const sessionsPromise = api.get<Session[]>("/api/sessions");
+  const [providerResult] = await Promise.allSettled([loadProviders()]);
+  const [sessionsResult] = await Promise.allSettled([sessionsPromise]);
 
   if (providerResult.status === "rejected") {
     return resolveProviderBootstrapFailure(providerResult.reason, sessionsResult);
@@ -341,7 +340,7 @@ async function fetchBootstrapData(): Promise<BootstrapData> {
     return { provider, sessions };
   });
 
-  const chatResults = await Promise.allSettled(chatPromises);
+  const [, ...chatResults] = await Promise.allSettled([sessionsPromise, ...chatPromises]);
 
   const bootstrap = resolveBootstrapResults(providerIDs, [sessionsResult, ...chatResults]);
   return { ...bootstrap, providers: providerMap };
