@@ -42,6 +42,26 @@ describe("AuthPrompt", () => {
     expect(screen.queryByPlaceholderText("Paste API token")).toBeNull();
   });
 
+  it("keeps the token fallback visible when external auth also enables bearer tokens", () => {
+    render(
+      <AuthPrompt
+        authStatus={{
+          mode: "external",
+          token_enabled: true,
+          authenticated: false,
+          provider: { id: "github", display_name: "GitHub" },
+          login_url: "/api/auth/login",
+        }}
+        value=""
+        hasStoredToken={false}
+        onChange={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeTruthy();
+    expect(screen.getByPlaceholderText("Paste API token")).toBeTruthy();
+  });
+
   it("preserves the current page when building the external login redirect", () => {
     expect(
       buildExternalLoginURL("/api/auth/login", {

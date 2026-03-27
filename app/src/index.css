@@ -108,6 +108,13 @@ button {
   font-size: 1rem;
 }
 
+.auth-prompt-stack {
+  width: min(100%, 28rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .auth-prompt {
   width: min(100%, 28rem);
   display: flex;

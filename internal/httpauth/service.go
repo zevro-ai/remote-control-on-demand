@@ -63,6 +63,7 @@ type Service struct {
 	provider      externalProvider
 	now           func() time.Time
 	randomBytes   func(int) ([]byte, error)
+	afterFunc     func(time.Duration, func()) *time.Timer
 	sessionsMu    sync.RWMutex
 	sessions      map[string]*sessionRecord
 }
@@ -97,6 +98,7 @@ func NewService(cfg config.APIConfig) *Service {
 		token:       strings.TrimSpace(cfg.Token),
 		now:         time.Now,
 		randomBytes: randomTokenBytes,
+		afterFunc:   time.AfterFunc,
 		sessions:    map[string]*sessionRecord{},
 	}
 
@@ -288,6 +290,7 @@ func (s *Service) writeSession(w http.ResponseWriter, r *http.Request, session *
 		NextValidationAttempt: s.now().Add(revalidateEvery),
 	}
 	s.sessionsMu.Unlock()
+	s.scheduleSessionExpiry(sessionID, expiresAt)
 
 	claims := sessionClaims{
 		SessionID: sessionID,
@@ -375,6 +378,21 @@ func (s *Service) deleteSession(sessionID string) {
 	s.sessionsMu.Lock()
 	delete(s.sessions, sessionID)
 	s.sessionsMu.Unlock()
+}
+
+func (s *Service) scheduleSessionExpiry(sessionID string, expiresAt time.Time) {
+	delay := expiresAt.Sub(s.now())
+	if delay <= 0 {
+		s.deleteSession(sessionID)
+		return
+	}
+	afterFunc := s.afterFunc
+	if afterFunc == nil {
+		afterFunc = time.AfterFunc
+	}
+	afterFunc(delay, func() {
+		s.deleteSession(sessionID)
+	})
 }
 
 func (s *Service) readState(r *http.Request) (*authState, error) {

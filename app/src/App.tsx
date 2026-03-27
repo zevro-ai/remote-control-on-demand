@@ -158,7 +158,10 @@ export function AuthPrompt({
     onChange("");
   };
 
-  if (authStatus?.mode === "external") {
+  const externalAuthEnabled = authStatus?.mode === "external";
+  const tokenFallbackEnabled = authStatus?.token_enabled ?? false;
+
+  if (externalAuthEnabled && !tokenFallbackEnabled) {
     const providerName = authStatus.provider?.display_name || "identity provider";
     return (
       <div className="dashboard-empty">
@@ -186,6 +189,67 @@ export function AuthPrompt({
               </button>
             )}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (externalAuthEnabled) {
+    const providerName = authStatus.provider?.display_name || "identity provider";
+    return (
+      <div className="dashboard-empty">
+        <div className="auth-prompt-stack">
+          <div className="auth-prompt">
+            <div className="auth-prompt__kicker">login required</div>
+            <h2>Unlock dashboard access</h2>
+            <p>
+              This RCOD deployment uses external authentication. Continue with {providerName}
+              to open the dashboard, or use the API token fallback below.
+            </p>
+            <div className="auth-prompt__actions">
+              <button
+                type="button"
+                onClick={() =>
+                  window.location.assign(
+                    buildExternalLoginURL(authStatus.login_url || "/api/auth/login"),
+                  )
+                }
+              >
+                Sign in with {providerName}
+              </button>
+              {hasStoredToken && (
+                <button type="button" className="is-secondary" onClick={handleClear}>
+                  Clear stored token
+                </button>
+              )}
+            </div>
+          </div>
+
+          <form className="auth-prompt" onSubmit={handleSubmit}>
+            <div className="auth-prompt__kicker">token fallback</div>
+            <h2>Use API token instead</h2>
+            <p>
+              This deployment also allows bearer-token access. Enter `api.token` to store it
+              locally and retry the dashboard bootstrap.
+            </p>
+            <input
+              type="password"
+              autoFocus
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder="Paste API token"
+            />
+            <div className="auth-prompt__actions">
+              <button type="submit" disabled={!value.trim()}>
+                Save token
+              </button>
+              {hasStoredToken && (
+                <button type="button" className="is-secondary" onClick={handleClear}>
+                  Clear stored token
+                </button>
+              )}
+            </div>
+          </form>
         </div>
       </div>
     );
