@@ -9,7 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
-	"github.com/zevro-ai/remote-control-on-demand/internal/session"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
 
 type wsClient struct {
@@ -34,30 +34,45 @@ func newHub() *Hub {
 	}
 }
 
-func (h *Hub) start(sessionMgr *session.Manager, providers map[string]chat.Provider) {
-	h.unsubSession = sessionMgr.Subscribe(func(n session.Notification) {
-		h.broadcast(wsMessage{Type: "notification", Line: n.Message})
-	})
+func (h *Hub) start(runtimeProvider provider.RuntimeProvider, registry *provider.Registry) {
+	if runtimeProvider != nil {
+		metadata := runtimeProvider.Metadata()
+		providerMeta := toProviderMetadataResponse(metadata)
+		h.unsubSession = runtimeProvider.Subscribe(func(notification provider.RuntimeNotification) {
+			h.broadcast(wsMessage{
+				Type:         "notification",
+				Provider:     notification.Provider,
+				ProviderMeta: &providerMeta,
+				Line:         notification.Message,
+			})
+		})
+	}
 
-	for id, p := range providers {
-		providerID := id
+	if registry == nil {
+		return
+	}
+
+	for _, p := range registry.ChatProviders() {
+		metadata := p.Metadata()
 		unsub := p.Subscribe(func(e chat.Event) {
-			h.handleChatEvent(providerID, e)
+			h.handleChatEvent(metadata, e)
 		})
 		h.unsubChat = append(h.unsubChat, unsub)
 	}
 }
 
-func (h *Hub) handleChatEvent(providerID string, e chat.Event) {
+func (h *Hub) handleChatEvent(metadata provider.Metadata, e chat.Event) {
+	providerMeta := toProviderMetadataResponse(metadata)
 	msg := wsMessage{
-		Provider:  providerID,
-		SessionID: e.SessionID,
+		Provider:     metadata.ID,
+		ProviderMeta: &providerMeta,
+		SessionID:    e.SessionID,
 	}
 
 	switch e.Type {
 	case chat.EventSessionCreated:
 		msg.Type = "chat_session_added"
-		msg.Session = toChatSessionResponse(e.Session, providerID)
+		msg.Session = toChatSessionResponse(e.Session, metadata)
 	case chat.EventSessionClosed:
 		msg.Type = "chat_session_removed"
 	case chat.EventMessageReceived:
@@ -229,17 +244,24 @@ func (s *Server) wsReader(c *wsClient) {
 }
 
 func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
-	sess, ok := s.sessionMgr.Get(sessionID)
+	if s.runtimeProvider == nil {
+		return
+	}
+	runtimeMetadata := s.runtimeProvider.Metadata()
+	runtimeProviderID := runtimeMetadata.ID
+	runtimeProviderMeta := toProviderMetadataResponse(runtimeMetadata)
+
+	sess, ok := s.runtimeProvider.GetSession(sessionID)
 	if !ok {
 		return
 	}
 
 	// Take the snapshot before subscribing so we don't duplicate lines that land
 	// between the backfill and live-stream boundaries.
-	snapshot := sess.OutputBuf.Lines(50)
+	snapshot := sess.SnapshotLogs(50)
 
 	lineCh := make(chan string, 256)
-	unsub := sess.OutputBuf.Subscribe(func(line string) {
+	unsub := sess.SubscribeLogs(func(line string) {
 		select {
 		case lineCh <- line:
 		default:
@@ -247,7 +269,13 @@ func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
 	})
 
 	for _, line := range snapshot {
-		data, _ := json.Marshal(wsMessage{Type: "log", SessionID: sessionID, Line: line})
+		data, _ := json.Marshal(wsMessage{
+			Type:         "log",
+			Provider:     runtimeProviderID,
+			ProviderMeta: &runtimeProviderMeta,
+			SessionID:    sessionID,
+			Line:         line,
+		})
 		select {
 		case c.send <- data:
 		default:
@@ -268,7 +296,13 @@ func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
 				if !subscribed {
 					return
 				}
-				data, _ := json.Marshal(wsMessage{Type: "log", SessionID: sessionID, Line: line})
+				data, _ := json.Marshal(wsMessage{
+					Type:         "log",
+					Provider:     runtimeProviderID,
+					ProviderMeta: &runtimeProviderMeta,
+					SessionID:    sessionID,
+					Line:         line,
+				})
 				select {
 				case c.send <- data:
 				default:

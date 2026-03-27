@@ -1,7 +1,8 @@
-import type { ChatSession } from "../api/types";
+import type { ChatSession, ProviderMetadata } from "../api/types";
 import type { PanelState } from "../hooks/usePanelManager";
 import { SessionPanel } from "./SessionPanel";
 import { useSessions } from "../hooks/useSessions";
+import { getProviderDisplayName, getSessionProviderID } from "../lib/providers";
 import {
   buildWallSlots,
   buildSessionPreview,
@@ -13,6 +14,7 @@ import {
 import { SessionTile } from "./SessionTile";
 
 interface Props {
+  providers: Record<string, ProviderMetadata>;
   chatSessions: Record<string, ChatSession[]>;
   focusedPanel: PanelState | null;
   density: OverviewDensity;
@@ -24,6 +26,7 @@ interface Props {
 const DENSITY_OPTIONS: OverviewDensity[] = ["compact", "comfortable", "focus"];
 
 export function PanelLayout({
+  providers,
   chatSessions,
   focusedPanel,
   density,
@@ -72,7 +75,8 @@ export function PanelLayout({
   }
 
   if (focusedSession && focusedPanel) {
-    const provider = focusedSession.agent;
+    const providerID = getSessionProviderID(focusedSession);
+    const providerName = getProviderDisplayName(focusedSession, providers);
     return (
       <div className="focus-stage">
         <header className="focus-stage__toolbar">
@@ -84,7 +88,7 @@ export function PanelLayout({
             <span className="focus-stage__label">Focused session</span>
             <strong>{focusedSession.rel_name}</strong>
             <span>
-              {focusedSession.agent} · {focusedSession.messages?.length || 0} msgs ·{" "}
+              {providerName} · {focusedSession.messages?.length || 0} msgs ·{" "}
               {focusedSession.busy ? "streaming" : "idle"}
             </span>
           </div>
@@ -92,13 +96,14 @@ export function PanelLayout({
 
         <div className="focus-stage__panel">
           <SessionPanel
-            type={provider}
+            providerID={providerID}
+            providers={providers}
             session={focusedSession}
             streamBlocks={state.streamBlocks[focusedSession.id] || []}
             onClose={onClearFocus}
-            onSend={(id, msg, att) => actions.sendChatMessage(provider, id, msg, att)}
-            onRunCommand={(id, cmd) => actions.runChatCommand(provider, id, cmd)}
-            onSessionClose={(id) => actions.closeChatSession(provider, id)}
+            onSend={(id, msg, att) => actions.sendChatMessage(providerID, id, msg, att)}
+            onRunCommand={(id, cmd) => actions.runChatCommand(providerID, id, cmd)}
+            onSessionClose={(id) => actions.closeChatSession(providerID, id)}
           />
         </div>
       </div>
@@ -173,7 +178,7 @@ export function PanelLayout({
                 }
                 onSelect={
                   slot.session
-                    ? () => onFocusSession(slot.session!.id, slot.session!.agent)
+                    ? () => onFocusSession(slot.session!.id, getSessionProviderID(slot.session!))
                     : undefined
                 }
               />

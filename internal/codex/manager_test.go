@@ -10,7 +10,35 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
+
+func TestManagerMetadata(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(t.TempDir(), "")
+	metadata := mgr.Metadata()
+
+	if metadata.ID != "codex" {
+		t.Fatalf("metadata.ID = %q, want %q", metadata.ID, "codex")
+	}
+	if metadata.DisplayName != "Codex" {
+		t.Fatalf("metadata.DisplayName = %q, want %q", metadata.DisplayName, "Codex")
+	}
+	if metadata.Chat == nil {
+		t.Fatal("metadata.Chat = nil, want chat capabilities")
+	}
+	want := provider.ChatCapabilities{
+		StreamingDeltas:   true,
+		ToolCallStreaming: true,
+		ShellCommandExec:  true,
+		ThreadResume:      true,
+		ImageAttachments:  true,
+	}
+	if *metadata.Chat != want {
+		t.Fatalf("metadata.Chat = %#v, want %#v", *metadata.Chat, want)
+	}
+}
 
 func TestBuildCodexArgsNewSessionDangerousBypass(t *testing.T) {
 	sess := &chat.Session{RelName: "remote-control-on-demand"}
@@ -475,20 +503,27 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(three): %v", err)
 	}
+	_ = first
 
-	mgr.mu.Lock()
-	mgr.sessions[first.ID].UpdatedAt = time.Unix(10, 0)
-	mgr.sessions[second.ID].UpdatedAt = time.Unix(30, 0)
-	mgr.sessions[third.ID].UpdatedAt = time.Unix(20, 0)
-	mgr.activeSessionID = third.ID
-	mgr.mu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	if _, err := mgr.SetActive(second.ID); err != nil {
+		t.Fatalf("SetActive(second): %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if _, err := mgr.SetActive(third.ID); err != nil {
+		t.Fatalf("SetActive(third): %v", err)
+	}
 
 	if err := mgr.DeleteSession(third.ID); err != nil {
 		t.Fatalf("DeleteSession(): %v", err)
 	}
 
-	if mgr.activeSessionID != second.ID {
-		t.Fatalf("activeSessionID = %q, want %q", mgr.activeSessionID, second.ID)
+	active, ok := mgr.Active()
+	if !ok {
+		t.Fatal("expected active session after delete")
+	}
+	if active.ID != second.ID {
+		t.Fatalf("active session = %q, want %q", active.ID, second.ID)
 	}
 }
 

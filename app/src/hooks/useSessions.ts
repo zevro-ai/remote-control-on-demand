@@ -12,15 +12,17 @@ import type {
   DraftAttachment,
   Message,
   MessageAttachment,
+  ProviderMetadata,
   StreamBlock,
   WsMessage,
 } from "../api/types";
 import { api } from "../api/client";
 import { useWs } from "./WebSocketContext";
 import { mergeIncomingMessage, removeOptimisticMessage } from "../lib/realtimeMessages";
-import { isUnauthorizedError } from "../lib/requestErrors";
+import { hasErrorStatus, isUnauthorizedError } from "../lib/requestErrors";
 
 interface State {
+  providers: Record<string, ProviderMetadata>;
   sessions: Session[];
   chatSessions: Record<string, ChatSession[]>; // provider -> sessions
   logs: Record<string, string[]>;
@@ -31,6 +33,7 @@ interface State {
 }
 
 interface BootstrapData {
+  providers: Record<string, ProviderMetadata>;
   sessions: Session[];
   chatSessions: Record<string, ChatSession[]>;
   authRequired: boolean;
@@ -38,6 +41,7 @@ interface BootstrapData {
 }
 
 type Action =
+  | { type: "SET_PROVIDERS"; providers: Record<string, ProviderMetadata> }
   | { type: "SET_SESSIONS"; sessions: Session[] }
   | { type: "SET_CHAT_SESSIONS"; provider: string; sessions: ChatSession[] }
   | { type: "UPDATE_SESSION"; session: Session }
@@ -64,6 +68,8 @@ const MAX_LOG_LINES = 100;
 
 export function reduceSessionsState(state: State, action: Action): State {
   switch (action.type) {
+    case "SET_PROVIDERS":
+      return { ...state, providers: action.providers };
     case "SET_SESSIONS":
       return { ...state, sessions: action.sessions };
     case "SET_CHAT_SESSIONS":
@@ -222,6 +228,7 @@ function omitKey<T>(input: Record<string, T>, key: string) {
 }
 
 export const sessionsInitialState: State = {
+  providers: {},
   sessions: [],
   chatSessions: {},
   logs: {},
@@ -230,6 +237,18 @@ export const sessionsInitialState: State = {
   authRequired: false,
   loadError: null,
 };
+
+function resolveProviderLabel(provider: string) {
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+export function normalizeProviders(providers: Array<string | ProviderMetadata>) {
+  return providers.map((provider) =>
+    typeof provider === "string"
+      ? { id: provider, display_name: resolveProviderLabel(provider) }
+      : provider
+  );
+}
 
 export function resolveBootstrapResults(
   providers: string[],
@@ -251,13 +270,14 @@ export function resolveBootstrapResults(
     if (res.status === "fulfilled") {
       chatSessions[provider] = res.value.sessions;
     } else {
-      errors.push(`${provider.charAt(0).toUpperCase() + provider.slice(1)}: ${res.reason.message || res.reason}`);
+      errors.push(`${resolveProviderLabel(provider)}: ${res.reason.message || res.reason}`);
     }
   });
 
   const authRequired = !anySuccess && results.some((res) => res.status === "rejected" && isUnauthorizedError(res.reason));
 
   return {
+    providers: {},
     sessions,
     chatSessions,
     authRequired,
@@ -265,20 +285,65 @@ export function resolveBootstrapResults(
   };
 }
 
+export function resolveProviderBootstrapFailure(
+  providerError: unknown,
+  sessionsResult: PromiseSettledResult<Session[]>
+): BootstrapData {
+  const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
+  const errors = [`Providers: ${providerError instanceof Error ? providerError.message : String(providerError)}`];
+
+  if (sessionsResult.status === "rejected") {
+    errors.push(`RC: ${sessionsResult.reason.message || sessionsResult.reason}`);
+  }
+
+  const authRequired =
+    sessionsResult.status === "rejected" &&
+    isUnauthorizedError(providerError) &&
+    isUnauthorizedError(sessionsResult.reason);
+
+  return {
+    providers: {},
+    sessions,
+    chatSessions: {},
+    authRequired,
+    loadError: authRequired ? null : `Some services failed to load: ${errors.join("; ")}`,
+  };
+}
+
+async function loadProviders() {
+  try {
+    return await api.get<Array<string | ProviderMetadata>>("/api/providers");
+  } catch (error) {
+    if (hasErrorStatus(error, 404)) {
+      return api.get<Array<string | ProviderMetadata>>("/api/chat/providers");
+    }
+    throw error;
+  }
+}
+
 async function fetchBootstrapData(): Promise<BootstrapData> {
-  const providers = await api.get<string[]>("/api/chat/providers");
-  
-  const chatPromises = providers.map(async (p) => {
-    const sessions = await api.get<ChatSession[]>(`/api/chat/${p}/sessions`);
-    return { provider: p, sessions };
+  const sessionsPromise = api.get<Session[]>("/api/sessions");
+  const [providerResult] = await Promise.allSettled([loadProviders()]);
+  const [sessionsResult] = await Promise.allSettled([sessionsPromise]);
+
+  if (providerResult.status === "rejected") {
+    return resolveProviderBootstrapFailure(providerResult.reason, sessionsResult);
+  }
+
+  const providerResponse = providerResult.value;
+  const providers = normalizeProviders(providerResponse);
+  const providerIDs = providers.map((provider) => provider.id);
+  const providerMap = Object.fromEntries(providers.map((provider) => [provider.id, provider])) as Record<string, ProviderMetadata>;
+
+  const chatPromises = providerIDs.map(async (provider) => {
+    const sessions = await api.get<ChatSession[]>(`/api/chat/${provider}/sessions`);
+    return { provider, sessions };
   });
 
-  const results = await Promise.allSettled([
-    api.get<Session[]>("/api/sessions"),
-    ...chatPromises,
-  ]);
+  const [, ...chatResults] = await Promise.allSettled([sessionsPromise, ...chatPromises]);
 
-  return resolveBootstrapResults(providers, results);
+  const bootstrap = resolveBootstrapResults(providerIDs, [sessionsResult, ...chatResults]);
+  return { ...bootstrap, providers: providerMap };
 }
 
 type Actions = {
@@ -348,6 +413,7 @@ export function useSessionsReducer() {
   const subscribedSessionIdsRef = useRef(new Set<string>());
 
   const applyBootstrapData = (data: BootstrapData) => {
+    dispatch({ type: "SET_PROVIDERS", providers: data.providers });
     dispatch({ type: "SET_SESSIONS", sessions: data.sessions });
     Object.entries(data.chatSessions).forEach(([provider, sessions]) => {
       dispatch({ type: "SET_CHAT_SESSIONS", provider, sessions });

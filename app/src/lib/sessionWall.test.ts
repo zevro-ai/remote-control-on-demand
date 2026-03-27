@@ -89,6 +89,21 @@ describe("buildSessionPreview", () => {
       { tone: "system", text: "awaiting first prompt" },
     ]);
   });
+
+  it("uses the provider display name in the busy fallback line", () => {
+    expect(
+      buildSessionPreview(
+        createSession({
+          busy: true,
+          provider_meta: { id: "claude", display_name: "Claude" },
+          provider: "claude",
+          agent: "claude",
+        }),
+        [],
+        getPreviewLineCount("compact")
+      )
+    ).toEqual([{ tone: "system", text: "Claude is thinking..." }]);
+  });
 });
 
 describe("buildWallSlots", () => {
@@ -132,9 +147,9 @@ describe("buildWallSlots", () => {
 });
 
 describe("resolveFocusedSession", () => {
-  it("returns the selected claude or codex session when it exists", () => {
-    const claudeSession = createSession({ id: "claude-1", agent: "claude" });
-    const codexSession = createSession({ id: "codex-1", agent: "codex" });
+  it("returns the selected provider session when it exists", () => {
+    const claudeSession = createSession({ id: "claude-1", provider: "claude", agent: "claude" });
+    const codexSession = createSession({ id: "codex-1", provider: "codex", agent: "codex" });
 
     expect(
       resolveFocusedSession(
@@ -161,6 +176,8 @@ function createSession(overrides: Partial<ChatSession> = {}): ChatSession {
     id: "session-1",
     folder: "/tmp/repo",
     rel_name: "repo",
+    provider: "codex",
+    provider_meta: { id: "codex", display_name: "Codex" },
     agent: "codex",
     busy: false,
     created_at: "2026-03-17T09:00:00Z",
