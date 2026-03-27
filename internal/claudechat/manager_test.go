@@ -278,20 +278,27 @@ func TestDeleteSessionPromotesMostRecentRemaining(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(three): %v", err)
 	}
+	_ = first
 
-	mgr.mu.Lock()
-	mgr.sessions[first.ID].UpdatedAt = time.Unix(10, 0)
-	mgr.sessions[second.ID].UpdatedAt = time.Unix(30, 0)
-	mgr.sessions[third.ID].UpdatedAt = time.Unix(20, 0)
-	mgr.activeSessionID = third.ID
-	mgr.mu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	if _, err := mgr.core.SetActive(second.ID); err != nil {
+		t.Fatalf("SetActive(second): %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if _, err := mgr.core.SetActive(third.ID); err != nil {
+		t.Fatalf("SetActive(third): %v", err)
+	}
 
 	if err := mgr.DeleteSession(third.ID); err != nil {
 		t.Fatalf("DeleteSession(): %v", err)
 	}
 
-	if mgr.activeSessionID != second.ID {
-		t.Fatalf("activeSessionID = %q, want %q", mgr.activeSessionID, second.ID)
+	active, ok := mgr.core.Active()
+	if !ok {
+		t.Fatal("expected active session after delete")
+	}
+	if active.ID != second.ID {
+		t.Fatalf("active session = %q, want %q", active.ID, second.ID)
 	}
 }
 
