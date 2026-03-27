@@ -122,7 +122,7 @@ func (m *Manager) Shutdown() {
 }
 
 func (m *Manager) CreateSession(folder string) (*chat.Session, error) {
-	return m.core.CreateSessionWithThreadID(folder, "")
+	return m.core.CreateSession(folder)
 }
 
 func (m *Manager) ListSessions() []*chat.Session {
@@ -369,7 +369,7 @@ func buildCodexArgs(
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
 
-	if sess.ThreadID == "" {
+	if !hasAssistantReply(sess) {
 		args = append(args, "--json")
 		if !dangerouslyBypassSandbox {
 			args = append(args, "--sandbox", sandbox)
@@ -390,6 +390,15 @@ func buildCodexArgs(
 	args = append(args, sess.ThreadID, prompt)
 	args = appendImageArgs(args, attachments)
 	return args
+}
+
+func hasAssistantReply(sess *chat.Session) bool {
+	for _, msg := range sess.Messages {
+		if msg.Role == "assistant" && msg.Kind == "text" {
+			return true
+		}
+	}
+	return false
 }
 
 func appendImageArgs(args []string, attachments []chat.Attachment) []string {

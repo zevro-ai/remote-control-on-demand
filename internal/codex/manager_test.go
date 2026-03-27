@@ -107,6 +107,9 @@ func TestBuildCodexArgsResumeDangerousBypass(t *testing.T) {
 	sess := &chat.Session{
 		RelName:  "remote-control-on-demand",
 		ThreadID: "thread-123",
+		Messages: []chat.Message{
+			{Role: "assistant", Kind: "text", Content: "done"},
+		},
 	}
 
 	got := buildCodexArgs(sess, "Działaj", nil, "workspace-write", "gpt-5", true)
@@ -130,6 +133,9 @@ func TestBuildCodexArgsResumeWithImages(t *testing.T) {
 	sess := &chat.Session{
 		RelName:  "remote-control-on-demand",
 		ThreadID: "thread-123",
+		Messages: []chat.Message{
+			{Role: "assistant", Kind: "text", Content: "done"},
+		},
 	}
 
 	got := buildCodexArgs(sess, "Opisz obrazek", []chat.Attachment{
@@ -260,8 +266,8 @@ func TestSendStartsNewCodexSessionWithoutResumeID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession(): %v", err)
 	}
-	if sess.ThreadID != "" {
-		t.Fatalf("new session ThreadID = %q, want empty", sess.ThreadID)
+	if sess.ThreadID == "" {
+		t.Fatal("new session ThreadID = empty, want generated placeholder before first Codex reply")
 	}
 
 	previousRunCodexFn := runCodexFn
@@ -275,8 +281,9 @@ func TestSendStartsNewCodexSessionWithoutResumeID(t *testing.T) {
 		dangerouslyBypassSandbox bool,
 		cb StreamCallback,
 	) (string, string, error) {
-		if snapshot.ThreadID != "" {
-			t.Fatalf("snapshot.ThreadID = %q, want empty before first Codex response", snapshot.ThreadID)
+		args := buildCodexArgs(snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox)
+		if len(args) > 1 && args[1] == "resume" {
+			t.Fatalf("buildCodexArgs() unexpectedly chose resume path: %#v", args)
 		}
 		return "019d3066-632d-7d83-8be4-725ab37de218", "assistant reply", nil
 	}
@@ -290,6 +297,31 @@ func TestSendStartsNewCodexSessionWithoutResumeID(t *testing.T) {
 	}
 	if updated.ThreadID != "019d3066-632d-7d83-8be4-725ab37de218" {
 		t.Fatalf("updated.ThreadID = %q", updated.ThreadID)
+	}
+}
+
+func TestBuildCodexArgsLegacyThreadIDWithoutAssistantReplyStartsFreshExec(t *testing.T) {
+	sess := &chat.Session{
+		RelName:  "remote-control-on-demand",
+		ThreadID: "legacy-random-uuid",
+		Messages: []chat.Message{
+			{Role: "user", Kind: "text", Content: "first prompt"},
+		},
+	}
+
+	got := buildCodexArgs(sess, "continue", nil, "workspace-write", "gpt-5", false)
+	want := []string{
+		"exec",
+		"--json",
+		"--sandbox",
+		"workspace-write",
+		"--model",
+		"gpt-5",
+		initialPrompt(sess, "continue"),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildCodexArgs() mismatch\n got: %#v\nwant: %#v", got, want)
 	}
 }
 

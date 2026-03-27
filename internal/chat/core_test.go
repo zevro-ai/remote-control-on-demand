@@ -153,20 +153,20 @@ func TestCoreBeginRequestCompletePersistsAndEmits(t *testing.T) {
 	}
 }
 
-func TestCoreCreateSessionWithThreadIDAllowsEmptyThreadID(t *testing.T) {
+func TestCoreCreateSessionStartsWithGeneratedThreadID(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(baseDir, "demo", ".git"), 0755); err != nil {
 		t.Fatalf("MkdirAll(.git): %v", err)
 	}
 
 	core := NewCore(baseDir, "", 10)
-	sess, err := core.CreateSessionWithThreadID("demo", "")
+	sess, err := core.CreateSession("demo")
 	if err != nil {
-		t.Fatalf("CreateSessionWithThreadID(): %v", err)
+		t.Fatalf("CreateSession(): %v", err)
 	}
 
-	if sess.ThreadID != "" {
-		t.Fatalf("ThreadID = %q, want empty for a new session", sess.ThreadID)
+	if sess.ThreadID == "" {
+		t.Fatal("ThreadID = empty, want generated UUID for new session")
 	}
 }
 

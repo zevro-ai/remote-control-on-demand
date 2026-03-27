@@ -145,10 +145,6 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generating thread ID: %w", err)
 	}
-	return c.CreateSessionWithThreadID(folder, threadID)
-}
-
-func (c *Core) CreateSessionWithThreadID(folder, threadID string) (*Session, error) {
 	fullPath, relName, err := ResolveProjectPath(c.baseFolder, folder)
 	if err != nil {
 		return nil, err
