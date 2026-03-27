@@ -17,6 +17,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/bashcmd"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
 
 const (
@@ -79,8 +80,21 @@ func (m *Manager) Shutdown() {
 	m.core.Shutdown()
 }
 
+func (m *Manager) Metadata() provider.Metadata {
+	return provider.Metadata{
+		ID:          "claude",
+		DisplayName: "Claude",
+		Chat: &provider.ChatCapabilities{
+			StreamingDeltas:  true,
+			ShellCommandExec: true,
+			ThreadResume:     true,
+			ImageAttachments: true,
+		},
+	}
+}
+
 func (m *Manager) ID() string {
-	return "claude"
+	return m.Metadata().ID
 }
 
 func (m *Manager) CreateSession(folder string) (*chat.Session, error) {

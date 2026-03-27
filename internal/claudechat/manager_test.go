@@ -9,7 +9,34 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
+
+func TestManagerMetadata(t *testing.T) {
+	t.Parallel()
+
+	mgr := NewManager(t.TempDir(), "")
+	metadata := mgr.Metadata()
+
+	if metadata.ID != "claude" {
+		t.Fatalf("metadata.ID = %q, want %q", metadata.ID, "claude")
+	}
+	if metadata.DisplayName != "Claude" {
+		t.Fatalf("metadata.DisplayName = %q, want %q", metadata.DisplayName, "Claude")
+	}
+	if metadata.Chat == nil {
+		t.Fatal("metadata.Chat = nil, want chat capabilities")
+	}
+	want := provider.ChatCapabilities{
+		StreamingDeltas:  true,
+		ShellCommandExec: true,
+		ThreadResume:     true,
+		ImageAttachments: true,
+	}
+	if *metadata.Chat != want {
+		t.Fatalf("metadata.Chat = %#v, want %#v", *metadata.Chat, want)
+	}
+}
 
 func TestParseExecOutputStreamsAndFinalizesMessage(t *testing.T) {
 	t.Parallel()
