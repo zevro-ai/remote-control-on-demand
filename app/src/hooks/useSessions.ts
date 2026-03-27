@@ -12,6 +12,7 @@ import type {
   DraftAttachment,
   Message,
   MessageAttachment,
+  ProviderMetadata,
   StreamBlock,
   WsMessage,
 } from "../api/types";
@@ -231,6 +232,14 @@ export const sessionsInitialState: State = {
   loadError: null,
 };
 
+function resolveProviderLabel(provider: string) {
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+function normalizeProviderIds(providers: Array<string | ProviderMetadata>) {
+  return providers.map((provider) => (typeof provider === "string" ? provider : provider.id));
+}
+
 export function resolveBootstrapResults(
   providers: string[],
   results: PromiseSettledResult<any>[]
@@ -251,7 +260,7 @@ export function resolveBootstrapResults(
     if (res.status === "fulfilled") {
       chatSessions[provider] = res.value.sessions;
     } else {
-      errors.push(`${provider.charAt(0).toUpperCase() + provider.slice(1)}: ${res.reason.message || res.reason}`);
+      errors.push(`${resolveProviderLabel(provider)}: ${res.reason.message || res.reason}`);
     }
   });
 
@@ -266,8 +275,9 @@ export function resolveBootstrapResults(
 }
 
 async function fetchBootstrapData(): Promise<BootstrapData> {
-  const providers = await api.get<string[]>("/api/chat/providers");
-  
+  const providerResponse = await api.get<Array<string | ProviderMetadata>>("/api/chat/providers");
+  const providers = normalizeProviderIds(providerResponse);
+
   const chatPromises = providers.map(async (p) => {
     const sessions = await api.get<ChatSession[]>(`/api/chat/${p}/sessions`);
     return { provider: p, sessions };

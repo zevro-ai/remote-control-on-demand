@@ -1,10 +1,20 @@
 package httpapi
 
+import "github.com/zevro-ai/remote-control-on-demand/internal/provider"
+
+type providerMetadataResponse struct {
+	ID          string                        `json:"id"`
+	DisplayName string                        `json:"display_name"`
+	Chat        *provider.ChatCapabilities    `json:"chat,omitempty"`
+	Runtime     *provider.RuntimeCapabilities `json:"runtime,omitempty"`
+}
+
 type sessionResponse struct {
 	ID        string `json:"id"`
 	Folder    string `json:"folder"`
 	RelName   string `json:"rel_name"`
 	Status    string `json:"status"`
+	Provider  string `json:"provider"`
 	Agent     string `json:"agent"`
 	URL       string `json:"url,omitempty"`
 	PID       int    `json:"pid,omitempty"`
@@ -17,6 +27,7 @@ type chatSessionResponse struct {
 	ID        string           `json:"id"`
 	Folder    string           `json:"folder"`
 	RelName   string           `json:"rel_name"`
+	Provider  string           `json:"provider"`
 	Agent     string           `json:"agent"` // Provider ID
 	ThreadID  string           `json:"thread_id,omitempty"`
 	Busy      bool             `json:"busy"`
@@ -89,5 +100,6 @@ type wsMessage struct {
 
 type wsClientMessage struct {
 	Type      string `json:"type"`
+	Provider  string `json:"provider,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 }

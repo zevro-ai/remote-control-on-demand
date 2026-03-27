@@ -37,7 +37,7 @@ func newHub() *Hub {
 func (h *Hub) start(runtimeProvider provider.RuntimeProvider, registry *provider.Registry) {
 	if runtimeProvider != nil {
 		h.unsubSession = runtimeProvider.Subscribe(func(notification provider.RuntimeNotification) {
-			h.broadcast(wsMessage{Type: "notification", Line: notification.Message})
+			h.broadcast(wsMessage{Type: "notification", Provider: notification.Provider, Line: notification.Message})
 		})
 	}
 
@@ -257,7 +257,12 @@ func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
 	})
 
 	for _, line := range snapshot {
-		data, _ := json.Marshal(wsMessage{Type: "log", SessionID: sessionID, Line: line})
+		data, _ := json.Marshal(wsMessage{
+			Type:      "log",
+			Provider:  s.runtimeProvider.Metadata().ID,
+			SessionID: sessionID,
+			Line:      line,
+		})
 		select {
 		case c.send <- data:
 		default:
@@ -278,7 +283,12 @@ func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
 				if !subscribed {
 					return
 				}
-				data, _ := json.Marshal(wsMessage{Type: "log", SessionID: sessionID, Line: line})
+				data, _ := json.Marshal(wsMessage{
+					Type:      "log",
+					Provider:  s.runtimeProvider.Metadata().ID,
+					SessionID: sessionID,
+					Line:      line,
+				})
 				select {
 				case c.send <- data:
 				default:

@@ -26,11 +26,34 @@ export interface CommandMeta {
   truncated?: boolean;
 }
 
+export interface ChatCapabilities {
+  streaming_deltas: boolean;
+  tool_call_streaming: boolean;
+  image_attachments: boolean;
+  shell_command_exec: boolean;
+  thread_resume: boolean;
+  external_url_detection: boolean;
+}
+
+export interface RuntimeCapabilities {
+  long_running_processes: boolean;
+  auto_restart: boolean;
+  external_url_detection: boolean;
+}
+
+export interface ProviderMetadata {
+  id: string;
+  display_name: string;
+  chat?: ChatCapabilities;
+  runtime?: RuntimeCapabilities;
+}
+
 export interface Session {
   id: string;
   folder: string;
   rel_name: string;
   status: SessionStatus;
+  provider?: string;
   agent: string; // Provider ID (e.g., "claude", "codex")
   url?: string;
   pid?: number;
@@ -55,6 +78,7 @@ export interface ChatSession {
   id: string;
   folder: string;
   rel_name: string;
+  provider?: string;
   agent: string; // Provider ID
   thread_id?: string;
   busy: boolean;

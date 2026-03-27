@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,10 +20,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	providerID := s.runtimeProvider.Metadata().ID
 	sessions := s.runtimeProvider.ListSessions()
 	resp := make([]sessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
-		resp = append(resp, toSessionResponse(sess))
+		resp = append(resp, toSessionResponse(sess, providerID))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -45,7 +45,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toSessionResponse(sess))
+	writeJSON(w, http.StatusCreated, toSessionResponse(sess, s.runtimeProvider.Metadata().ID))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +78,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "restarted"})
 		return
 	}
-	writeJSON(w, http.StatusOK, toSessionResponse(sess))
+	writeJSON(w, http.StatusOK, toSessionResponse(sess, s.runtimeProvider.Metadata().ID))
 }
 
 func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
@@ -108,12 +108,14 @@ func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 // Generic Chat Provider Handlers
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
-	chatProviders := s.registry.ChatProviders()
-	providers := make([]string, 0, len(chatProviders))
-	for _, p := range chatProviders {
-		providers = append(providers, p.Metadata().ID)
+	tools := s.registry.Tools()
+	providers := make([]providerMetadataResponse, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Chat == nil {
+			continue
+		}
+		providers = append(providers, toProviderMetadataResponse(tool.Metadata))
 	}
-	sort.Strings(providers)
 	writeJSON(w, http.StatusOK, providers)
 }
 
@@ -351,7 +353,7 @@ func storedAttachmentsFromMessages(messages []chat.Message) []storedAttachment {
 
 // Helpers
 
-func toSessionResponse(sess provider.RuntimeSession) sessionResponse {
+func toSessionResponse(sess provider.RuntimeSession, providerID string) sessionResponse {
 	if sess == nil {
 		return sessionResponse{}
 	}
@@ -361,7 +363,8 @@ func toSessionResponse(sess provider.RuntimeSession) sessionResponse {
 		Folder:    snapshot.Folder,
 		RelName:   snapshot.RelName,
 		Status:    snapshot.Status,
-		Agent:     "claude",
+		Provider:  providerID,
+		Agent:     providerID,
 		URL:       snapshot.URL,
 		PID:       snapshot.PID,
 		StartedAt: formatTime(snapshot.StartedAt),
@@ -382,12 +385,22 @@ func toChatSessionResponse(sess *chat.Session, provider string) chatSessionRespo
 		ID:        sess.ID,
 		Folder:    sess.Folder,
 		RelName:   sess.RelName,
+		Provider:  provider,
 		Agent:     provider,
 		ThreadID:  sess.ThreadID,
 		Busy:      sess.Busy,
 		CreatedAt: formatTime(sess.CreatedAt),
 		UpdatedAt: formatTime(sess.UpdatedAt),
 		Messages:  msgs,
+	}
+}
+
+func toProviderMetadataResponse(metadata provider.Metadata) providerMetadataResponse {
+	return providerMetadataResponse{
+		ID:          metadata.ID,
+		DisplayName: metadata.DisplayName,
+		Chat:        metadata.Chat,
+		Runtime:     metadata.Runtime,
 	}
 }
 
