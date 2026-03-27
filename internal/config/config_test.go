@@ -292,6 +292,67 @@ func TestConfigValidatePermissionMode(t *testing.T) {
 	}
 }
 
+func TestAPIAuthConfigValidation(t *testing.T) {
+	t.Run("requires long session secret", func(t *testing.T) {
+		cfg := &APIAuthConfig{
+			SessionSecret: "short",
+			GitHub: &GitHubAuthConfig{
+				ClientID:     "client",
+				ClientSecret: "secret",
+				RedirectURL:  "http://localhost:3001/api/auth/callback",
+			},
+		}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "session_secret") {
+			t.Fatalf("expected session_secret validation error, got %v", err)
+		}
+	})
+
+	t.Run("requires exactly one provider", func(t *testing.T) {
+		cfg := &APIAuthConfig{
+			SessionSecret: strings.Repeat("a", 32),
+			OIDC: &OIDCAuthConfig{
+				IssuerURL:    "https://auth.example.com/application/o/demo/",
+				ClientID:     "oidc-client",
+				ClientSecret: "oidc-secret",
+				RedirectURL:  "http://localhost:3001/api/auth/callback",
+			},
+			GitHub: &GitHubAuthConfig{
+				ClientID:     "github-client",
+				ClientSecret: "github-secret",
+				RedirectURL:  "http://localhost:3001/api/auth/callback",
+			},
+		}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "only one auth provider") {
+			t.Fatalf("expected single-provider validation error, got %v", err)
+		}
+	})
+
+	t.Run("validates provider-specific required fields", func(t *testing.T) {
+		cfg := &Config{
+			Telegram: TelegramConfig{
+				Token:         "token",
+				AllowedUserID: 123,
+			},
+			RC: RCConfig{
+				BaseFolder: t.TempDir(),
+			},
+			API: APIConfig{
+				Port: 8080,
+				Auth: &APIAuthConfig{
+					SessionSecret: strings.Repeat("b", 32),
+					OIDC: &OIDCAuthConfig{
+						IssuerURL: "https://auth.example.com",
+					},
+				},
+			},
+		}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "api.auth: oidc: client_id is required") {
+			t.Fatalf("expected oidc validation error, got %v", err)
+		}
+	})
+}
+
 func TestConfigValidateProviderSpecificSettings(t *testing.T) {
 	tmpDir := t.TempDir()
 

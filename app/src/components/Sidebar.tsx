@@ -1,21 +1,25 @@
-import type { ChatSession, ProviderMetadata } from "../api/types";
+import type { AuthStatus, ChatSession, ProviderMetadata } from "../api/types";
 import type { PanelState } from "../hooks/usePanelManager";
 import { getProviderDisplayName, getProviderSessions, listProviderIDs } from "../lib/providers";
 
 interface Props {
+  authStatus: AuthStatus | null;
   providers: Record<string, ProviderMetadata>;
   chatSessions: Record<string, ChatSession[]>;
   connected: boolean;
   focusedPanel: PanelState | null;
+  onLogout: () => Promise<void>;
   onNewSession: () => void;
   onSelectSession: (sessionId: string, type: string) => void;
 }
 
 export function Sidebar({
+  authStatus,
   providers,
   chatSessions,
   connected,
   focusedPanel,
+  onLogout,
   onNewSession,
   onSelectSession,
 }: Props) {
@@ -53,6 +57,18 @@ export function Sidebar({
           <strong>{totalCount}</strong>
         </div>
       </div>
+
+      {authStatus?.mode === "external" && authStatus.authenticated && authStatus.user && (
+        <div className="sidebar-auth">
+          <div>
+            <span>Signed in as</span>
+            <strong>{authStatus.user.name || authStatus.user.login || authStatus.user.email || "operator"}</strong>
+          </div>
+          <button onClick={() => void onLogout()} className="sidebar-auth__logout">
+            Sign out
+          </button>
+        </div>
+      )}
 
       {providerIDs.map((providerID) => (
         <SessionSection

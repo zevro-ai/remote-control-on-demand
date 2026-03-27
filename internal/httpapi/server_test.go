@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -23,6 +24,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
+	"github.com/zevro-ai/remote-control-on-demand/internal/httpauth"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 )
@@ -46,6 +48,10 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	srv.uploadDir = t.TempDir()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/auth/status", srv.handleAuthStatus)
+	mux.HandleFunc("GET /api/auth/login", srv.handleAuthLogin)
+	mux.HandleFunc("GET /api/auth/callback", srv.handleAuthCallback)
+	mux.HandleFunc("POST /api/auth/logout", srv.handleAuthLogout)
 	mux.HandleFunc("GET /api/sessions", srv.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", srv.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.handleDeleteSession)
@@ -212,7 +218,7 @@ func waitForRuntimeSessionStopped(t *testing.T, runtimeProvider provider.Runtime
 }
 
 func TestAuthMiddleware_NoToken(t *testing.T) {
-	handler := authMiddleware("secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(httpauth.NewService(config.APIConfig{Token: "secret"}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -226,7 +232,7 @@ func TestAuthMiddleware_NoToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
-	handler := authMiddleware("secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(httpauth.NewService(config.APIConfig{Token: "secret"}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -241,7 +247,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_UploadQueryToken(t *testing.T) {
-	handler := authMiddleware("secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(httpauth.NewService(config.APIConfig{Token: "secret"}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -255,7 +261,7 @@ func TestAuthMiddleware_UploadQueryToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_WebSocketQueryToken(t *testing.T) {
-	handler := authMiddleware("secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(httpauth.NewService(config.APIConfig{Token: "secret"}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -269,7 +275,7 @@ func TestAuthMiddleware_WebSocketQueryToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_SPABypassesToken(t *testing.T) {
-	handler := authMiddleware("secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(httpauth.NewService(config.APIConfig{Token: "secret"}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -283,7 +289,7 @@ func TestAuthMiddleware_SPABypassesToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_Empty(t *testing.T) {
-	handler := authMiddleware("", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(httpauth.NewService(config.APIConfig{}), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -293,6 +299,105 @@ func TestAuthMiddleware_Empty(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 with no token configured, got %d", rr.Code)
+	}
+}
+
+func TestAuthStatus_TokenMode(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp authStatusResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if resp.Mode != "token" || !resp.TokenEnabled {
+		t.Fatalf("auth status = %#v", resp)
+	}
+}
+
+func TestAuthStatus_ExternalMode(t *testing.T) {
+	srv := NewServer(config.APIConfig{
+		Auth: &config.APIAuthConfig{
+			SessionSecret: strings.Repeat("x", 32),
+			GitHub: &config.GitHubAuthConfig{
+				ClientID:     "client",
+				ClientSecret: "secret",
+				RedirectURL:  "https://rcod.example/api/auth/callback",
+			},
+		},
+	}, "claude", provider.NewRegistry())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAuthStatus(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp authStatusResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if resp.Mode != "external" || resp.Provider == nil || resp.Provider.ID != "github" {
+		t.Fatalf("auth status = %#v", resp)
+	}
+}
+
+func TestAuthLogin_RedirectsToConfiguredProvider(t *testing.T) {
+	srv := NewServer(config.APIConfig{
+		Auth: &config.APIAuthConfig{
+			SessionSecret: strings.Repeat("x", 32),
+			GitHub: &config.GitHubAuthConfig{
+				ClientID:     "client",
+				ClientSecret: "secret",
+				RedirectURL:  "https://rcod.example/api/auth/callback",
+			},
+		},
+	}, "claude", provider.NewRegistry())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/login?redirect=%2F", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rr := httptest.NewRecorder()
+	srv.handleAuthLogin(rr, req)
+
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rr.Code)
+	}
+	location := rr.Header().Get("Location")
+	if !strings.HasPrefix(location, "https://github.com/login/oauth/authorize?") {
+		t.Fatalf("login redirect = %q", location)
+	}
+}
+
+func TestAuthLogout_RejectsGet(t *testing.T) {
+	srv := NewServer(config.APIConfig{Token: "secret"}, "claude", provider.NewRegistry())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/logout", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAuthLogout(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestAuthLogout_RequiresAuthentication(t *testing.T) {
+	srv := NewServer(config.APIConfig{Token: "secret"}, "claude", provider.NewRegistry())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAuthLogout(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
 	}
 }
 
@@ -1084,7 +1189,7 @@ func TestSubscribeClientToSession_LogPayloadIncludesProvider(t *testing.T) {
 }
 
 func TestCORSMiddleware(t *testing.T) {
-	handler := corsMiddleware("", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := corsMiddleware("", false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -1102,7 +1207,7 @@ func TestCORSMiddleware(t *testing.T) {
 }
 
 func TestCORSMiddleware_TokenReflectsSameOriginOnly(t *testing.T) {
-	handler := corsMiddleware("secret", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := corsMiddleware("secret", false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -1117,6 +1222,32 @@ func TestCORSMiddleware_TokenReflectsSameOriginOnly(t *testing.T) {
 	}
 
 	req = httptest.NewRequest("GET", "/api/sessions", nil)
+	req.Host = "example.test"
+	req.Header.Set("Origin", "https://evil.test")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("cross-origin allow header = %q, want empty", got)
+	}
+}
+
+func TestCORSMiddleware_ExternalAuthReflectsSameOriginOnly(t *testing.T) {
+	handler := corsMiddleware("", true, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/auth/status", nil)
+	req.Host = "example.test"
+	req.Header.Set("Origin", "https://example.test")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://example.test" {
+		t.Fatalf("same-origin allow header = %q", got)
+	}
+
+	req = httptest.NewRequest("GET", "/api/auth/status", nil)
 	req.Host = "example.test"
 	req.Header.Set("Origin", "https://evil.test")
 	rr = httptest.NewRecorder()

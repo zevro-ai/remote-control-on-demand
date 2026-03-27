@@ -6,6 +6,29 @@ telegram:
 # api:
 #   port: 8080          # 0 = disabled (default)
 #   token: ""           # optional bearer token for API auth
+#   auth:
+#     session_secret: "replace-with-at-least-32-random-characters"
+#
+#     # Pick exactly one external provider.
+#     # oidc:
+#     #   issuer_url: "https://auth.example.com/application/o/rcod/"
+#     #   client_id: "rcod"
+#     #   client_secret: "replace-me"
+#     #   redirect_url: "https://rcod.example.com/api/auth/callback"
+#     #   scopes: ["openid", "profile", "email"]
+#     #   allowed_emails:
+#     #     - "you@example.com"
+#     #   allowed_groups:
+#     #     - "rcod-admins"
+#
+#     # github:
+#     #   client_id: "Iv1.xxxxx"
+#     #   client_secret: "replace-me"
+#     #   redirect_url: "https://rcod.example.com/api/auth/callback"
+#     #   allowed_users:
+#     #     - "octocat"
+#     #   allowed_orgs:
+#     #     - "zevro-ai"
 
 rc:
   base_folder: "/home/user/Projects"
