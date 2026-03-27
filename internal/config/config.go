@@ -17,9 +17,10 @@ type APIConfig struct {
 }
 
 type Config struct {
-	Telegram TelegramConfig `yaml:"telegram"`
-	RC       RCConfig       `yaml:"rc"`
-	API      APIConfig      `yaml:"api,omitempty"`
+	Telegram  TelegramConfig  `yaml:"telegram"`
+	RC        RCConfig        `yaml:"rc"`
+	Providers ProvidersConfig `yaml:"providers,omitempty"`
+	API       APIConfig       `yaml:"api,omitempty"`
 }
 
 type TelegramConfig struct {
@@ -30,10 +31,43 @@ type TelegramConfig struct {
 type RCConfig struct {
 	BaseFolder          string               `yaml:"base_folder"`
 	PermissionMode      string               `yaml:"permission_mode,omitempty"`
-	AutoRestart         bool                 `yaml:"auto_restart"`
-	MaxRestarts         int                  `yaml:"max_restarts"`
-	RestartDelaySeconds int                  `yaml:"restart_delay_seconds"`
+	AutoRestart         bool                 `yaml:"auto_restart,omitempty"`
+	MaxRestarts         int                  `yaml:"max_restarts,omitempty"`
+	RestartDelaySeconds int                  `yaml:"restart_delay_seconds,omitempty"`
 	Notifications       *NotificationsConfig `yaml:"notifications,omitempty"`
+}
+
+type ProvidersConfig struct {
+	Claude ClaudeProviderConfig `yaml:"claude,omitempty"`
+	Codex  CodexProviderConfig  `yaml:"codex,omitempty"`
+}
+
+type ClaudeProviderConfig struct {
+	Chat    ProviderChatConfig    `yaml:"chat,omitempty"`
+	Runtime ProviderRuntimeConfig `yaml:"runtime,omitempty"`
+}
+
+type CodexProviderConfig struct {
+	Chat ProviderChatConfig `yaml:"chat,omitempty"`
+}
+
+type ProviderChatConfig struct {
+	PermissionMode string `yaml:"permission_mode,omitempty"`
+}
+
+type ProviderRuntimeConfig struct {
+	AutoRestart         *bool                `yaml:"auto_restart,omitempty"`
+	MaxRestarts         *int                 `yaml:"max_restarts,omitempty"`
+	RestartDelaySeconds *int                 `yaml:"restart_delay_seconds,omitempty"`
+	Notifications       *NotificationsConfig `yaml:"notifications,omitempty"`
+}
+
+type RuntimeSettings struct {
+	BaseFolder    string
+	AutoRestart   bool
+	MaxRestarts   int
+	RestartDelay  time.Duration
+	Notifications *NotificationsConfig
 }
 
 const (
@@ -159,6 +193,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("rc.notifications: %w", err)
 		}
 	}
+	if err := c.Providers.Validate(); err != nil {
+		return fmt.Errorf("providers: %w", err)
+	}
 
 	return nil
 }
@@ -178,6 +215,101 @@ func ValidateCodexPermissionMode(permissionMode string) error {
 	default:
 		return fmt.Errorf("must be one of %q, %q, %q, or %q", PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull)
 	}
+}
+
+func (p ProvidersConfig) Validate() error {
+	if err := p.Claude.Validate(); err != nil {
+		return fmt.Errorf("claude: %w", err)
+	}
+	if err := p.Codex.Validate(); err != nil {
+		return fmt.Errorf("codex: %w", err)
+	}
+	return nil
+}
+
+func (p ClaudeProviderConfig) Validate() error {
+	if err := p.Chat.Validate(); err != nil {
+		return fmt.Errorf("chat: %w", err)
+	}
+	if err := p.Runtime.Validate(); err != nil {
+		return fmt.Errorf("runtime: %w", err)
+	}
+	return nil
+}
+
+func (p CodexProviderConfig) Validate() error {
+	if err := p.Chat.Validate(); err != nil {
+		return fmt.Errorf("chat: %w", err)
+	}
+	return nil
+}
+
+func (p ProviderChatConfig) Validate() error {
+	if strings.TrimSpace(p.PermissionMode) == "" {
+		return nil
+	}
+	return ValidateCodexPermissionMode(p.PermissionMode)
+}
+
+func (p ProviderRuntimeConfig) Validate() error {
+	if p.MaxRestarts != nil && *p.MaxRestarts < 0 {
+		return fmt.Errorf("max_restarts must be >= 0")
+	}
+	if p.RestartDelaySeconds != nil && *p.RestartDelaySeconds < 0 {
+		return fmt.Errorf("restart_delay_seconds must be >= 0")
+	}
+	if p.Notifications != nil {
+		if err := p.Notifications.Validate(); err != nil {
+			return fmt.Errorf("notifications: %w", err)
+		}
+	}
+	return nil
+}
+
+func (c *Config) ClaudeRuntimeSettings() RuntimeSettings {
+	runtimeCfg := c.Providers.Claude.Runtime
+
+	autoRestart := c.RC.AutoRestart
+	if runtimeCfg.AutoRestart != nil {
+		autoRestart = *runtimeCfg.AutoRestart
+	}
+
+	maxRestarts := c.RC.MaxRestarts
+	if runtimeCfg.MaxRestarts != nil {
+		maxRestarts = *runtimeCfg.MaxRestarts
+	}
+
+	restartDelaySeconds := c.RC.RestartDelaySeconds
+	if runtimeCfg.RestartDelaySeconds != nil {
+		restartDelaySeconds = *runtimeCfg.RestartDelaySeconds
+	}
+
+	notifications := c.RC.Notifications
+	if runtimeCfg.Notifications != nil {
+		notifications = runtimeCfg.Notifications
+	}
+
+	return RuntimeSettings{
+		BaseFolder:    c.RC.BaseFolder,
+		AutoRestart:   autoRestart,
+		MaxRestarts:   maxRestarts,
+		RestartDelay:  time.Duration(restartDelaySeconds) * time.Second,
+		Notifications: notifications,
+	}
+}
+
+func (c *Config) ClaudeChatPermissionMode() string {
+	if mode := strings.TrimSpace(c.Providers.Claude.Chat.PermissionMode); mode != "" {
+		return NormalizeCodexPermissionMode(mode)
+	}
+	return NormalizeCodexPermissionMode(c.RC.PermissionMode)
+}
+
+func (c *Config) CodexChatPermissionMode() string {
+	if mode := strings.TrimSpace(c.Providers.Codex.Chat.PermissionMode); mode != "" {
+		return NormalizeCodexPermissionMode(mode)
+	}
+	return NormalizeCodexPermissionMode(c.RC.PermissionMode)
 }
 
 func (c *Config) Save(path string) error {

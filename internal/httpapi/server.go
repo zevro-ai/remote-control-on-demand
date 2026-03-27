@@ -19,28 +19,28 @@ import (
 )
 
 type Server struct {
-	cfg             config.APIConfig
-	runtimeProvider provider.RuntimeProvider
-	registry        *provider.Registry
-	hub             *Hub
-	httpServer      *http.Server
-	uploadDir       string
-	spaFS           fs.FS
+	cfg                      config.APIConfig
+	defaultRuntimeProviderID string
+	registry                 *provider.Registry
+	hub                      *Hub
+	httpServer               *http.Server
+	uploadDir                string
+	spaFS                    fs.FS
 }
 
-func NewServer(cfg config.APIConfig, runtimeProvider provider.RuntimeProvider, registry *provider.Registry) *Server {
+func NewServer(cfg config.APIConfig, defaultRuntimeProviderID string, registry *provider.Registry) *Server {
 	spaFS := dashboard.FS()
 	if registry == nil {
 		registry = provider.NewRegistry()
 	}
 
 	return &Server{
-		cfg:             cfg,
-		runtimeProvider: runtimeProvider,
-		registry:        registry,
-		hub:             newHub(),
-		uploadDir:       filepath.Join(".rcodbot", "uploads"),
-		spaFS:           spaFS,
+		cfg:                      cfg,
+		defaultRuntimeProviderID: strings.TrimSpace(defaultRuntimeProviderID),
+		registry:                 registry,
+		hub:                      newHub(),
+		uploadDir:                filepath.Join(".rcodbot", "uploads"),
+		spaFS:                    spaFS,
 	}
 }
 
@@ -53,6 +53,13 @@ func (s *Server) Start() {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/restart", s.handleRestartSession)
 	mux.HandleFunc("GET /api/sessions/{id}/logs", s.handleSessionLogs)
+	mux.HandleFunc("GET /api/runtime/providers", s.handleListRuntimeProviderMetadata)
+	mux.HandleFunc("GET /api/runtime/{provider}/sessions", s.handleListProviderRuntimeSessions)
+	mux.HandleFunc("POST /api/runtime/{provider}/sessions", s.handleCreateProviderRuntimeSession)
+	mux.HandleFunc("DELETE /api/runtime/{provider}/sessions/{id}", s.handleDeleteProviderRuntimeSession)
+	mux.HandleFunc("POST /api/runtime/{provider}/sessions/{id}/restart", s.handleRestartProviderRuntimeSession)
+	mux.HandleFunc("GET /api/runtime/{provider}/sessions/{id}/logs", s.handleProviderRuntimeSessionLogs)
+	mux.HandleFunc("GET /api/runtime/{provider}/folders", s.handleListProviderFolders)
 
 	// Generic Chat Provider API
 	mux.HandleFunc("GET /api/providers", s.handleListProviderMetadata)
@@ -78,7 +85,7 @@ func (s *Server) Start() {
 	handler = authMiddleware(s.cfg.Token, handler)
 	handler = corsMiddleware(s.cfg.Token, handler)
 
-	s.hub.start(s.runtimeProvider, s.registry)
+	s.hub.start(s.registry)
 
 	s.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.cfg.Port),

@@ -32,7 +32,7 @@ The `cmd/rcodbot` entrypoint exposes Telegram as a chat interface for Codex:
 - switch between chat sessions with `/sessions` and `/use`
 - send a normal Telegram message to talk to Codex in the active repo
 - close old chat threads with `/close`
-- Codex respects `rc.permission_mode` from `config.yaml`; default is `workspace-write`, `bypassPermissions` opts into full local access, and other accepted values map to Codex sandbox modes
+- Codex respects `providers.codex.chat.permission_mode` from `config.yaml`; default is `workspace-write`, `bypassPermissions` opts into full local access, and other accepted values map to Codex sandbox modes
 
 Build and run it with:
 
@@ -101,10 +101,18 @@ telegram:
 
 rc:
   base_folder: "/home/user/Projects"
-  permission_mode: "workspace-write"
-  auto_restart: true
-  max_restarts: 3
-  restart_delay_seconds: 5
+
+providers:
+  claude:
+    runtime:
+      auto_restart: true
+      max_restarts: 3
+      restart_delay_seconds: 5
+    chat:
+      permission_mode: "workspace-write"
+  codex:
+    chat:
+      permission_mode: "workspace-write"
 ```
 
 See [config.example.yaml](./config.example.yaml) for a fuller example with notifications.
@@ -116,15 +124,16 @@ See [config.example.yaml](./config.example.yaml) for a fuller example with notif
 | `telegram.token` | Bot token from @BotFather |
 | `telegram.allowed_user_id` | Only this Telegram user can control the bot |
 | `rc.base_folder` | Directory RCOD scans for git repositories |
-| `rc.permission_mode` | `rcodbot` access mode for Codex sessions: `workspace-write` (default), `read-only`, `danger-full-access`, or `bypassPermissions` |
-| `rc.auto_restart` | Enables automatic restart for crashed sessions |
-| `rc.max_restarts` | Maximum restart attempts before giving up |
-| `rc.restart_delay_seconds` | Delay between restart attempts |
-| `rc.notifications.progress_update_interval` | Optional progress heartbeat interval, for example `10m` |
-| `rc.notifications.idle_timeout` | Optional idle notification threshold |
-| `rc.notifications.patterns` | Optional regex-based output notifications |
+| `providers.claude.runtime.auto_restart` | Enables automatic restart for crashed `claude rc` runtime sessions |
+| `providers.claude.runtime.max_restarts` | Maximum restart attempts before giving up |
+| `providers.claude.runtime.restart_delay_seconds` | Delay between restart attempts |
+| `providers.claude.runtime.notifications.*` | Optional runtime notification settings and progress heartbeats |
+| `providers.claude.chat.permission_mode` | Claude chat permission mode for `rcodbot` |
+| `providers.codex.chat.permission_mode` | Codex chat access mode: `workspace-write` (default), `read-only`, `danger-full-access`, or `bypassPermissions` |
 
 RCOD intentionally always starts Claude with `claude rc --permission-mode bypassPermissions`. This is not configurable.
+
+Legacy `rc.permission_mode`, `rc.auto_restart`, `rc.max_restarts`, `rc.restart_delay_seconds`, and `rc.notifications` are still accepted as fallbacks for older configs.
 
 ### Per-Project Overrides
 

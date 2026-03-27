@@ -78,6 +78,9 @@ func stepOK(s string) string       { return styled(fBold+fGreen, "  ✓ ") + s }
 func promptArrow() string          { return styled(fBrCyan, "  › ") }
 func summaryLabel(s string) string { return styled(fDim, s) }
 
+func boolPtr(value bool) *bool { return &value }
+func intPtr(value int) *int    { return &value }
+
 // selectFromList renders an interactive menu navigable with arrow keys.
 // Returns the index of the selected option.
 func selectFromList(labels []string, defaultIdx int) (int, error) {
@@ -376,12 +379,25 @@ func RunOnboarding(configPath string) (*Config, error) {
 		},
 		API: apiCfg,
 		RC: RCConfig{
-			BaseFolder:          baseFolder,
-			PermissionMode:      DefaultCodexPermissionMode,
-			AutoRestart:         autoRestart,
-			MaxRestarts:         maxRestarts,
-			RestartDelaySeconds: restartDelay,
-			Notifications:       notifications,
+			BaseFolder: baseFolder,
+		},
+		Providers: ProvidersConfig{
+			Claude: ClaudeProviderConfig{
+				Chat: ProviderChatConfig{
+					PermissionMode: DefaultCodexPermissionMode,
+				},
+				Runtime: ProviderRuntimeConfig{
+					AutoRestart:         boolPtr(autoRestart),
+					MaxRestarts:         intPtr(maxRestarts),
+					RestartDelaySeconds: intPtr(restartDelay),
+					Notifications:       notifications,
+				},
+			},
+			Codex: CodexProviderConfig{
+				Chat: ProviderChatConfig{
+					PermissionMode: DefaultCodexPermissionMode,
+				},
+			},
 		},
 	}
 
@@ -392,7 +408,7 @@ func RunOnboarding(configPath string) (*Config, error) {
 	fmt.Printf("    %s  %s\n", summaryLabel("Token          "), tokenPreview)
 	fmt.Printf("    %s  %d\n", summaryLabel("User ID        "), userID)
 	fmt.Printf("    %s  %s\n", summaryLabel("Projects folder"), baseFolder)
-	fmt.Printf("    %s  %s\n", summaryLabel("Codex access   "), cfg.RC.PermissionMode)
+	fmt.Printf("    %s  %s\n", summaryLabel("Codex access   "), cfg.CodexChatPermissionMode())
 	if autoRestart {
 		fmt.Printf("    %s  enabled (%d max, %ds delay)\n", summaryLabel("Auto-restart   "), maxRestarts, restartDelay)
 	} else {

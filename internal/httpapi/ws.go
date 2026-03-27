@@ -24,7 +24,7 @@ type wsClient struct {
 type Hub struct {
 	mu           sync.Mutex
 	clients      map[*wsClient]bool
-	unsubSession func()
+	unsubRuntime []func()
 	unsubChat    []func()
 }
 
@@ -34,11 +34,15 @@ func newHub() *Hub {
 	}
 }
 
-func (h *Hub) start(runtimeProvider provider.RuntimeProvider, registry *provider.Registry) {
-	if runtimeProvider != nil {
+func (h *Hub) start(registry *provider.Registry) {
+	if registry == nil {
+		return
+	}
+
+	for _, runtimeProvider := range registry.RuntimeProviders() {
 		metadata := runtimeProvider.Metadata()
 		providerMeta := toProviderMetadataResponse(metadata)
-		h.unsubSession = runtimeProvider.Subscribe(func(notification provider.RuntimeNotification) {
+		unsub := runtimeProvider.Subscribe(func(notification provider.RuntimeNotification) {
 			h.broadcast(wsMessage{
 				Type:         "notification",
 				Provider:     notification.Provider,
@@ -46,10 +50,7 @@ func (h *Hub) start(runtimeProvider provider.RuntimeProvider, registry *provider
 				Line:         notification.Message,
 			})
 		})
-	}
-
-	if registry == nil {
-		return
+		h.unsubRuntime = append(h.unsubRuntime, unsub)
 	}
 
 	for _, p := range registry.ChatProviders() {
@@ -123,8 +124,8 @@ func (h *Hub) handleChatEvent(metadata provider.Metadata, e chat.Event) {
 }
 
 func (h *Hub) stop() {
-	if h.unsubSession != nil {
-		h.unsubSession()
+	for _, unsub := range h.unsubRuntime {
+		unsub()
 	}
 	for _, unsub := range h.unsubChat {
 		unsub()
@@ -244,17 +245,12 @@ func (s *Server) wsReader(c *wsClient) {
 }
 
 func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
-	if s.runtimeProvider == nil {
-		return
-	}
-	runtimeMetadata := s.runtimeProvider.Metadata()
-	runtimeProviderID := runtimeMetadata.ID
-	runtimeProviderMeta := toProviderMetadataResponse(runtimeMetadata)
-
-	sess, ok := s.runtimeProvider.GetSession(sessionID)
+	_, metadata, sess, ok := s.findRuntimeSession(sessionID)
 	if !ok {
 		return
 	}
+	runtimeProviderID := metadata.ID
+	runtimeProviderMeta := toProviderMetadataResponse(metadata)
 
 	// Take the snapshot before subscribing so we don't duplicate lines that land
 	// between the backfill and live-stream boundaries.
