@@ -1,5 +1,10 @@
 import { useMemo } from "react";
-import type { ChatSession, DraftAttachment, StreamBlock } from "../api/types";
+import type { ChatSession, DraftAttachment, ProviderMetadata, StreamBlock } from "../api/types";
+import {
+  getProviderDisplayName,
+  providerSupportsBash,
+  providerSupportsImages,
+} from "../lib/providers";
 import { extractTodoProgress } from "../lib/todoProgress";
 import { AgentBadge } from "./AgentBadge";
 import { AgentActivityFeed } from "./AgentActivityFeed";
@@ -7,7 +12,8 @@ import { MessageInput } from "./MessageInput";
 import { TodoProgressPanel } from "./TodoProgressPanel";
 
 interface Props {
-  type: string;
+  providerID: string;
+  providers: Record<string, ProviderMetadata>;
   session: ChatSession;
   streamBlocks: StreamBlock[];
   onClose: () => void;
@@ -17,12 +23,16 @@ interface Props {
 }
 
 export function SessionPanel(props: Props) {
-  const { session, type, streamBlocks } = props;
+  const { session, providerID, providers, streamBlocks } = props;
   const messages = session.messages || [];
   const todoProgress = useMemo(() => extractTodoProgress(streamBlocks), [streamBlocks]);
+  const providerName = getProviderDisplayName(session, providers);
+  const supportsImages = providerSupportsImages(session, providers);
+  const supportsBash = providerSupportsBash(session, providers);
 
   const telemetry = useMemo(
     () => [
+      { label: "Provider", value: providerName },
       { label: "State", value: session.busy ? "Streaming" : "Idle" },
       { label: "Messages", value: String(messages.length) },
       {
@@ -34,14 +44,14 @@ export function SessionPanel(props: Props) {
         value: shorten(session.thread_id || session.id),
       },
     ],
-    [messages.length, session]
+    [messages.length, providerName, session]
   );
 
   return (
     <article className="session-panel">
       <header className="session-panel__header">
         <div>
-          <div className="session-panel__kicker">{getProviderDisplay(type)}</div>
+          <div className="session-panel__kicker">Provider session</div>
           <h2>{session.rel_name}</h2>
         </div>
 
@@ -54,7 +64,7 @@ export function SessionPanel(props: Props) {
           <div className={`live-pill ${session.busy ? "is-live" : ""}`}>
             {session.busy ? "Streaming" : "Standby"}
           </div>
-          <AgentBadge agent={type} />
+          <AgentBadge agent={providerID} label={providerName} />
           <button onClick={props.onClose} className="panel-icon-button" title="Close panel">
             &times;
           </button>
@@ -106,16 +116,16 @@ export function SessionPanel(props: Props) {
           disabled={session.busy}
           promptPlaceholder={
             session.busy
-              ? `${type} is responding...`
-              : `Send a message to ${type.charAt(0).toUpperCase() + type.slice(1)}...`
+              ? `${providerName} is responding...`
+              : `Send a message to ${providerName}...`
           }
           commandPlaceholder={
             session.busy
               ? "Command is running..."
               : `Run a bash command in ${session.rel_name}...`
           }
-          supportsImages={type === "codex"}
-          supportsBash
+          supportsImages={supportsImages}
+          supportsBash={supportsBash}
         />
         <button
           onClick={() => props.onSessionClose(session.id)}
@@ -126,15 +136,6 @@ export function SessionPanel(props: Props) {
       </footer>
     </article>
   );
-}
-
-function getProviderDisplay(type: string) {
-  switch (type) {
-    case "claude": return "Anthropic";
-    case "codex": return "OpenAI";
-    case "gemini": return "Google";
-    default: return type.charAt(0).toUpperCase() + type.slice(1);
-  }
 }
 
 function trimMessage(content: string) {

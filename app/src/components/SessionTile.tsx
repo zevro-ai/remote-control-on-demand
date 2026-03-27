@@ -1,4 +1,5 @@
 import type { ChatSession, OverviewDensity, PreviewLine } from "../lib/sessionWall";
+import { getProviderDisplayName } from "../lib/providers";
 
 interface Props {
   paneLabel: string;
@@ -43,6 +44,7 @@ export function SessionTile({
 
   const messageCount = session.messages?.length || 0;
   const threadRef = session.thread_id || session.id;
+  const providerName = getProviderDisplayName(session);
 
   return (
     <button
@@ -58,7 +60,7 @@ export function SessionTile({
             <span
               className={`session-tile__agent-tag ${session.busy ? "is-live" : ""}`}
             >
-              {session.agent}
+              {providerName}
             </span>
           </div>
           <div className="session-tile__title-row">

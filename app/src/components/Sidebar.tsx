@@ -1,7 +1,9 @@
-import type { ChatSession } from "../api/types";
+import type { ChatSession, ProviderMetadata } from "../api/types";
 import type { PanelState } from "../hooks/usePanelManager";
+import { getProviderDisplayName, getProviderSessions, listProviderIDs } from "../lib/providers";
 
 interface Props {
+  providers: Record<string, ProviderMetadata>;
   chatSessions: Record<string, ChatSession[]>;
   connected: boolean;
   focusedPanel: PanelState | null;
@@ -10,18 +12,22 @@ interface Props {
 }
 
 export function Sidebar({
+  providers,
   chatSessions,
   connected,
   focusedPanel,
   onNewSession,
   onSelectSession,
 }: Props) {
-  const providers = Object.entries(chatSessions).sort(([a], [b]) => a.localeCompare(b));
-  const liveCount = providers.reduce(
-    (acc, [_, sessions]) => acc + sessions.filter((s) => s.busy).length,
+  const providerIDs = listProviderIDs(providers, chatSessions);
+  const liveCount = providerIDs.reduce(
+    (acc, providerID) => acc + getProviderSessions(providerID, chatSessions).filter((session) => session.busy).length,
     0
   );
-  const totalCount = providers.reduce((acc, [_, sessions]) => acc + sessions.length, 0);
+  const totalCount = providerIDs.reduce(
+    (acc, providerID) => acc + getProviderSessions(providerID, chatSessions).length,
+    0
+  );
 
   return (
     <aside className="tui-sidebar">
@@ -48,12 +54,12 @@ export function Sidebar({
         </div>
       </div>
 
-      {providers.map(([provider, sessions]) => (
+      {providerIDs.map((providerID) => (
         <SessionSection
-          key={provider}
-          title={provider.charAt(0).toUpperCase() + provider.slice(1)}
-          sessions={sessions}
-          type={provider}
+          key={providerID}
+          title={getProviderDisplayName(providerID, providers)}
+          sessions={getProviderSessions(providerID, chatSessions)}
+          type={providerID}
           focusedPanel={focusedPanel}
           onSelectSession={onSelectSession}
         />
