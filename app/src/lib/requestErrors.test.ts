@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  hasErrorStatus,
   isUnauthorizedError,
   toLoopActionErrorMessage,
   toRequestErrorMessage,
@@ -10,11 +11,19 @@ describe("isUnauthorizedError", () => {
   it("matches API unauthorized responses", () => {
     expect(isUnauthorizedError(new Error("unauthorized"))).toBe(true);
     expect(isUnauthorizedError(new Error("Unauthorized"))).toBe(true);
+    expect(isUnauthorizedError(Object.assign(new Error("forbidden"), { status: 403 }))).toBe(true);
   });
 
   it("ignores unrelated failures", () => {
     expect(isUnauthorizedError(new Error("network failed"))).toBe(false);
     expect(isUnauthorizedError("unauthorized")).toBe(false);
+  });
+});
+
+describe("hasErrorStatus", () => {
+  it("matches errors with the expected HTTP status", () => {
+    expect(hasErrorStatus(Object.assign(new Error("not found"), { status: 404 }), 404)).toBe(true);
+    expect(hasErrorStatus(Object.assign(new Error("unauthorized"), { status: 401 }), 404)).toBe(false);
   });
 });
 

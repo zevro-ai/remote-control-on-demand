@@ -1,5 +1,15 @@
 const BASE = "";
 
+export class APIError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "APIError";
+    this.status = status;
+  }
+}
+
 export function getToken(): string | null {
   return localStorage.getItem("rcod_token");
 }
@@ -41,7 +51,7 @@ async function request<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
+    throw new APIError(err.error || res.statusText, res.status);
   }
 
   if (res.status === 204) return undefined as T;
@@ -63,7 +73,7 @@ async function requestForm<T>(path: string, body: FormData): Promise<T> {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
+    throw new APIError(err.error || res.statusText, res.status);
   }
 
   if (res.status === 204) return undefined as T;

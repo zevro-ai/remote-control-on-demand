@@ -1,5 +1,13 @@
 export function isUnauthorizedError(error: unknown) {
-  return error instanceof Error && /unauthorized/i.test(error.message);
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const status = (error as Error & { status?: number }).status;
+  return status === 401 || status === 403 || /unauthorized/i.test(error.message);
+}
+
+export function hasErrorStatus(error: unknown, status: number) {
+  return error instanceof Error && (error as Error & { status?: number }).status === status;
 }
 
 export function toRequestErrorMessage(

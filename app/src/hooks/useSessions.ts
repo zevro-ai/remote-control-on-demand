@@ -19,7 +19,7 @@ import type {
 import { api } from "../api/client";
 import { useWs } from "./WebSocketContext";
 import { mergeIncomingMessage, removeOptimisticMessage } from "../lib/realtimeMessages";
-import { isUnauthorizedError } from "../lib/requestErrors";
+import { hasErrorStatus, isUnauthorizedError } from "../lib/requestErrors";
 
 interface State {
   providers: Record<string, ProviderMetadata>;
@@ -285,15 +285,53 @@ export function resolveBootstrapResults(
   };
 }
 
+export function resolveProviderBootstrapFailure(
+  providerError: unknown,
+  sessionsResult: PromiseSettledResult<Session[]>
+): BootstrapData {
+  const sessions = sessionsResult.status === "fulfilled" ? sessionsResult.value : [];
+  const errors = [`Providers: ${providerError instanceof Error ? providerError.message : String(providerError)}`];
+
+  if (sessionsResult.status === "rejected") {
+    errors.push(`RC: ${sessionsResult.reason.message || sessionsResult.reason}`);
+  }
+
+  const authRequired =
+    sessionsResult.status === "rejected" &&
+    isUnauthorizedError(providerError) &&
+    isUnauthorizedError(sessionsResult.reason);
+
+  return {
+    providers: {},
+    sessions,
+    chatSessions: {},
+    authRequired,
+    loadError: authRequired ? null : `Some services failed to load: ${errors.join("; ")}`,
+  };
+}
+
+async function loadProviders() {
+  try {
+    return await api.get<Array<string | ProviderMetadata>>("/api/providers");
+  } catch (error) {
+    if (hasErrorStatus(error, 404)) {
+      return api.get<Array<string | ProviderMetadata>>("/api/chat/providers");
+    }
+    throw error;
+  }
+}
+
 async function fetchBootstrapData(): Promise<BootstrapData> {
-  const providerResponse = await api
-    .get<Array<string | ProviderMetadata>>("/api/providers")
-    .catch(async (error) => {
-      if ((error as { status?: number }).status === 404) {
-        return api.get<Array<string | ProviderMetadata>>("/api/chat/providers");
-      }
-      throw error;
-    });
+  const [providerResult, sessionsResult] = await Promise.allSettled([
+    loadProviders(),
+    api.get<Session[]>("/api/sessions"),
+  ]);
+
+  if (providerResult.status === "rejected") {
+    return resolveProviderBootstrapFailure(providerResult.reason, sessionsResult);
+  }
+
+  const providerResponse = providerResult.value;
   const providers = normalizeProviders(providerResponse);
   const providerIDs = providers.map((provider) => provider.id);
   const providerMap = Object.fromEntries(providers.map((provider) => [provider.id, provider])) as Record<string, ProviderMetadata>;
@@ -303,12 +341,9 @@ async function fetchBootstrapData(): Promise<BootstrapData> {
     return { provider, sessions };
   });
 
-  const results = await Promise.allSettled([
-    api.get<Session[]>("/api/sessions"),
-    ...chatPromises,
-  ]);
+  const chatResults = await Promise.allSettled(chatPromises);
 
-  const bootstrap = resolveBootstrapResults(providerIDs, results);
+  const bootstrap = resolveBootstrapResults(providerIDs, [sessionsResult, ...chatResults]);
   return { ...bootstrap, providers: providerMap };
 }
 

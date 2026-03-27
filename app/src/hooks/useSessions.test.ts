@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProviderMetadata, Session } from "../api/types";
-import { normalizeProviders, reduceSessionsState, resolveBootstrapResults, sessionsInitialState } from "./useSessions";
+import {
+  normalizeProviders,
+  reduceSessionsState,
+  resolveBootstrapResults,
+  resolveProviderBootstrapFailure,
+  sessionsInitialState,
+} from "./useSessions";
 
 function makeSession(overrides: Partial<Session>): Session {
   return {
@@ -111,5 +117,34 @@ describe("normalizeProviders", () => {
       { id: "claude", display_name: "Claude" },
       { id: "codex", display_name: "Codex" },
     ]);
+  });
+});
+
+describe("resolveProviderBootstrapFailure", () => {
+  it("preserves runtime sessions and surfaces a load error for provider bootstrap failures", () => {
+    const result = resolveProviderBootstrapFailure(
+      Object.assign(new Error("not found"), { status: 404 }),
+      { status: "fulfilled", value: [makeSession({ id: "session-1" })] }
+    );
+
+    expect(result.providers).toEqual({});
+    expect(result.sessions).toHaveLength(1);
+    expect(result.chatSessions).toEqual({});
+    expect(result.authRequired).toBe(false);
+    expect(result.loadError).toBe("Some services failed to load: Providers: not found");
+  });
+
+  it("marks auth as required when provider bootstrap and runtime sessions both fail unauthorized", () => {
+    const unauthorized = Object.assign(new Error("unauthorized"), { status: 401 });
+
+    const result = resolveProviderBootstrapFailure(unauthorized, {
+      status: "rejected",
+      reason: unauthorized,
+    });
+
+    expect(result.authRequired).toBe(true);
+    expect(result.loadError).toBeNull();
+    expect(result.sessions).toEqual([]);
+    expect(result.chatSessions).toEqual({});
   });
 });
