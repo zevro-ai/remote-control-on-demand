@@ -92,7 +92,7 @@ func (a *RuntimeAdapter) RestartSession(id string) error {
 
 func (a *RuntimeAdapter) Subscribe(fn func(RuntimeNotification)) func() {
 	return a.manager.Subscribe(func(notification session.Notification) {
-		fn(RuntimeNotification{Message: notification.Message})
+		fn(RuntimeNotification{Provider: a.metadata.ID, Message: notification.Message})
 	})
 }
 

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
@@ -52,6 +53,7 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	mux.HandleFunc("GET /api/folders", srv.handleListFolders)
 
 	// Generic Chat Provider API
+	mux.HandleFunc("GET /api/providers", srv.handleListProviderMetadata)
 	mux.HandleFunc("GET /api/chat/providers", srv.handleListProviders)
 	mux.HandleFunc("GET /api/chat/{provider}/sessions", srv.handleListChatSessions)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions", srv.handleCreateChatSession)
@@ -101,6 +103,54 @@ func testProviders(t *testing.T, sessionMgr *session.Manager, claudeMgr *claudec
 }
 
 type testRunner struct{}
+
+type stubRuntimeSession struct {
+	snapshot provider.RuntimeSessionSnapshot
+	logs     []string
+}
+
+func (s stubRuntimeSession) Snapshot() provider.RuntimeSessionSnapshot {
+	return s.snapshot
+}
+
+func (s stubRuntimeSession) SnapshotLogs(lines int) []string {
+	if lines <= 0 || len(s.logs) <= lines {
+		return append([]string(nil), s.logs...)
+	}
+	return append([]string(nil), s.logs[len(s.logs)-lines:]...)
+}
+
+func (s stubRuntimeSession) SubscribeLogs(fn func(string)) func() {
+	return func() {}
+}
+
+type stubRuntimeProvider struct {
+	metadata provider.Metadata
+	sessions map[string]provider.RuntimeSession
+}
+
+func (p stubRuntimeProvider) Metadata() provider.Metadata { return p.metadata }
+func (p stubRuntimeProvider) BaseFolder() string          { return "" }
+func (p stubRuntimeProvider) ListFolders() []string       { return nil }
+func (p stubRuntimeProvider) ListSessions() []provider.RuntimeSession {
+	out := make([]provider.RuntimeSession, 0, len(p.sessions))
+	for _, sess := range p.sessions {
+		out = append(out, sess)
+	}
+	return out
+}
+func (p stubRuntimeProvider) GetSession(id string) (provider.RuntimeSession, bool) {
+	sess, ok := p.sessions[id]
+	return sess, ok
+}
+func (p stubRuntimeProvider) CreateSession(folder string) (provider.RuntimeSession, error) {
+	return nil, errors.New("not implemented")
+}
+func (p stubRuntimeProvider) DeleteSession(id string) error  { return errors.New("not implemented") }
+func (p stubRuntimeProvider) RestartSession(id string) error { return errors.New("not implemented") }
+func (p stubRuntimeProvider) Subscribe(fn func(provider.RuntimeNotification)) func() {
+	return func() {}
+}
 
 func startLongRunningTestCommand(ctx context.Context, dir string, stdout, stderr io.Writer) (*exec.Cmd, error) {
 	cmdName := "sleep"
@@ -278,6 +328,133 @@ func TestListCodexSessions_Empty(t *testing.T) {
 	}
 	if len(sessions) != 0 {
 		t.Fatalf("expected 0, got %d", len(sessions))
+	}
+}
+
+func TestListChatProviders_ReturnsLegacyProviderIDs(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/chat/providers", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var providers []string
+	if err := json.NewDecoder(rr.Body).Decode(&providers); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if len(providers) != 2 || providers[0] != "claude" || providers[1] != "codex" {
+		t.Fatalf("providers = %#v, want [claude codex]", providers)
+	}
+}
+
+func TestListProviderMetadata_ReturnsProviderMetadata(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/providers", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var providers []providerMetadataResponse
+	if err := json.NewDecoder(rr.Body).Decode(&providers); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if len(providers) != 2 {
+		t.Fatalf("providers len = %d, want 2", len(providers))
+	}
+
+	if providers[0].ID != "claude" || providers[0].DisplayName != "Claude" {
+		t.Fatalf("first provider = %#v", providers[0])
+	}
+	if providers[0].Chat == nil || providers[0].Runtime == nil {
+		t.Fatalf("claude metadata = %#v, want chat+runtime capabilities", providers[0])
+	}
+
+	if providers[1].ID != "codex" || providers[1].DisplayName != "Codex" {
+		t.Fatalf("second provider = %#v", providers[1])
+	}
+	if providers[1].Chat == nil {
+		t.Fatalf("codex metadata = %#v, want chat capabilities", providers[1])
+	}
+	if providers[1].Runtime != nil {
+		t.Fatalf("codex runtime capabilities = %#v, want nil", providers[1].Runtime)
+	}
+}
+
+func TestCreateSession_ResponseIncludesProvider(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	runner := &testRunner{}
+	sessionMgr := session.NewManager(runner, baseDir, "", false, 0, 0, nil)
+	srv, mux := setupTestServerWithManagers(t, sessionMgr, claudechat.NewManager(baseDir, ""), codex.NewManager(baseDir, ""))
+
+	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(`{"folder":"demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if resp.Provider != "claude" || resp.Agent != "claude" {
+		t.Fatalf("runtime session provider = %q agent = %q, want claude/claude", resp.Provider, resp.Agent)
+	}
+	if resp.ProviderMeta.ID != "claude" || resp.ProviderMeta.Runtime == nil {
+		t.Fatalf("runtime provider metadata = %#v", resp.ProviderMeta)
+	}
+
+	if err := srv.runtimeProvider.DeleteSession(resp.ID); err == nil {
+		waitForRuntimeSessionStopped(t, srv.runtimeProvider, resp.ID)
+	}
+}
+
+func TestCreateChatSession_ResponseIncludesProvider(t *testing.T) {
+	baseDir := t.TempDir()
+	projectDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	runner := &testRunner{}
+	sessionMgr := session.NewManager(runner, baseDir, "", false, 0, 0, nil)
+	claudeMgr := claudechat.NewManager(baseDir, "")
+	codexMgr := codex.NewManager(baseDir, "")
+	_, mux := setupTestServerWithManagers(t, sessionMgr, claudeMgr, codexMgr)
+
+	req := httptest.NewRequest("POST", "/api/chat/codex/sessions", bytes.NewBufferString(`{"folder":"demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
+	}
+
+	var resp chatSessionResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if resp.Provider != "codex" || resp.Agent != "codex" {
+		t.Fatalf("chat session provider = %q agent = %q, want codex/codex", resp.Provider, resp.Agent)
+	}
+	if resp.ProviderMeta.ID != "codex" || resp.ProviderMeta.Chat == nil {
+		t.Fatalf("chat provider metadata = %#v", resp.ProviderMeta)
 	}
 }
 
@@ -701,6 +878,127 @@ func TestWebSocket_RejectsCrossOrigin(t *testing.T) {
 	}
 	if resp == nil || resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403 response, got %#v", resp)
+	}
+}
+
+func TestHubHandleChatEvent_EmbedsProviderInSessionPayload(t *testing.T) {
+	hub := newHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := &wsClient{
+		send:   make(chan []byte, 1),
+		subs:   make(map[string]bool),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+	hub.addClient(client)
+	defer hub.removeClient(client)
+
+	hub.handleChatEvent(provider.Metadata{
+		ID:          "codex",
+		DisplayName: "Codex",
+		Chat: &provider.ChatCapabilities{
+			StreamingDeltas:   true,
+			ToolCallStreaming: true,
+			ShellCommandExec:  true,
+			ThreadResume:      true,
+			ImageAttachments:  true,
+		},
+	}, chat.Event{
+		Type:      chat.EventSessionCreated,
+		SessionID: "codex-1",
+		Session: &chat.Session{
+			ID:        "codex-1",
+			Folder:    "/tmp/demo",
+			RelName:   "demo",
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		},
+	})
+
+	select {
+	case data := <-client.send:
+		var msg struct {
+			Type         string                   `json:"type"`
+			Provider     string                   `json:"provider"`
+			ProviderMeta providerMetadataResponse `json:"provider_meta"`
+			Session      chatSessionResponse      `json:"session"`
+		}
+		if err := json.Unmarshal(data, &msg); err != nil {
+			t.Fatalf("Unmarshal(): %v", err)
+		}
+		if msg.Type != "chat_session_added" {
+			t.Fatalf("type = %q, want %q", msg.Type, "chat_session_added")
+		}
+		if msg.Provider != "codex" {
+			t.Fatalf("provider = %q, want %q", msg.Provider, "codex")
+		}
+		if msg.ProviderMeta.ID != "codex" || msg.ProviderMeta.Chat == nil {
+			t.Fatalf("provider_meta = %#v", msg.ProviderMeta)
+		}
+		if msg.Session.Provider != "codex" || msg.Session.Agent != "codex" {
+			t.Fatalf("session payload = %#v", msg.Session)
+		}
+		if msg.Session.ProviderMeta.ID != "codex" || msg.Session.ProviderMeta.Chat == nil {
+			t.Fatalf("session provider metadata = %#v", msg.Session.ProviderMeta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for websocket payload")
+	}
+}
+
+func TestSubscribeClientToSession_LogPayloadIncludesProvider(t *testing.T) {
+	srv := NewServer(config.APIConfig{}, stubRuntimeProvider{
+		metadata: provider.Metadata{
+			ID:          "claude",
+			DisplayName: "Claude",
+			Runtime: &provider.RuntimeCapabilities{
+				LongRunningProcesses: true,
+			},
+		},
+		sessions: map[string]provider.RuntimeSession{
+			"runtime-1": stubRuntimeSession{
+				snapshot: provider.RuntimeSessionSnapshot{ID: "runtime-1"},
+				logs:     []string{"line one"},
+			},
+		},
+	}, provider.NewRegistry())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := &wsClient{
+		send:   make(chan []byte, 1),
+		subs:   map[string]bool{"runtime-1": true},
+		ctx:    ctx,
+		cancel: cancel,
+	}
+
+	srv.subscribeClientToSession(client, "runtime-1")
+
+	select {
+	case data := <-client.send:
+		var msg wsMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			t.Fatalf("Unmarshal(): %v", err)
+		}
+		if msg.Type != "log" {
+			t.Fatalf("type = %q, want %q", msg.Type, "log")
+		}
+		if msg.Provider != "claude" {
+			t.Fatalf("provider = %q, want %q", msg.Provider, "claude")
+		}
+		if msg.ProviderMeta == nil || msg.ProviderMeta.ID != "claude" || msg.ProviderMeta.Runtime == nil {
+			t.Fatalf("provider_meta = %#v", msg.ProviderMeta)
+		}
+		if msg.SessionID != "runtime-1" {
+			t.Fatalf("session_id = %q, want %q", msg.SessionID, "runtime-1")
+		}
+		if msg.Line != "line one" {
+			t.Fatalf("line = %q, want %q", msg.Line, "line one")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for log payload")
 	}
 }
 

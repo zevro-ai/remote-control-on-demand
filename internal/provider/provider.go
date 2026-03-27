@@ -45,7 +45,8 @@ type ChatProvider interface {
 }
 
 type RuntimeNotification struct {
-	Message string
+	Provider string
+	Message  string
 }
 
 type RuntimeSessionSnapshot struct {

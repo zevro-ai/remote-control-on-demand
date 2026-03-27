@@ -1,28 +1,41 @@
 package httpapi
 
+import "github.com/zevro-ai/remote-control-on-demand/internal/provider"
+
+type providerMetadataResponse struct {
+	ID          string                        `json:"id"`
+	DisplayName string                        `json:"display_name"`
+	Chat        *provider.ChatCapabilities    `json:"chat,omitempty"`
+	Runtime     *provider.RuntimeCapabilities `json:"runtime,omitempty"`
+}
+
 type sessionResponse struct {
-	ID        string `json:"id"`
-	Folder    string `json:"folder"`
-	RelName   string `json:"rel_name"`
-	Status    string `json:"status"`
-	Agent     string `json:"agent"`
-	URL       string `json:"url,omitempty"`
-	PID       int    `json:"pid,omitempty"`
-	StartedAt string `json:"started_at"`
-	Restarts  int    `json:"restarts"`
-	Uptime    string `json:"uptime"`
+	ID           string                   `json:"id"`
+	Folder       string                   `json:"folder"`
+	RelName      string                   `json:"rel_name"`
+	Status       string                   `json:"status"`
+	Provider     string                   `json:"provider"`
+	ProviderMeta providerMetadataResponse `json:"provider_meta"`
+	Agent        string                   `json:"agent"`
+	URL          string                   `json:"url,omitempty"`
+	PID          int                      `json:"pid,omitempty"`
+	StartedAt    string                   `json:"started_at"`
+	Restarts     int                      `json:"restarts"`
+	Uptime       string                   `json:"uptime"`
 }
 
 type chatSessionResponse struct {
-	ID        string           `json:"id"`
-	Folder    string           `json:"folder"`
-	RelName   string           `json:"rel_name"`
-	Agent     string           `json:"agent"` // Provider ID
-	ThreadID  string           `json:"thread_id,omitempty"`
-	Busy      bool             `json:"busy"`
-	CreatedAt string           `json:"created_at"`
-	UpdatedAt string           `json:"updated_at"`
-	Messages  []messagePayload `json:"messages,omitempty"`
+	ID           string                   `json:"id"`
+	Folder       string                   `json:"folder"`
+	RelName      string                   `json:"rel_name"`
+	Provider     string                   `json:"provider"`
+	ProviderMeta providerMetadataResponse `json:"provider_meta"`
+	Agent        string                   `json:"agent"` // Provider ID
+	ThreadID     string                   `json:"thread_id,omitempty"`
+	Busy         bool                     `json:"busy"`
+	CreatedAt    string                   `json:"created_at"`
+	UpdatedAt    string                   `json:"updated_at"`
+	Messages     []messagePayload         `json:"messages,omitempty"`
 }
 
 type messagePayload struct {
@@ -74,20 +87,22 @@ type toolCallPayload struct {
 }
 
 type wsMessage struct {
-	Type      string           `json:"type"`
-	Provider  string           `json:"provider,omitempty"`
-	SessionID string           `json:"session_id,omitempty"`
-	Line      string           `json:"line,omitempty"`
-	Status    string           `json:"status,omitempty"`
-	Restarts  int              `json:"restarts,omitempty"`
-	Session   interface{}      `json:"session,omitempty"`
-	Message   interface{}      `json:"message,omitempty"`
-	Delta     string           `json:"delta,omitempty"`
-	Busy      *bool            `json:"busy,omitempty"`
-	ToolCall  *toolCallPayload `json:"tool_call,omitempty"`
+	Type         string                    `json:"type"`
+	Provider     string                    `json:"provider,omitempty"`
+	ProviderMeta *providerMetadataResponse `json:"provider_meta,omitempty"`
+	SessionID    string                    `json:"session_id,omitempty"`
+	Line         string                    `json:"line,omitempty"`
+	Status       string                    `json:"status,omitempty"`
+	Restarts     int                       `json:"restarts,omitempty"`
+	Session      interface{}               `json:"session,omitempty"`
+	Message      interface{}               `json:"message,omitempty"`
+	Delta        string                    `json:"delta,omitempty"`
+	Busy         *bool                     `json:"busy,omitempty"`
+	ToolCall     *toolCallPayload          `json:"tool_call,omitempty"`
 }
 
 type wsClientMessage struct {
 	Type      string `json:"type"`
+	Provider  string `json:"provider,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 }
