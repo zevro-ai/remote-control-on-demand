@@ -64,6 +64,13 @@ describe("providers helpers", () => {
     })).toBe("Claude");
   });
 
+  it("preserves legacy capability defaults when chat metadata is missing", () => {
+    expect(providerSupportsBash("claude", {})).toBe(true);
+    expect(providerSupportsImages("claude", {})).toBe(false);
+    expect(providerSupportsBash("codex", {})).toBe(true);
+    expect(providerSupportsImages("codex", {})).toBe(true);
+  });
+
   it("sorts provider ids by display name across registry and live sessions", () => {
     const providers = {
       codex: codexMetadata,

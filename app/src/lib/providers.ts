@@ -44,11 +44,21 @@ export function getProviderChatCapabilities(value: ProviderScoped, providers: Pr
 }
 
 export function providerSupportsImages(value: ProviderScoped, providers: ProviderRecord = {}) {
-  return Boolean(getProviderChatCapabilities(value, providers)?.image_attachments);
+  const capabilities = getProviderChatCapabilities(value, providers);
+  if (capabilities) {
+    return Boolean(capabilities.image_attachments);
+  }
+
+  return getProviderId(value) === "codex";
 }
 
 export function providerSupportsBash(value: ProviderScoped, providers: ProviderRecord = {}) {
-  return Boolean(getProviderChatCapabilities(value, providers)?.shell_command_exec);
+  const capabilities = getProviderChatCapabilities(value, providers);
+  if (capabilities) {
+    return Boolean(capabilities.shell_command_exec);
+  }
+
+  return true;
 }
 
 export function listProviderIDs(providers: ProviderRecord, chatSessions: Record<string, ChatSession[]>) {
