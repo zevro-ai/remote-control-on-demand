@@ -2,13 +2,12 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 import { CreateSessionModal } from "./CreateSessionModal";
 
 afterEach(cleanup);
 
 describe("CreateSessionModal", () => {
-  it("renders backend provider metadata and creates a session for the selected provider", async () => {
+  it("renders backend provider metadata without concatenating labels and creates a session for the selected provider", async () => {
     const onCreateSession = vi.fn().mockResolvedValue(undefined);
     const onClose = vi.fn();
 
@@ -47,10 +46,15 @@ describe("CreateSessionModal", () => {
       />
     );
 
-    expect(screen.getByRole("button", { name: /Claude/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Codex/i })).toBeTruthy();
+    const claudeButton = screen.getByRole("button", { name: /Claude/i });
+    const codexButton = screen.getByRole("button", { name: /Codex/i });
 
-    fireEvent.click(screen.getByRole("button", { name: /Codex/i }));
+    expect(claudeButton.textContent).toBe("Claude bash · streaming");
+    expect(codexButton.textContent).toBe("Codex images · bash · streaming");
+    expect(claudeButton.textContent).not.toContain("Claudeimages");
+    expect(codexButton.textContent).not.toContain("Codeximages");
+
+    fireEvent.click(codexButton);
     fireEvent.click(screen.getByRole("button", { name: "repo-a" }));
 
     await waitFor(() => {

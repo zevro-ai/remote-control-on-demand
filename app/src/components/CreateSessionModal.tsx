@@ -57,8 +57,13 @@ export function CreateSessionModal({
                 onClick={() => setProviderID(provider.id)}
                 className={providerID === provider.id ? "is-active" : ""}
               >
-                <strong>{getProviderDisplayName(provider, providers)}</strong>
-                <span>{summarizeProviderCapabilities(provider)}</span>
+                <span className="modal-agent-switch__name">
+                  {getProviderDisplayName(provider, providers)}
+                </span>
+                {" "}
+                <span className="modal-agent-switch__meta">
+                  {summarizeProviderCapabilities(provider)}
+                </span>
               </button>
             ))
           )}
