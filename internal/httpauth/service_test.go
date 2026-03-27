@@ -14,7 +14,7 @@ type stubProvider struct {
 	metadata ProviderMetadata
 	authURL  string
 	session  *providerSession
-	validate func(string) (*Identity, error)
+	validate func(*providerSession) (*providerSession, error)
 	err      error
 }
 
@@ -36,9 +36,9 @@ func (p stubProvider) Exchange(context.Context, string) (*providerSession, error
 	return p.session, nil
 }
 
-func (p stubProvider) Revalidate(_ context.Context, accessToken string) (*Identity, error) {
+func (p stubProvider) Revalidate(_ context.Context, session *providerSession) (*providerSession, error) {
 	if p.validate != nil {
-		return p.validate(accessToken)
+		return p.validate(session)
 	}
 	if p.err != nil {
 		return nil, p.err
@@ -46,7 +46,11 @@ func (p stubProvider) Revalidate(_ context.Context, accessToken string) (*Identi
 	if p.session == nil {
 		return nil, fmt.Errorf("missing session")
 	}
-	return cloneIdentity(p.session.Identity), nil
+	return &providerSession{
+		Identity:     cloneIdentity(p.session.Identity),
+		AccessToken:  p.session.AccessToken,
+		RefreshToken: p.session.RefreshToken,
+	}, nil
 }
 
 func TestServiceStatusTokenMode(t *testing.T) {
@@ -188,7 +192,7 @@ func TestServiceAuthenticateRequestRevokesSessionWhenProviderRejectsIt(t *testin
 		t.Fatal("expected session cookie")
 	}
 
-	provider.validate = func(string) (*Identity, error) {
+	provider.validate = func(*providerSession) (*providerSession, error) {
 		return nil, fmt.Errorf("%w: user is no longer allowed", ErrProviderAccessRevoked)
 	}
 
@@ -258,7 +262,7 @@ func TestServiceAuthenticateRequestKeepsSessionOnTransientRevalidationError(t *t
 		t.Fatal("expected session cookie")
 	}
 
-	provider.validate = func(string) (*Identity, error) {
+	provider.validate = func(*providerSession) (*providerSession, error) {
 		return nil, fmt.Errorf("temporary network failure")
 	}
 

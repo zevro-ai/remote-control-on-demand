@@ -51,7 +51,6 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	mux.HandleFunc("GET /api/auth/status", srv.handleAuthStatus)
 	mux.HandleFunc("GET /api/auth/login", srv.handleAuthLogin)
 	mux.HandleFunc("GET /api/auth/callback", srv.handleAuthCallback)
-	mux.HandleFunc("GET /api/auth/logout", srv.handleAuthLogout)
 	mux.HandleFunc("POST /api/auth/logout", srv.handleAuthLogout)
 	mux.HandleFunc("GET /api/sessions", srv.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", srv.handleCreateSession)
@@ -375,6 +374,30 @@ func TestAuthLogin_RedirectsToConfiguredProvider(t *testing.T) {
 	location := rr.Header().Get("Location")
 	if !strings.HasPrefix(location, "https://github.com/login/oauth/authorize?") {
 		t.Fatalf("login redirect = %q", location)
+	}
+}
+
+func TestAuthLogout_RejectsGet(t *testing.T) {
+	srv := NewServer(config.APIConfig{Token: "secret"}, "claude", provider.NewRegistry())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/logout", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAuthLogout(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestAuthLogout_RequiresAuthentication(t *testing.T) {
+	srv := NewServer(config.APIConfig{Token: "secret"}, "claude", provider.NewRegistry())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAuthLogout(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
 	}
 }
 

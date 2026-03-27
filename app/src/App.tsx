@@ -10,6 +10,16 @@ import { PanelLayout } from "./components/PanelLayout";
 import { CreateSessionModal } from "./components/CreateSessionModal";
 import type { OverviewDensity } from "./lib/sessionWall";
 
+export function buildExternalLoginURL(
+  loginURL: string,
+  locationLike: Pick<Location, "origin" | "pathname" | "search" | "hash"> = window.location,
+) {
+  const url = new URL(loginURL, locationLike.origin);
+  const redirect = `${locationLike.pathname}${locationLike.search}${locationLike.hash}` || "/";
+  url.searchParams.set("redirect", redirect);
+  return url.toString();
+}
+
 export default function App() {
   const { state, dispatch, actions } = useSessionsReducer();
   const { connected } = useWs();
@@ -162,7 +172,11 @@ export function AuthPrompt({
           <div className="auth-prompt__actions">
             <button
               type="button"
-              onClick={() => window.location.assign(authStatus.login_url || "/api/auth/login")}
+              onClick={() =>
+                window.location.assign(
+                  buildExternalLoginURL(authStatus.login_url || "/api/auth/login"),
+                )
+              }
             >
               Sign in with {providerName}
             </button>

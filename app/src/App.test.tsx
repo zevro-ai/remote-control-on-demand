@@ -3,7 +3,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { AuthPrompt } from "./App";
+import { AuthPrompt, buildExternalLoginURL } from "./App";
 
 afterEach(cleanup);
 
@@ -40,5 +40,18 @@ describe("AuthPrompt", () => {
 
     expect(screen.getByRole("button", { name: "Sign in with GitHub" })).toBeTruthy();
     expect(screen.queryByPlaceholderText("Paste API token")).toBeNull();
+  });
+
+  it("preserves the current page when building the external login redirect", () => {
+    expect(
+      buildExternalLoginURL("/api/auth/login", {
+        origin: "https://rcod.example.com",
+        pathname: "/dashboard",
+        search: "?panel=codex",
+        hash: "#session-1",
+      }),
+    ).toBe(
+      "https://rcod.example.com/api/auth/login?redirect=%2Fdashboard%3Fpanel%3Dcodex%23session-1",
+    );
   });
 });

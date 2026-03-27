@@ -34,8 +34,9 @@ type oidcDiscovery struct {
 }
 
 type oauthTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type oidcUserInfo struct {
@@ -111,24 +112,60 @@ func (p *oidcProvider) Exchange(ctx context.Context, code string) (*providerSess
 
 	identity, err := p.identityFromToken(ctx, discovery, token.AccessToken)
 	if err != nil {
-		return nil, err
+		return nil, wrapRevokedAccess(err)
 	}
 	return &providerSession{
-		Identity:    identity,
-		AccessToken: token.AccessToken,
+		Identity:     identity,
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
 	}, nil
 }
 
-func (p *oidcProvider) Revalidate(ctx context.Context, accessToken string) (*Identity, error) {
+func (p *oidcProvider) Revalidate(ctx context.Context, session *providerSession) (*providerSession, error) {
 	discovery, err := p.discover(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return p.identityFromToken(ctx, discovery, accessToken)
+
+	identity, err := p.identityFromToken(ctx, discovery, session.AccessToken)
+	if err == nil {
+		return &providerSession{
+			Identity:     identity,
+			AccessToken:  session.AccessToken,
+			RefreshToken: session.RefreshToken,
+		}, nil
+	}
+	if !isProviderTokenRejected(err) || strings.TrimSpace(session.RefreshToken) == "" {
+		return nil, wrapRevokedAccess(err)
+	}
+
+	refreshed, refreshErr := exchangeOAuthCode(ctx, p.client, discovery.TokenEndpoint, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {session.RefreshToken},
+		"client_id":     {p.cfg.ClientID},
+		"client_secret": {p.cfg.ClientSecret},
+	})
+	if refreshErr != nil {
+		return nil, wrapRevokedAccess(refreshErr)
+	}
+
+	identity, err = p.identityFromToken(ctx, discovery, refreshed.AccessToken)
+	if err != nil {
+		return nil, wrapRevokedAccess(err)
+	}
+	refreshToken := refreshed.RefreshToken
+	if strings.TrimSpace(refreshToken) == "" {
+		refreshToken = session.RefreshToken
+	}
+	return &providerSession{
+		Identity:     identity,
+		AccessToken:  refreshed.AccessToken,
+		RefreshToken: refreshToken,
+	}, nil
 }
 
 func (p *oidcProvider) scopes() []string {
-	scopes := []string{"openid", "profile", "email"}
+	scopes := []string{"openid", "profile", "email", "offline_access"}
 	seen := map[string]bool{}
 	out := make([]string, 0, len(scopes)+len(p.cfg.Scopes))
 	for _, scope := range append(scopes, p.cfg.Scopes...) {
@@ -173,7 +210,7 @@ func (p *oidcProvider) discover(ctx context.Context) (*oidcDiscovery, error) {
 func (p *oidcProvider) identityFromToken(ctx context.Context, discovery *oidcDiscovery, accessToken string) (*Identity, error) {
 	var userInfo map[string]any
 	if err := getJSONWithBearer(ctx, p.client, discovery.UserInfoEndpoint, accessToken, &userInfo); err != nil {
-		return nil, wrapRevokedAccess(err)
+		return nil, err
 	}
 
 	identity := &Identity{
@@ -185,10 +222,10 @@ func (p *oidcProvider) identityFromToken(ctx context.Context, discovery *oidcDis
 	}
 	groups := stringSliceValue(userInfo["groups"])
 	if identity.Subject == "" {
-		return nil, wrapRevokedAccess(fmt.Errorf("OIDC userinfo missing subject"))
+		return nil, fmt.Errorf("OIDC userinfo missing subject")
 	}
 	if err := authorizeOIDCIdentity(identity, groups, p.cfg); err != nil {
-		return nil, wrapRevokedAccess(err)
+		return nil, err
 	}
 	return identity, nil
 }
@@ -232,7 +269,7 @@ func (p *githubProvider) Exchange(ctx context.Context, code string) (*providerSe
 
 	identity, err := p.identityFromToken(ctx, token.AccessToken)
 	if err != nil {
-		return nil, err
+		return nil, wrapRevokedAccess(err)
 	}
 	return &providerSession{
 		Identity:    identity,
@@ -240,8 +277,16 @@ func (p *githubProvider) Exchange(ctx context.Context, code string) (*providerSe
 	}, nil
 }
 
-func (p *githubProvider) Revalidate(ctx context.Context, accessToken string) (*Identity, error) {
-	return p.identityFromToken(ctx, accessToken)
+func (p *githubProvider) Revalidate(ctx context.Context, session *providerSession) (*providerSession, error) {
+	identity, err := p.identityFromToken(ctx, session.AccessToken)
+	if err != nil {
+		return nil, wrapRevokedAccess(err)
+	}
+	return &providerSession{
+		Identity:     identity,
+		AccessToken:  session.AccessToken,
+		RefreshToken: session.RefreshToken,
+	}, nil
 }
 
 func (p *githubProvider) scopes() []string {
@@ -255,7 +300,7 @@ func (p *githubProvider) scopes() []string {
 func (p *githubProvider) identityFromToken(ctx context.Context, accessToken string) (*Identity, error) {
 	var user githubUser
 	if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user", accessToken, &user); err != nil {
-		return nil, wrapRevokedAccess(err)
+		return nil, err
 	}
 
 	email := strings.TrimSpace(user.Email)
@@ -279,22 +324,22 @@ func (p *githubProvider) identityFromToken(ctx context.Context, accessToken stri
 		Email:    email,
 	}
 	if identity.Subject == "0" {
-		return nil, wrapRevokedAccess(fmt.Errorf("GitHub user profile is missing id"))
+		return nil, fmt.Errorf("GitHub user profile is missing id")
 	}
 	if len(p.cfg.AllowedUsers) > 0 && !containsFold(p.cfg.AllowedUsers, identity.Login) {
-		return nil, wrapRevokedAccess(fmt.Errorf("GitHub user %q is not allowed", identity.Login))
+		return nil, fmt.Errorf("GitHub user %q is not allowed", identity.Login)
 	}
 	if len(p.cfg.AllowedOrgs) > 0 {
 		var orgs []githubOrg
 		if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user/orgs", accessToken, &orgs); err != nil {
-			return nil, wrapRevokedAccess(err)
+			return nil, err
 		}
 		orgLogins := make([]string, 0, len(orgs))
 		for _, org := range orgs {
 			orgLogins = append(orgLogins, org.Login)
 		}
 		if !intersectsFold(p.cfg.AllowedOrgs, orgLogins) {
-			return nil, wrapRevokedAccess(fmt.Errorf("GitHub organizations do not satisfy allowlist"))
+			return nil, fmt.Errorf("GitHub organizations do not satisfy allowlist")
 		}
 	}
 
@@ -375,8 +420,7 @@ func wrapRevokedAccess(err error) error {
 	if err == nil {
 		return nil
 	}
-	var httpErr *providerHTTPError
-	if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusBadRequest || httpErr.StatusCode == http.StatusUnauthorized) {
+	if isProviderTokenRejected(err) {
 		return fmt.Errorf("%w: %v", ErrProviderAccessRevoked, err)
 	}
 	if errors.Is(err, ErrProviderAccessRevoked) {
@@ -386,6 +430,11 @@ func wrapRevokedAccess(err error) error {
 		return fmt.Errorf("%w: %v", ErrProviderAccessRevoked, err)
 	}
 	return err
+}
+
+func isProviderTokenRejected(err error) bool {
+	var httpErr *providerHTTPError
+	return errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusBadRequest || httpErr.StatusCode == http.StatusUnauthorized)
 }
 
 func isProviderAccessControlError(err error) bool {

@@ -54,7 +54,7 @@ type externalProvider interface {
 	Metadata() ProviderMetadata
 	AuthorizeURL(ctx context.Context, state string) (string, error)
 	Exchange(ctx context.Context, code string) (*providerSession, error)
-	Revalidate(ctx context.Context, accessToken string) (*Identity, error)
+	Revalidate(ctx context.Context, session *providerSession) (*providerSession, error)
 }
 
 type Service struct {
@@ -79,13 +79,15 @@ type authState struct {
 }
 
 type providerSession struct {
-	Identity    *Identity
-	AccessToken string
+	Identity     *Identity
+	AccessToken  string
+	RefreshToken string
 }
 
 type sessionRecord struct {
 	Identity              *Identity
 	AccessToken           string
+	RefreshToken          string
 	ExpiresAt             time.Time
 	NextValidationAttempt time.Time
 }
@@ -171,7 +173,11 @@ func (s *Service) AuthenticateRequest(r *http.Request) (*Identity, bool) {
 		return cloneIdentity(record.Identity), true
 	}
 
-	identity, err := s.provider.Revalidate(r.Context(), record.AccessToken)
+	session, err := s.provider.Revalidate(r.Context(), &providerSession{
+		Identity:     cloneIdentity(record.Identity),
+		AccessToken:  record.AccessToken,
+		RefreshToken: record.RefreshToken,
+	})
 	if err != nil {
 		if errors.Is(err, ErrProviderAccessRevoked) {
 			s.deleteSession(claims.SessionID)
@@ -180,8 +186,8 @@ func (s *Service) AuthenticateRequest(r *http.Request) (*Identity, bool) {
 		s.deferSessionRevalidation(claims.SessionID, record, s.now().Add(retryValidationIn))
 		return cloneIdentity(record.Identity), true
 	}
-	s.updateSession(claims.SessionID, record.AccessToken, identity, record.ExpiresAt, s.now().Add(revalidateEvery))
-	return cloneIdentity(identity), true
+	s.updateSession(claims.SessionID, session, record.ExpiresAt, s.now().Add(revalidateEvery))
+	return cloneIdentity(session.Identity), true
 }
 
 func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) error {
@@ -277,6 +283,7 @@ func (s *Service) writeSession(w http.ResponseWriter, r *http.Request, session *
 	s.sessions[sessionID] = &sessionRecord{
 		Identity:              cloneIdentity(session.Identity),
 		AccessToken:           session.AccessToken,
+		RefreshToken:          session.RefreshToken,
 		ExpiresAt:             expiresAt,
 		NextValidationAttempt: s.now().Add(revalidateEvery),
 	}
@@ -319,6 +326,7 @@ func (s *Service) lookupSession(sessionID string) (*sessionRecord, bool) {
 	return &sessionRecord{
 		Identity:              cloneIdentity(record.Identity),
 		AccessToken:           record.AccessToken,
+		RefreshToken:          record.RefreshToken,
 		ExpiresAt:             record.ExpiresAt,
 		NextValidationAttempt: record.NextValidationAttempt,
 	}, true
@@ -331,15 +339,19 @@ func (s *Service) shouldRevalidate(record *sessionRecord) bool {
 	return !s.now().Before(record.NextValidationAttempt)
 }
 
-func (s *Service) updateSession(sessionID, accessToken string, identity *Identity, expiresAt, nextValidationAttempt time.Time) {
+func (s *Service) updateSession(sessionID string, session *providerSession, expiresAt, nextValidationAttempt time.Time) {
+	if session == nil {
+		return
+	}
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	if _, ok := s.sessions[sessionID]; !ok {
 		return
 	}
 	s.sessions[sessionID] = &sessionRecord{
-		Identity:              cloneIdentity(identity),
-		AccessToken:           accessToken,
+		Identity:              cloneIdentity(session.Identity),
+		AccessToken:           session.AccessToken,
+		RefreshToken:          session.RefreshToken,
 		ExpiresAt:             expiresAt,
 		NextValidationAttempt: nextValidationAttempt,
 	}
@@ -349,7 +361,11 @@ func (s *Service) deferSessionRevalidation(sessionID string, record *sessionReco
 	if record == nil {
 		return
 	}
-	s.updateSession(sessionID, record.AccessToken, record.Identity, record.ExpiresAt, nextValidationAttempt)
+	s.updateSession(sessionID, &providerSession{
+		Identity:     cloneIdentity(record.Identity),
+		AccessToken:  record.AccessToken,
+		RefreshToken: record.RefreshToken,
+	}, record.ExpiresAt, nextValidationAttempt)
 }
 
 func (s *Service) deleteSession(sessionID string) {
