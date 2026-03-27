@@ -37,7 +37,10 @@ func TestResolveProjectPathAllowsMissingChildWithinResolvedBase(t *testing.T) {
 		t.Fatalf("ResolveProjectPath(): %v", err)
 	}
 
-	wantPath := filepath.Join(realBase, "nested", "project")
+	wantPath, err := evalSymlinksAllowMissing(filepath.Join(realBase, "nested", "project"))
+	if err != nil {
+		t.Fatalf("evalSymlinksAllowMissing(): %v", err)
+	}
 	if fullPath != wantPath {
 		t.Fatalf("fullPath = %q, want %q", fullPath, wantPath)
 	}
