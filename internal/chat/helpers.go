@@ -72,8 +72,16 @@ func ResolveProjectPath(baseFolder, folder string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("resolving base folder: %w", err)
 	}
+	baseResolved, err := filepath.EvalSymlinks(baseAbs)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving base folder: %w", err)
+	}
 
 	targetAbs, err := filepath.Abs(filepath.Join(baseAbs, filepath.Clean(folder)))
+	if err != nil {
+		return "", "", fmt.Errorf("resolving folder %q: %w", folder, err)
+	}
+	targetResolved, err := evalSymlinksAllowMissing(targetAbs)
 	if err != nil {
 		return "", "", fmt.Errorf("resolving folder %q: %w", folder, err)
 	}
@@ -82,11 +90,39 @@ func ResolveProjectPath(baseFolder, folder string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("resolving folder %q: %w", folder, err)
 	}
-	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+	relResolved, err := filepath.Rel(baseResolved, targetResolved)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving folder %q: %w", folder, err)
+	}
+	if relResolved == ".." || strings.HasPrefix(relResolved, ".."+string(os.PathSeparator)) {
 		return "", "", fmt.Errorf("folder %q must stay within rc.base_folder", folder)
 	}
 
-	return targetAbs, relPath, nil
+	return targetResolved, relPath, nil
+}
+
+func evalSymlinksAllowMissing(path string) (string, error) {
+	current := filepath.Clean(path)
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 func GenerateUUID() (string, error) {
