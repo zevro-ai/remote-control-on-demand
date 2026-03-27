@@ -15,6 +15,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi"
 	"github.com/zevro-ai/remote-control-on-demand/internal/process"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 	"github.com/zevro-ai/remote-control-on-demand/internal/rcodbot"
 	"github.com/zevro-ai/remote-control-on-demand/internal/runtimepaths"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
@@ -127,7 +128,60 @@ func main() {
 
 	var httpSrv *httpapi.Server
 	if cfg.API.Port > 0 {
-		httpSrv = httpapi.NewServer(cfg.API, sessionMgr, claudeMgr, codexMgr)
+		registry := provider.NewRegistry()
+
+		runtimeProvider, err := provider.NewRuntimeAdapter(provider.Metadata{
+			ID:          "claude",
+			DisplayName: "Claude",
+			Runtime: &provider.RuntimeCapabilities{
+				LongRunningProcesses: true,
+				AutoRestart:          cfg.RC.AutoRestart,
+				ExternalURLDetection: true,
+			},
+		}, sessionMgr)
+		if err != nil {
+			log.Fatalf("Creating runtime provider registry entry: %v", err)
+		}
+		if err := registry.RegisterRuntime(runtimeProvider); err != nil {
+			log.Fatalf("Registering runtime provider: %v", err)
+		}
+
+		claudeProvider, err := provider.NewChatAdapter(provider.Metadata{
+			ID:          "claude",
+			DisplayName: "Claude",
+			Chat: &provider.ChatCapabilities{
+				StreamingDeltas:  true,
+				ShellCommandExec: true,
+				ThreadResume:     true,
+				ImageAttachments: true,
+			},
+		}, claudeMgr)
+		if err != nil {
+			log.Fatalf("Creating Claude chat provider registry entry: %v", err)
+		}
+		if err := registry.RegisterChat(claudeProvider); err != nil {
+			log.Fatalf("Registering Claude chat provider: %v", err)
+		}
+
+		codexProvider, err := provider.NewChatAdapter(provider.Metadata{
+			ID:          "codex",
+			DisplayName: "Codex",
+			Chat: &provider.ChatCapabilities{
+				StreamingDeltas:   true,
+				ToolCallStreaming: true,
+				ShellCommandExec:  true,
+				ThreadResume:      true,
+				ImageAttachments:  true,
+			},
+		}, codexMgr)
+		if err != nil {
+			log.Fatalf("Creating Codex chat provider registry entry: %v", err)
+		}
+		if err := registry.RegisterChat(codexProvider); err != nil {
+			log.Fatalf("Registering Codex chat provider: %v", err)
+		}
+
+		httpSrv = httpapi.NewServer(cfg.API, runtimeProvider, registry)
 		go httpSrv.Start()
 	}
 

@@ -13,41 +13,34 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
-	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
-	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi/dashboard"
-	"github.com/zevro-ai/remote-control-on-demand/internal/session"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
 
 type Server struct {
-	cfg        config.APIConfig
-	sessionMgr *session.Manager
-	providers  map[string]chat.Provider
-	hub        *Hub
-	httpServer *http.Server
-	uploadDir  string
-	spaFS      fs.FS
+	cfg             config.APIConfig
+	runtimeProvider provider.RuntimeProvider
+	registry        *provider.Registry
+	hub             *Hub
+	httpServer      *http.Server
+	uploadDir       string
+	spaFS           fs.FS
 }
 
-func NewServer(cfg config.APIConfig, sessionMgr *session.Manager, claudeMgr *claudechat.Manager, codexMgr *codex.Manager) *Server {
+func NewServer(cfg config.APIConfig, runtimeProvider provider.RuntimeProvider, registry *provider.Registry) *Server {
 	spaFS := dashboard.FS()
-	providers := make(map[string]chat.Provider)
-	if claudeMgr != nil {
-		providers["claude"] = claudeMgr
-	}
-	if codexMgr != nil {
-		providers["codex"] = codexMgr
+	if registry == nil {
+		registry = provider.NewRegistry()
 	}
 
 	return &Server{
-		cfg:        cfg,
-		sessionMgr: sessionMgr,
-		providers:  providers,
-		hub:        newHub(),
-		uploadDir:  filepath.Join(".rcodbot", "uploads"),
-		spaFS:      spaFS,
+		cfg:             cfg,
+		runtimeProvider: runtimeProvider,
+		registry:        registry,
+		hub:             newHub(),
+		uploadDir:       filepath.Join(".rcodbot", "uploads"),
+		spaFS:           spaFS,
 	}
 }
 
@@ -84,7 +77,7 @@ func (s *Server) Start() {
 	handler = authMiddleware(s.cfg.Token, handler)
 	handler = corsMiddleware(s.cfg.Token, handler)
 
-	s.hub.start(s.sessionMgr, s.providers)
+	s.hub.start(s.runtimeProvider, s.registry)
 
 	s.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.cfg.Port),
