@@ -122,7 +122,7 @@ func (m *Manager) Shutdown() {
 }
 
 func (m *Manager) CreateSession(folder string) (*chat.Session, error) {
-	return m.core.CreateSession(folder)
+	return m.core.CreateSessionWithThreadID(folder, "")
 }
 
 func (m *Manager) ListSessions() []*chat.Session {

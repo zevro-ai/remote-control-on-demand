@@ -153,16 +153,16 @@ func TestCoreBeginRequestCompletePersistsAndEmits(t *testing.T) {
 	}
 }
 
-func TestCoreCreateSessionStartsWithoutThreadID(t *testing.T) {
+func TestCoreCreateSessionWithThreadIDAllowsEmptyThreadID(t *testing.T) {
 	baseDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(baseDir, "demo", ".git"), 0755); err != nil {
 		t.Fatalf("MkdirAll(.git): %v", err)
 	}
 
 	core := NewCore(baseDir, "", 10)
-	sess, err := core.CreateSession("demo")
+	sess, err := core.CreateSessionWithThreadID("demo", "")
 	if err != nil {
-		t.Fatalf("CreateSession(): %v", err)
+		t.Fatalf("CreateSessionWithThreadID(): %v", err)
 	}
 
 	if sess.ThreadID != "" {

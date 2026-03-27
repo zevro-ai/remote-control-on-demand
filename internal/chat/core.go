@@ -141,6 +141,14 @@ func (c *Core) Restore() error {
 }
 
 func (c *Core) CreateSession(folder string) (*Session, error) {
+	threadID, err := GenerateUUID()
+	if err != nil {
+		return nil, fmt.Errorf("generating thread ID: %w", err)
+	}
+	return c.CreateSessionWithThreadID(folder, threadID)
+}
+
+func (c *Core) CreateSessionWithThreadID(folder, threadID string) (*Session, error) {
 	fullPath, relName, err := ResolveProjectPath(c.baseFolder, folder)
 	if err != nil {
 		return nil, err
@@ -167,6 +175,7 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 		ID:        id,
 		Folder:    fullPath,
 		RelName:   relName,
+		ThreadID:  threadID,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
