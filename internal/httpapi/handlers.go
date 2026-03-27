@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -290,46 +289,8 @@ func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []string{})
 		return
 	}
-	folders := listFolders(s.runtimeProvider.BaseFolder())
+	folders := s.runtimeProvider.ListFolders()
 	writeJSON(w, http.StatusOK, folders)
-}
-
-func listFolders(baseFolder string) []string {
-	info, err := os.Stat(baseFolder)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-
-	var folders []string
-	_ = filepath.WalkDir(baseFolder, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil || path == baseFolder {
-			return nil
-		}
-		if !d.IsDir() {
-			return nil
-		}
-
-		name := d.Name()
-		if strings.HasPrefix(name, ".") {
-			return filepath.SkipDir
-		}
-		switch name {
-		case "node_modules", "vendor", "dist", "build", "tmp":
-			return filepath.SkipDir
-		}
-
-		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
-			rel, err := filepath.Rel(baseFolder, path)
-			if err == nil && rel != "." {
-				folders = append(folders, rel)
-			}
-			return filepath.SkipDir
-		}
-		return nil
-	})
-
-	sort.Strings(folders)
-	return folders
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {

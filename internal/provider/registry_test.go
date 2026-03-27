@@ -160,6 +160,8 @@ type stubRuntimeManager struct{}
 
 func (stubRuntimeManager) BaseFolder() string { return "" }
 
+func (stubRuntimeManager) ListFolders() []string { return nil }
+
 func (stubRuntimeManager) List() []*session.Session { return nil }
 
 func (stubRuntimeManager) Get(string) (*session.Session, bool) { return nil, false }

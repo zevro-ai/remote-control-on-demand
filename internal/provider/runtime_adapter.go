@@ -8,6 +8,7 @@ import (
 
 type sessionManager interface {
 	BaseFolder() string
+	ListFolders() []string
 	List() []*session.Session
 	Get(id string) (*session.Session, bool)
 	Start(folder string) (*session.Session, error)
@@ -47,6 +48,10 @@ func (a *RuntimeAdapter) Metadata() Metadata {
 
 func (a *RuntimeAdapter) BaseFolder() string {
 	return a.manager.BaseFolder()
+}
+
+func (a *RuntimeAdapter) ListFolders() []string {
+	return a.manager.ListFolders()
 }
 
 func (a *RuntimeAdapter) ListSessions() []RuntimeSession {

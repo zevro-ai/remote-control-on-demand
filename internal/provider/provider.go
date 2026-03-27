@@ -70,6 +70,7 @@ type RuntimeSession interface {
 type RuntimeProvider interface {
 	Metadata() Metadata
 	BaseFolder() string
+	ListFolders() []string
 	ListSessions() []RuntimeSession
 	GetSession(id string) (RuntimeSession, bool)
 	CreateSession(folder string) (RuntimeSession, error)
