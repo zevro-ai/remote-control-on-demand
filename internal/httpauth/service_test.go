@@ -2,6 +2,7 @@ package httpauth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +13,8 @@ import (
 type stubProvider struct {
 	metadata ProviderMetadata
 	authURL  string
-	identity *Identity
+	session  *providerSession
+	validate func(string) (*Identity, error)
 	err      error
 }
 
@@ -20,18 +22,31 @@ func (p stubProvider) Metadata() ProviderMetadata {
 	return p.metadata
 }
 
-func (p stubProvider) AuthorizeURL(state string) (string, error) {
+func (p stubProvider) AuthorizeURL(_ context.Context, state string) (string, error) {
 	if p.err != nil {
 		return "", p.err
 	}
 	return p.authURL + state, nil
 }
 
-func (p stubProvider) Exchange(context.Context, string) (*Identity, error) {
+func (p stubProvider) Exchange(context.Context, string) (*providerSession, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
-	return p.identity, nil
+	return p.session, nil
+}
+
+func (p stubProvider) Revalidate(_ context.Context, accessToken string) (*Identity, error) {
+	if p.validate != nil {
+		return p.validate(accessToken)
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.session == nil {
+		return nil, fmt.Errorf("missing session")
+	}
+	return cloneIdentity(p.session.Identity), nil
 }
 
 func TestServiceStatusTokenMode(t *testing.T) {
@@ -51,19 +66,23 @@ func TestServiceLoginAndCallbackFlow(t *testing.T) {
 		sessionSecret: []byte(strings.Repeat("x", 32)),
 		provider: stubProvider{
 			metadata: ProviderMetadata{ID: "github", DisplayName: "GitHub"},
-			authURL:  "https://auth.example.test/login?state=",
-			identity: &Identity{
-				Provider: "github",
-				Subject:  "123",
-				Login:    "krecik",
-				Name:     "Tomasz",
-				Email:    "tomasz@example.com",
+			authURL:  "https://auth.example.test/login?state=abc",
+			session: &providerSession{
+				Identity: &Identity{
+					Provider: "github",
+					Subject:  "123",
+					Login:    "krecik",
+					Name:     "Tomasz",
+					Email:    "tomasz@example.com",
+				},
+				AccessToken: "access-token-1",
 			},
 		},
 		now: func() time.Time { return now },
 		randomBytes: func(int) ([]byte, error) {
 			return []byte("state-12345678901234567890"), nil
 		},
+		sessions: map[string]*sessionRecord{},
 	}
 
 	loginReq := httptest.NewRequest(http.MethodGet, "/api/auth/login?redirect=%2Fdashboard", nil)
@@ -115,6 +134,74 @@ func TestServiceLoginAndCallbackFlow(t *testing.T) {
 	}
 	if identity.Login != "krecik" {
 		t.Fatalf("identity login = %q", identity.Login)
+	}
+}
+
+func TestServiceAuthenticateRequestRevokesSessionWhenProviderRejectsIt(t *testing.T) {
+	provider := &stubProvider{
+		metadata: ProviderMetadata{ID: "github", DisplayName: "GitHub"},
+		authURL:  "https://auth.example.test/login?state=abc",
+		session: &providerSession{
+			Identity: &Identity{
+				Provider: "github",
+				Subject:  "123",
+				Login:    "krecik",
+			},
+			AccessToken: "access-token-1",
+		},
+	}
+
+	service := &Service{
+		sessionSecret: []byte(strings.Repeat("x", 32)),
+		provider:      provider,
+		now:           time.Now,
+		randomBytes: func(int) ([]byte, error) {
+			return []byte("state-12345678901234567890"), nil
+		},
+		sessions: map[string]*sessionRecord{},
+	}
+
+	loginReq := httptest.NewRequest(http.MethodGet, "/api/auth/login?redirect=%2Fdashboard", nil)
+	loginRecorder := httptest.NewRecorder()
+	if err := service.HandleLogin(loginRecorder, loginReq); err != nil {
+		t.Fatalf("HandleLogin(): %v", err)
+	}
+	stateCookie := loginRecorder.Result().Cookies()[0]
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=code-1&state="+service.mustReadStateValue(t, stateCookie), nil)
+	callbackReq.AddCookie(stateCookie)
+	callbackRecorder := httptest.NewRecorder()
+	if err := service.HandleCallback(callbackRecorder, callbackReq); err != nil {
+		t.Fatalf("HandleCallback(): %v", err)
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range callbackRecorder.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected session cookie")
+	}
+
+	provider.validate = func(string) (*Identity, error) {
+		return nil, fmt.Errorf("user is no longer allowed")
+	}
+
+	authReq := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	authReq.AddCookie(sessionCookie)
+	if identity, ok := service.AuthenticateRequest(authReq); ok || identity != nil {
+		t.Fatal("expected revoked session authentication to fail")
+	}
+
+	claims, err := service.readSession(authReq)
+	if err != nil {
+		t.Fatalf("readSession(): %v", err)
+	}
+	if _, ok := service.lookupSession(claims.SessionID); ok {
+		t.Fatal("expected revoked session to be removed from server-side store")
 	}
 }
 

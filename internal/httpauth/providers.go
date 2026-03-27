@@ -8,13 +8,17 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
 )
 
 type oidcProvider struct {
-	cfg    config.OIDCAuthConfig
-	client *http.Client
+	cfg       config.OIDCAuthConfig
+	client    *http.Client
+	mu        sync.Mutex
+	discovery *oidcDiscovery
 }
 
 type githubProvider struct {
@@ -60,19 +64,19 @@ type githubOrg struct {
 }
 
 func newOIDCProvider(cfg config.OIDCAuthConfig) externalProvider {
-	return &oidcProvider{cfg: cfg, client: http.DefaultClient}
+	return &oidcProvider{cfg: cfg, client: &http.Client{Timeout: 10 * time.Second}}
 }
 
 func newGitHubProvider(cfg config.GitHubAuthConfig) externalProvider {
-	return &githubProvider{cfg: cfg, client: http.DefaultClient}
+	return &githubProvider{cfg: cfg, client: &http.Client{Timeout: 10 * time.Second}}
 }
 
 func (p *oidcProvider) Metadata() ProviderMetadata {
 	return ProviderMetadata{ID: "oidc", DisplayName: "OIDC"}
 }
 
-func (p *oidcProvider) AuthorizeURL(state string) (string, error) {
-	discovery, err := p.discover(context.Background())
+func (p *oidcProvider) AuthorizeURL(ctx context.Context, state string) (string, error) {
+	discovery, err := p.discover(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -87,7 +91,7 @@ func (p *oidcProvider) AuthorizeURL(state string) (string, error) {
 	return discovery.AuthorizationEndpoint + "?" + values.Encode(), nil
 }
 
-func (p *oidcProvider) Exchange(ctx context.Context, code string) (*Identity, error) {
+func (p *oidcProvider) Exchange(ctx context.Context, code string) (*providerSession, error) {
 	discovery, err := p.discover(ctx)
 	if err != nil {
 		return nil, err
@@ -104,8 +108,70 @@ func (p *oidcProvider) Exchange(ctx context.Context, code string) (*Identity, er
 		return nil, err
 	}
 
+	identity, err := p.identityFromToken(ctx, discovery, token.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+	return &providerSession{
+		Identity:    identity,
+		AccessToken: token.AccessToken,
+	}, nil
+}
+
+func (p *oidcProvider) Revalidate(ctx context.Context, accessToken string) (*Identity, error) {
+	discovery, err := p.discover(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.identityFromToken(ctx, discovery, accessToken)
+}
+
+func (p *oidcProvider) scopes() []string {
+	scopes := []string{"openid", "profile", "email"}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(scopes)+len(p.cfg.Scopes))
+	for _, scope := range append(scopes, p.cfg.Scopes...) {
+		scope = strings.TrimSpace(scope)
+		if scope == "" || seen[scope] {
+			continue
+		}
+		seen[scope] = true
+		out = append(out, scope)
+	}
+	return out
+}
+
+func (p *oidcProvider) discover(ctx context.Context) (*oidcDiscovery, error) {
+	p.mu.Lock()
+	if p.discovery != nil {
+		discovery := *p.discovery
+		p.mu.Unlock()
+		return &discovery, nil
+	}
+	p.mu.Unlock()
+
+	base := strings.TrimRight(strings.TrimSpace(p.cfg.IssuerURL), "/")
+	if base == "" {
+		return nil, fmt.Errorf("OIDC issuer URL is required")
+	}
+	url := base + "/.well-known/openid-configuration"
+	var discovery oidcDiscovery
+	if err := getJSON(ctx, p.client, url, &discovery); err != nil {
+		return nil, err
+	}
+	if discovery.AuthorizationEndpoint == "" || discovery.TokenEndpoint == "" || discovery.UserInfoEndpoint == "" {
+		return nil, fmt.Errorf("OIDC discovery document is missing required endpoints")
+	}
+
+	p.mu.Lock()
+	p.discovery = &discovery
+	p.mu.Unlock()
+	return &discovery, nil
+}
+
+func (p *oidcProvider) identityFromToken(ctx context.Context, discovery *oidcDiscovery, accessToken string) (*Identity, error) {
 	var userInfo map[string]any
-	if err := getJSONWithBearer(ctx, p.client, discovery.UserInfoEndpoint, token.AccessToken, &userInfo); err != nil {
+	if err := getJSONWithBearer(ctx, p.client, discovery.UserInfoEndpoint, accessToken, &userInfo); err != nil {
 		return nil, err
 	}
 
@@ -126,37 +192,6 @@ func (p *oidcProvider) Exchange(ctx context.Context, code string) (*Identity, er
 	return identity, nil
 }
 
-func (p *oidcProvider) scopes() []string {
-	scopes := []string{"openid", "profile", "email"}
-	seen := map[string]bool{}
-	out := make([]string, 0, len(scopes)+len(p.cfg.Scopes))
-	for _, scope := range append(scopes, p.cfg.Scopes...) {
-		scope = strings.TrimSpace(scope)
-		if scope == "" || seen[scope] {
-			continue
-		}
-		seen[scope] = true
-		out = append(out, scope)
-	}
-	return out
-}
-
-func (p *oidcProvider) discover(ctx context.Context) (*oidcDiscovery, error) {
-	base := strings.TrimRight(strings.TrimSpace(p.cfg.IssuerURL), "/")
-	if base == "" {
-		return nil, fmt.Errorf("OIDC issuer URL is required")
-	}
-	url := base + "/.well-known/openid-configuration"
-	var discovery oidcDiscovery
-	if err := getJSON(ctx, p.client, url, &discovery); err != nil {
-		return nil, err
-	}
-	if discovery.AuthorizationEndpoint == "" || discovery.TokenEndpoint == "" || discovery.UserInfoEndpoint == "" {
-		return nil, fmt.Errorf("OIDC discovery document is missing required endpoints")
-	}
-	return &discovery, nil
-}
-
 func authorizeOIDCIdentity(identity *Identity, groups []string, cfg config.OIDCAuthConfig) error {
 	if len(cfg.AllowedUsers) > 0 && !containsFold(cfg.AllowedUsers, identity.Login) {
 		return fmt.Errorf("OIDC user %q is not allowed", identity.Login)
@@ -174,7 +209,7 @@ func (p *githubProvider) Metadata() ProviderMetadata {
 	return ProviderMetadata{ID: "github", DisplayName: "GitHub"}
 }
 
-func (p *githubProvider) AuthorizeURL(state string) (string, error) {
+func (p *githubProvider) AuthorizeURL(_ context.Context, state string) (string, error) {
 	values := url.Values{}
 	values.Set("client_id", p.cfg.ClientID)
 	values.Set("redirect_uri", p.cfg.RedirectURL)
@@ -183,7 +218,7 @@ func (p *githubProvider) AuthorizeURL(state string) (string, error) {
 	return "https://github.com/login/oauth/authorize?" + values.Encode(), nil
 }
 
-func (p *githubProvider) Exchange(ctx context.Context, code string) (*Identity, error) {
+func (p *githubProvider) Exchange(ctx context.Context, code string) (*providerSession, error) {
 	token, err := exchangeOAuthCode(ctx, p.client, "https://github.com/login/oauth/access_token", url.Values{
 		"code":          {code},
 		"client_id":     {p.cfg.ClientID},
@@ -194,15 +229,38 @@ func (p *githubProvider) Exchange(ctx context.Context, code string) (*Identity, 
 		return nil, err
 	}
 
+	identity, err := p.identityFromToken(ctx, token.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+	return &providerSession{
+		Identity:    identity,
+		AccessToken: token.AccessToken,
+	}, nil
+}
+
+func (p *githubProvider) Revalidate(ctx context.Context, accessToken string) (*Identity, error) {
+	return p.identityFromToken(ctx, accessToken)
+}
+
+func (p *githubProvider) scopes() []string {
+	scopes := []string{"read:user", "user:email"}
+	if len(p.cfg.AllowedOrgs) > 0 {
+		scopes = append(scopes, "read:org")
+	}
+	return scopes
+}
+
+func (p *githubProvider) identityFromToken(ctx context.Context, accessToken string) (*Identity, error) {
 	var user githubUser
-	if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user", token.AccessToken, &user); err != nil {
+	if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user", accessToken, &user); err != nil {
 		return nil, err
 	}
 
 	email := strings.TrimSpace(user.Email)
 	if email == "" {
 		var emails []githubEmail
-		if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user/emails", token.AccessToken, &emails); err == nil {
+		if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user/emails", accessToken, &emails); err == nil {
 			for _, candidate := range emails {
 				if candidate.Primary && candidate.Verified {
 					email = candidate.Email
@@ -227,7 +285,7 @@ func (p *githubProvider) Exchange(ctx context.Context, code string) (*Identity, 
 	}
 	if len(p.cfg.AllowedOrgs) > 0 {
 		var orgs []githubOrg
-		if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user/orgs", token.AccessToken, &orgs); err != nil {
+		if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user/orgs", accessToken, &orgs); err != nil {
 			return nil, err
 		}
 		orgLogins := make([]string, 0, len(orgs))
@@ -240,14 +298,6 @@ func (p *githubProvider) Exchange(ctx context.Context, code string) (*Identity, 
 	}
 
 	return identity, nil
-}
-
-func (p *githubProvider) scopes() []string {
-	scopes := []string{"read:user", "user:email"}
-	if len(p.cfg.AllowedOrgs) > 0 {
-		scopes = append(scopes, "read:org")
-	}
-	return scopes
 }
 
 func exchangeOAuthCode(ctx context.Context, client *http.Client, endpoint string, form url.Values) (*oauthTokenResponse, error) {

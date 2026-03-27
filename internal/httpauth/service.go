@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
@@ -49,8 +50,9 @@ type PublicStatus struct {
 
 type externalProvider interface {
 	Metadata() ProviderMetadata
-	AuthorizeURL(state string) (string, error)
-	Exchange(ctx context.Context, code string) (*Identity, error)
+	AuthorizeURL(ctx context.Context, state string) (string, error)
+	Exchange(ctx context.Context, code string) (*providerSession, error)
+	Revalidate(ctx context.Context, accessToken string) (*Identity, error)
 }
 
 type Service struct {
@@ -59,15 +61,12 @@ type Service struct {
 	provider      externalProvider
 	now           func() time.Time
 	randomBytes   func(int) ([]byte, error)
+	sessionsMu    sync.RWMutex
+	sessions      map[string]*sessionRecord
 }
 
 type sessionClaims struct {
-	Provider  string `json:"provider"`
-	Subject   string `json:"subject"`
-	Login     string `json:"login,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Email     string `json:"email,omitempty"`
-	IssuedAt  int64  `json:"issued_at"`
+	SessionID string `json:"session_id"`
 	ExpiresAt int64  `json:"expires_at"`
 }
 
@@ -77,11 +76,23 @@ type authState struct {
 	ExpiresAt int64  `json:"expires_at"`
 }
 
+type providerSession struct {
+	Identity    *Identity
+	AccessToken string
+}
+
+type sessionRecord struct {
+	Identity    *Identity
+	AccessToken string
+	ExpiresAt   time.Time
+}
+
 func NewService(cfg config.APIConfig) *Service {
 	service := &Service{
 		token:       strings.TrimSpace(cfg.Token),
 		now:         time.Now,
 		randomBytes: randomTokenBytes,
+		sessions:    map[string]*sessionRecord{},
 	}
 
 	if cfg.Auth == nil {
@@ -149,13 +160,18 @@ func (s *Service) AuthenticateRequest(r *http.Request) (*Identity, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return &Identity{
-		Provider: claims.Provider,
-		Subject:  claims.Subject,
-		Login:    claims.Login,
-		Name:     claims.Name,
-		Email:    claims.Email,
-	}, true
+	record, ok := s.lookupSession(claims.SessionID)
+	if !ok {
+		return nil, false
+	}
+
+	identity, err := s.provider.Revalidate(r.Context(), record.AccessToken)
+	if err != nil {
+		s.deleteSession(claims.SessionID)
+		return nil, false
+	}
+	s.updateSessionIdentity(claims.SessionID, record.AccessToken, identity, record.ExpiresAt)
+	return cloneIdentity(identity), true
 }
 
 func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) error {
@@ -177,7 +193,7 @@ func (s *Service) HandleLogin(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	authURL, err := s.provider.AuthorizeURL(stateValue)
+	authURL, err := s.provider.AuthorizeURL(r.Context(), stateValue)
 	if err != nil {
 		return err
 	}
@@ -205,11 +221,11 @@ func (s *Service) HandleCallback(w http.ResponseWriter, r *http.Request) error {
 		return ErrInvalidAuthState
 	}
 
-	identity, err := s.provider.Exchange(r.Context(), code)
+	session, err := s.provider.Exchange(r.Context(), code)
 	if err != nil {
 		return err
 	}
-	if err := s.writeSession(w, r, identity); err != nil {
+	if err := s.writeSession(w, r, session); err != nil {
 		return err
 	}
 
@@ -218,6 +234,9 @@ func (s *Service) HandleCallback(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Service) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	if claims, err := s.readSession(r); err == nil {
+		s.deleteSession(claims.SessionID)
+	}
 	s.clearCookie(w, r, sessionCookieName)
 	if r.Method == http.MethodGet {
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -226,18 +245,35 @@ func (s *Service) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Service) writeSession(w http.ResponseWriter, r *http.Request, identity *Identity) error {
-	if identity == nil {
+func (s *Service) writeSession(w http.ResponseWriter, r *http.Request, session *providerSession) error {
+	if session == nil || session.Identity == nil {
 		return fmt.Errorf("identity is required")
 	}
+	if strings.TrimSpace(session.AccessToken) == "" {
+		return fmt.Errorf("access token is required")
+	}
+
+	sessionIDBytes, err := s.randomBytes(24)
+	if err != nil {
+		return fmt.Errorf("generating session id: %w", err)
+	}
+	sessionID := base64.RawURLEncoding.EncodeToString(sessionIDBytes)
+	expiresAt := s.now().Add(sessionTTL)
+
+	s.sessionsMu.Lock()
+	if s.sessions == nil {
+		s.sessions = map[string]*sessionRecord{}
+	}
+	s.sessions[sessionID] = &sessionRecord{
+		Identity:    cloneIdentity(session.Identity),
+		AccessToken: session.AccessToken,
+		ExpiresAt:   expiresAt,
+	}
+	s.sessionsMu.Unlock()
+
 	claims := sessionClaims{
-		Provider:  identity.Provider,
-		Subject:   identity.Subject,
-		Login:     identity.Login,
-		Name:      identity.Name,
-		Email:     identity.Email,
-		IssuedAt:  s.now().Unix(),
-		ExpiresAt: s.now().Add(sessionTTL).Unix(),
+		SessionID: sessionID,
+		ExpiresAt: expiresAt.Unix(),
 	}
 	return s.writeSignedCookie(w, r, sessionCookieName, claims, sessionTTL)
 }
@@ -248,9 +284,54 @@ func (s *Service) readSession(r *http.Request) (*sessionClaims, error) {
 		return nil, err
 	}
 	if claims.ExpiresAt <= s.now().Unix() {
+		s.deleteSession(claims.SessionID)
 		return nil, ErrExpiredSession
 	}
 	return &claims, nil
+}
+
+func (s *Service) lookupSession(sessionID string) (*sessionRecord, bool) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, false
+	}
+
+	s.sessionsMu.RLock()
+	record, ok := s.sessions[sessionID]
+	s.sessionsMu.RUnlock()
+	if !ok || record == nil {
+		return nil, false
+	}
+	if !record.ExpiresAt.After(s.now()) {
+		s.deleteSession(sessionID)
+		return nil, false
+	}
+	return &sessionRecord{
+		Identity:    cloneIdentity(record.Identity),
+		AccessToken: record.AccessToken,
+		ExpiresAt:   record.ExpiresAt,
+	}, true
+}
+
+func (s *Service) updateSessionIdentity(sessionID, accessToken string, identity *Identity, expiresAt time.Time) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	if _, ok := s.sessions[sessionID]; !ok {
+		return
+	}
+	s.sessions[sessionID] = &sessionRecord{
+		Identity:    cloneIdentity(identity),
+		AccessToken: accessToken,
+		ExpiresAt:   expiresAt,
+	}
+}
+
+func (s *Service) deleteSession(sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	s.sessionsMu.Lock()
+	delete(s.sessions, sessionID)
+	s.sessionsMu.Unlock()
 }
 
 func (s *Service) readState(r *http.Request) (*authState, error) {
@@ -391,6 +472,14 @@ func randomTokenBytes(n int) ([]byte, error) {
 		return nil, err
 	}
 	return buf, nil
+}
+
+func cloneIdentity(identity *Identity) *Identity {
+	if identity == nil {
+		return nil
+	}
+	copy := *identity
+	return &copy
 }
 
 var (
