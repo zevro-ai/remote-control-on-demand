@@ -81,6 +81,7 @@ export default function App() {
         {showModal && (
           <CreateSessionModal
             folders={folders}
+            chatSessions={state.chatSessions}
             providers={state.providers}
             onClose={() => setShowModal(false)}
             onCreateSession={onCreateSession}

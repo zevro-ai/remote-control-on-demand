@@ -1,10 +1,16 @@
 import { useState, useEffect } from "react";
-import type { ProviderMetadata } from "../api/types";
-import { getProviderDisplayName, summarizeProviderCapabilities } from "../lib/providers";
+import type { ChatSession, ProviderMetadata } from "../api/types";
+import {
+  getProviderDisplayName,
+  getProviderMetadata,
+  listProviderIDs,
+  summarizeProviderCapabilities,
+} from "../lib/providers";
 import { FolderPicker } from "./FolderPicker";
 
 interface Props {
   folders: string[];
+  chatSessions: Record<string, ChatSession[]>;
   providers: Record<string, ProviderMetadata>;
   onClose: () => void;
   onCreateSession: (provider: string, folder: string) => Promise<void>;
@@ -12,12 +18,13 @@ interface Props {
 
 export function CreateSessionModal({
   folders,
+  chatSessions,
   providers,
   onClose,
   onCreateSession,
 }: Props) {
-  const providerList = Object.values(providers).sort((left, right) =>
-    left.display_name.localeCompare(right.display_name)
+  const providerList = listProviderIDs(providers, chatSessions).map((providerID) =>
+    getProviderMetadata(providerID, providers)
   );
   const [providerID, setProviderID] = useState<string>("");
 
@@ -42,7 +49,7 @@ export function CreateSessionModal({
 
         <div className="modal-agent-switch">
           {providerList.length === 0 ? (
-            <div className="sidebar-empty">Loading providers...</div>
+            <div className="sidebar-empty">No providers available yet.</div>
           ) : (
             providerList.map((provider) => (
               <button

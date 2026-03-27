@@ -15,6 +15,7 @@ describe("CreateSessionModal", () => {
     render(
       <CreateSessionModal
         folders={["repo-a"]}
+        chatSessions={{ codex: [], claude: [] }}
         providers={{
           codex: {
             id: "codex",
@@ -54,6 +55,45 @@ describe("CreateSessionModal", () => {
 
     await waitFor(() => {
       expect(onCreateSession).toHaveBeenCalledWith("codex", "repo-a");
+    });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("falls back to known chat session providers when metadata is unavailable", async () => {
+    const onCreateSession = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+
+    render(
+      <CreateSessionModal
+        folders={["repo-b"]}
+        chatSessions={{
+          claude: [
+            {
+              id: "session-1",
+              folder: "/tmp/repo-b",
+              rel_name: "repo-b",
+              provider: "claude",
+              agent: "claude",
+              busy: false,
+              created_at: "2026-03-27T16:00:00Z",
+              updated_at: "2026-03-27T16:00:00Z",
+              messages: [],
+            },
+          ],
+        }}
+        providers={{}}
+        onClose={onClose}
+        onCreateSession={onCreateSession}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /Claude/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Claude/i }));
+    fireEvent.click(screen.getByRole("button", { name: "repo-b" }));
+
+    await waitFor(() => {
+      expect(onCreateSession).toHaveBeenCalledWith("claude", "repo-b");
     });
     expect(onClose).toHaveBeenCalled();
   });
