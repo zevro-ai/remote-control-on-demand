@@ -248,6 +248,51 @@ func TestSendEmitsUserAndAssistantEvents(t *testing.T) {
 	}
 }
 
+func TestSendStartsNewCodexSessionWithoutResumeID(t *testing.T) {
+	baseDir := t.TempDir()
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	sess, err := mgr.CreateSession("demo")
+	if err != nil {
+		t.Fatalf("CreateSession(): %v", err)
+	}
+	if sess.ThreadID != "" {
+		t.Fatalf("new session ThreadID = %q, want empty", sess.ThreadID)
+	}
+
+	previousRunCodexFn := runCodexFn
+	runCodexFn = func(
+		ctx context.Context,
+		snapshot *chat.Session,
+		prompt string,
+		attachments []chat.Attachment,
+		sandbox,
+		model string,
+		dangerouslyBypassSandbox bool,
+		cb StreamCallback,
+	) (string, string, error) {
+		if snapshot.ThreadID != "" {
+			t.Fatalf("snapshot.ThreadID = %q, want empty before first Codex response", snapshot.ThreadID)
+		}
+		return "019d3066-632d-7d83-8be4-725ab37de218", "assistant reply", nil
+	}
+	t.Cleanup(func() {
+		runCodexFn = previousRunCodexFn
+	})
+
+	updated, _, err := mgr.Send(context.Background(), sess.ID, "ping", nil)
+	if err != nil {
+		t.Fatalf("Send(): %v", err)
+	}
+	if updated.ThreadID != "019d3066-632d-7d83-8be4-725ab37de218" {
+		t.Fatalf("updated.ThreadID = %q", updated.ThreadID)
+	}
+}
+
 func TestParseExecOutputEmitsStreamingToolAndTextEvents(t *testing.T) {
 	input := strings.NewReader(strings.Join([]string{
 		`{"type":"thread.started","thread_id":"thread-123"}`,

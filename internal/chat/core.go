@@ -162,18 +162,11 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 		return nil, fmt.Errorf("generating session ID: %w", err)
 	}
 
-	threadID, err := GenerateUUID()
-	if err != nil {
-		c.mu.Unlock()
-		return nil, fmt.Errorf("generating thread ID: %w", err)
-	}
-
 	now := time.Now()
 	sess := &Session{
 		ID:        id,
 		Folder:    fullPath,
 		RelName:   relName,
-		ThreadID:  threadID,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
