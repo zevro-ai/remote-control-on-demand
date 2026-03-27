@@ -23,6 +23,8 @@ const (
 	stateCookieName   = "rcod_auth_state"
 	sessionTTL        = 12 * time.Hour
 	stateTTL          = 10 * time.Minute
+	revalidateEvery   = 5 * time.Minute
+	retryValidationIn = 1 * time.Minute
 )
 
 type ProviderMetadata struct {
@@ -82,9 +84,10 @@ type providerSession struct {
 }
 
 type sessionRecord struct {
-	Identity    *Identity
-	AccessToken string
-	ExpiresAt   time.Time
+	Identity              *Identity
+	AccessToken           string
+	ExpiresAt             time.Time
+	NextValidationAttempt time.Time
 }
 
 func NewService(cfg config.APIConfig) *Service {
@@ -164,13 +167,20 @@ func (s *Service) AuthenticateRequest(r *http.Request) (*Identity, bool) {
 	if !ok {
 		return nil, false
 	}
+	if !s.shouldRevalidate(record) {
+		return cloneIdentity(record.Identity), true
+	}
 
 	identity, err := s.provider.Revalidate(r.Context(), record.AccessToken)
 	if err != nil {
-		s.deleteSession(claims.SessionID)
-		return nil, false
+		if errors.Is(err, ErrProviderAccessRevoked) {
+			s.deleteSession(claims.SessionID)
+			return nil, false
+		}
+		s.deferSessionRevalidation(claims.SessionID, record, s.now().Add(retryValidationIn))
+		return cloneIdentity(record.Identity), true
 	}
-	s.updateSessionIdentity(claims.SessionID, record.AccessToken, identity, record.ExpiresAt)
+	s.updateSession(claims.SessionID, record.AccessToken, identity, record.ExpiresAt, s.now().Add(revalidateEvery))
 	return cloneIdentity(identity), true
 }
 
@@ -265,9 +275,10 @@ func (s *Service) writeSession(w http.ResponseWriter, r *http.Request, session *
 		s.sessions = map[string]*sessionRecord{}
 	}
 	s.sessions[sessionID] = &sessionRecord{
-		Identity:    cloneIdentity(session.Identity),
-		AccessToken: session.AccessToken,
-		ExpiresAt:   expiresAt,
+		Identity:              cloneIdentity(session.Identity),
+		AccessToken:           session.AccessToken,
+		ExpiresAt:             expiresAt,
+		NextValidationAttempt: s.now().Add(revalidateEvery),
 	}
 	s.sessionsMu.Unlock()
 
@@ -306,23 +317,39 @@ func (s *Service) lookupSession(sessionID string) (*sessionRecord, bool) {
 		return nil, false
 	}
 	return &sessionRecord{
-		Identity:    cloneIdentity(record.Identity),
-		AccessToken: record.AccessToken,
-		ExpiresAt:   record.ExpiresAt,
+		Identity:              cloneIdentity(record.Identity),
+		AccessToken:           record.AccessToken,
+		ExpiresAt:             record.ExpiresAt,
+		NextValidationAttempt: record.NextValidationAttempt,
 	}, true
 }
 
-func (s *Service) updateSessionIdentity(sessionID, accessToken string, identity *Identity, expiresAt time.Time) {
+func (s *Service) shouldRevalidate(record *sessionRecord) bool {
+	if record == nil {
+		return false
+	}
+	return !s.now().Before(record.NextValidationAttempt)
+}
+
+func (s *Service) updateSession(sessionID, accessToken string, identity *Identity, expiresAt, nextValidationAttempt time.Time) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	if _, ok := s.sessions[sessionID]; !ok {
 		return
 	}
 	s.sessions[sessionID] = &sessionRecord{
-		Identity:    cloneIdentity(identity),
-		AccessToken: accessToken,
-		ExpiresAt:   expiresAt,
+		Identity:              cloneIdentity(identity),
+		AccessToken:           accessToken,
+		ExpiresAt:             expiresAt,
+		NextValidationAttempt: nextValidationAttempt,
 	}
+}
+
+func (s *Service) deferSessionRevalidation(sessionID string, record *sessionRecord, nextValidationAttempt time.Time) {
+	if record == nil {
+		return
+	}
+	s.updateSession(sessionID, record.AccessToken, record.Identity, record.ExpiresAt, nextValidationAttempt)
 }
 
 func (s *Service) deleteSession(sessionID string) {
@@ -483,10 +510,11 @@ func cloneIdentity(identity *Identity) *Identity {
 }
 
 var (
-	ErrExternalAuthDisabled = errors.New("external auth is not configured")
-	ErrMissingSessionSecret = errors.New("session secret is required")
-	ErrInvalidSignature     = errors.New("invalid session signature")
-	ErrInvalidAuthState     = errors.New("invalid auth state")
-	ErrExpiredAuthState     = errors.New("expired auth state")
-	ErrExpiredSession       = errors.New("expired session")
+	ErrExternalAuthDisabled  = errors.New("external auth is not configured")
+	ErrMissingSessionSecret  = errors.New("session secret is required")
+	ErrInvalidSignature      = errors.New("invalid session signature")
+	ErrInvalidAuthState      = errors.New("invalid auth state")
+	ErrExpiredAuthState      = errors.New("expired auth state")
+	ErrExpiredSession        = errors.New("expired session")
+	ErrProviderAccessRevoked = errors.New("provider access revoked")
 )

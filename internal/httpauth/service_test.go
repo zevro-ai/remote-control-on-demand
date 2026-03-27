@@ -126,6 +126,7 @@ func TestServiceLoginAndCallbackFlow(t *testing.T) {
 		t.Fatal("expected session cookie")
 	}
 
+	now = now.Add(revalidateEvery + time.Second)
 	authReq := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
 	authReq.AddCookie(sessionCookie)
 	identity, ok := service.AuthenticateRequest(authReq)
@@ -138,6 +139,7 @@ func TestServiceLoginAndCallbackFlow(t *testing.T) {
 }
 
 func TestServiceAuthenticateRequestRevokesSessionWhenProviderRejectsIt(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
 	provider := &stubProvider{
 		metadata: ProviderMetadata{ID: "github", DisplayName: "GitHub"},
 		authURL:  "https://auth.example.test/login?state=abc",
@@ -154,7 +156,7 @@ func TestServiceAuthenticateRequestRevokesSessionWhenProviderRejectsIt(t *testin
 	service := &Service{
 		sessionSecret: []byte(strings.Repeat("x", 32)),
 		provider:      provider,
-		now:           time.Now,
+		now:           func() time.Time { return now },
 		randomBytes: func(int) ([]byte, error) {
 			return []byte("state-12345678901234567890"), nil
 		},
@@ -187,9 +189,10 @@ func TestServiceAuthenticateRequestRevokesSessionWhenProviderRejectsIt(t *testin
 	}
 
 	provider.validate = func(string) (*Identity, error) {
-		return nil, fmt.Errorf("user is no longer allowed")
+		return nil, fmt.Errorf("%w: user is no longer allowed", ErrProviderAccessRevoked)
 	}
 
+	now = now.Add(revalidateEvery + time.Second)
 	authReq := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
 	authReq.AddCookie(sessionCookie)
 	if identity, ok := service.AuthenticateRequest(authReq); ok || identity != nil {
@@ -202,6 +205,84 @@ func TestServiceAuthenticateRequestRevokesSessionWhenProviderRejectsIt(t *testin
 	}
 	if _, ok := service.lookupSession(claims.SessionID); ok {
 		t.Fatal("expected revoked session to be removed from server-side store")
+	}
+}
+
+func TestServiceAuthenticateRequestKeepsSessionOnTransientRevalidationError(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	provider := &stubProvider{
+		metadata: ProviderMetadata{ID: "github", DisplayName: "GitHub"},
+		authURL:  "https://auth.example.test/login?state=abc",
+		session: &providerSession{
+			Identity: &Identity{
+				Provider: "github",
+				Subject:  "123",
+				Login:    "krecik",
+			},
+			AccessToken: "access-token-1",
+		},
+	}
+
+	service := &Service{
+		sessionSecret: []byte(strings.Repeat("x", 32)),
+		provider:      provider,
+		now:           func() time.Time { return now },
+		randomBytes: func(int) ([]byte, error) {
+			return []byte("state-12345678901234567890"), nil
+		},
+		sessions: map[string]*sessionRecord{},
+	}
+
+	loginReq := httptest.NewRequest(http.MethodGet, "/api/auth/login?redirect=%2Fdashboard", nil)
+	loginRecorder := httptest.NewRecorder()
+	if err := service.HandleLogin(loginRecorder, loginReq); err != nil {
+		t.Fatalf("HandleLogin(): %v", err)
+	}
+	stateCookie := loginRecorder.Result().Cookies()[0]
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=code-1&state="+service.mustReadStateValue(t, stateCookie), nil)
+	callbackReq.AddCookie(stateCookie)
+	callbackRecorder := httptest.NewRecorder()
+	if err := service.HandleCallback(callbackRecorder, callbackReq); err != nil {
+		t.Fatalf("HandleCallback(): %v", err)
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range callbackRecorder.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected session cookie")
+	}
+
+	provider.validate = func(string) (*Identity, error) {
+		return nil, fmt.Errorf("temporary network failure")
+	}
+
+	now = now.Add(revalidateEvery + time.Second)
+	authReq := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	authReq.AddCookie(sessionCookie)
+	identity, ok := service.AuthenticateRequest(authReq)
+	if !ok || identity == nil {
+		t.Fatal("expected cached session to survive transient revalidation failures")
+	}
+	if identity.Login != "krecik" {
+		t.Fatalf("identity login = %q", identity.Login)
+	}
+
+	claims, err := service.readSession(authReq)
+	if err != nil {
+		t.Fatalf("readSession(): %v", err)
+	}
+	record, ok := service.lookupSession(claims.SessionID)
+	if !ok || record == nil {
+		t.Fatal("expected session to remain in server-side store")
+	}
+	if !record.NextValidationAttempt.After(now) {
+		t.Fatal("expected transient failure to defer the next revalidation attempt")
 	}
 }
 

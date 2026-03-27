@@ -3,6 +3,7 @@ package httpauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -172,7 +173,7 @@ func (p *oidcProvider) discover(ctx context.Context) (*oidcDiscovery, error) {
 func (p *oidcProvider) identityFromToken(ctx context.Context, discovery *oidcDiscovery, accessToken string) (*Identity, error) {
 	var userInfo map[string]any
 	if err := getJSONWithBearer(ctx, p.client, discovery.UserInfoEndpoint, accessToken, &userInfo); err != nil {
-		return nil, err
+		return nil, wrapRevokedAccess(err)
 	}
 
 	identity := &Identity{
@@ -184,10 +185,10 @@ func (p *oidcProvider) identityFromToken(ctx context.Context, discovery *oidcDis
 	}
 	groups := stringSliceValue(userInfo["groups"])
 	if identity.Subject == "" {
-		return nil, fmt.Errorf("OIDC userinfo missing subject")
+		return nil, wrapRevokedAccess(fmt.Errorf("OIDC userinfo missing subject"))
 	}
 	if err := authorizeOIDCIdentity(identity, groups, p.cfg); err != nil {
-		return nil, err
+		return nil, wrapRevokedAccess(err)
 	}
 	return identity, nil
 }
@@ -254,7 +255,7 @@ func (p *githubProvider) scopes() []string {
 func (p *githubProvider) identityFromToken(ctx context.Context, accessToken string) (*Identity, error) {
 	var user githubUser
 	if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user", accessToken, &user); err != nil {
-		return nil, err
+		return nil, wrapRevokedAccess(err)
 	}
 
 	email := strings.TrimSpace(user.Email)
@@ -278,22 +279,22 @@ func (p *githubProvider) identityFromToken(ctx context.Context, accessToken stri
 		Email:    email,
 	}
 	if identity.Subject == "0" {
-		return nil, fmt.Errorf("GitHub user profile is missing id")
+		return nil, wrapRevokedAccess(fmt.Errorf("GitHub user profile is missing id"))
 	}
 	if len(p.cfg.AllowedUsers) > 0 && !containsFold(p.cfg.AllowedUsers, identity.Login) {
-		return nil, fmt.Errorf("GitHub user %q is not allowed", identity.Login)
+		return nil, wrapRevokedAccess(fmt.Errorf("GitHub user %q is not allowed", identity.Login))
 	}
 	if len(p.cfg.AllowedOrgs) > 0 {
 		var orgs []githubOrg
 		if err := getJSONWithBearer(ctx, p.client, "https://api.github.com/user/orgs", accessToken, &orgs); err != nil {
-			return nil, err
+			return nil, wrapRevokedAccess(err)
 		}
 		orgLogins := make([]string, 0, len(orgs))
 		for _, org := range orgs {
 			orgLogins = append(orgLogins, org.Login)
 		}
 		if !intersectsFold(p.cfg.AllowedOrgs, orgLogins) {
-			return nil, fmt.Errorf("GitHub organizations do not satisfy allowlist")
+			return nil, wrapRevokedAccess(fmt.Errorf("GitHub organizations do not satisfy allowlist"))
 		}
 	}
 
@@ -356,9 +357,45 @@ func getJSONWithBearer(ctx context.Context, client *http.Client, endpoint, acces
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s failed with status %d", endpoint, resp.StatusCode)
+		return &providerHTTPError{Endpoint: endpoint, StatusCode: resp.StatusCode}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+type providerHTTPError struct {
+	Endpoint   string
+	StatusCode int
+}
+
+func (e *providerHTTPError) Error() string {
+	return fmt.Sprintf("GET %s failed with status %d", e.Endpoint, e.StatusCode)
+}
+
+func wrapRevokedAccess(err error) error {
+	if err == nil {
+		return nil
+	}
+	var httpErr *providerHTTPError
+	if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusBadRequest || httpErr.StatusCode == http.StatusUnauthorized) {
+		return fmt.Errorf("%w: %v", ErrProviderAccessRevoked, err)
+	}
+	if errors.Is(err, ErrProviderAccessRevoked) {
+		return err
+	}
+	if isProviderAccessControlError(err) {
+		return fmt.Errorf("%w: %v", ErrProviderAccessRevoked, err)
+	}
+	return err
+}
+
+func isProviderAccessControlError(err error) bool {
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	if message == "" {
+		return false
+	}
+	return strings.Contains(message, "not allowed") ||
+		strings.Contains(message, "allowlist") ||
+		strings.Contains(message, "missing subject")
 }
 
 func containsFold(values []string, candidate string) bool {
