@@ -152,3 +152,132 @@ func TestCoreBeginRequestCompletePersistsAndEmits(t *testing.T) {
 		t.Fatalf("saved state = %+v", saved)
 	}
 }
+
+func TestCoreCreateSessionRollsBackOnSaveError(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(baseDir, "demo", ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	core := NewCore(baseDir, t.TempDir(), 10)
+	if _, err := core.CreateSession("demo"); err == nil {
+		t.Fatal("expected CreateSession() to fail when state path is a directory")
+	}
+
+	if sessions := core.ListSessions(); len(sessions) != 0 {
+		t.Fatalf("sessions = %d, want 0", len(sessions))
+	}
+	if _, ok := core.Active(); ok {
+		t.Fatal("expected no active session after rollback")
+	}
+}
+
+func TestCoreSetActiveRollsBackOnSaveError(t *testing.T) {
+	baseDir := t.TempDir()
+	for _, name := range []string{"one", "two"} {
+		if err := os.MkdirAll(filepath.Join(baseDir, name, ".git"), 0755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", name, err)
+		}
+	}
+
+	core := NewCore(baseDir, "", 10)
+	first, err := core.CreateSession("one")
+	if err != nil {
+		t.Fatalf("CreateSession(one): %v", err)
+	}
+	second, err := core.CreateSession("two")
+	if err != nil {
+		t.Fatalf("CreateSession(two): %v", err)
+	}
+
+	core.statePath = t.TempDir()
+	if _, err := core.SetActive(first.ID); err == nil {
+		t.Fatal("expected SetActive() to fail when state path is a directory")
+	}
+
+	active, ok := core.Active()
+	if !ok {
+		t.Fatal("expected active session after rollback")
+	}
+	if active.ID != second.ID {
+		t.Fatalf("active session = %q, want %q", active.ID, second.ID)
+	}
+}
+
+func TestCoreDeleteSessionRollsBackOnSaveError(t *testing.T) {
+	baseDir := t.TempDir()
+	for _, name := range []string{"one", "two"} {
+		if err := os.MkdirAll(filepath.Join(baseDir, name, ".git"), 0755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", name, err)
+		}
+	}
+
+	core := NewCore(baseDir, "", 10)
+	first, err := core.CreateSession("one")
+	if err != nil {
+		t.Fatalf("CreateSession(one): %v", err)
+	}
+	second, err := core.CreateSession("two")
+	if err != nil {
+		t.Fatalf("CreateSession(two): %v", err)
+	}
+
+	core.statePath = t.TempDir()
+	if err := core.DeleteSession(second.ID); err == nil {
+		t.Fatal("expected DeleteSession() to fail when state path is a directory")
+	}
+
+	if _, ok := core.GetSession(second.ID); !ok {
+		t.Fatal("expected deleted session to be restored after rollback")
+	}
+	active, ok := core.Active()
+	if !ok {
+		t.Fatal("expected active session after rollback")
+	}
+	if active.ID != second.ID {
+		t.Fatalf("active session = %q, want %q", active.ID, second.ID)
+	}
+	if _, ok := core.GetSession(first.ID); !ok {
+		t.Fatal("expected untouched session to remain present")
+	}
+}
+
+func TestCoreResolveActiveReturnsSaveError(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(baseDir, "demo", ".git"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	core := NewCore(baseDir, "", 10)
+	sess, err := core.CreateSession("demo")
+	if err != nil {
+		t.Fatalf("CreateSession(): %v", err)
+	}
+
+	core.mu.Lock()
+	core.activeSessionID = ""
+	core.statePath = t.TempDir()
+	core.mu.Unlock()
+
+	if _, err := core.ResolveActive("no sessions", "no active"); err == nil {
+		t.Fatal("expected ResolveActive() to return a save error")
+	}
+
+	active, ok := core.Active()
+	if ok {
+		t.Fatalf("expected no active session after rollback, got %q", active.ID)
+	}
+	if restored, ok := core.GetSession(sess.ID); !ok || restored.ID != sess.ID {
+		t.Fatal("expected session to remain available after failed promotion")
+	}
+}
+
+func TestEventBusUnsubscribeRemovesSubscriber(t *testing.T) {
+	var bus EventBus
+	unsubscribe := bus.Subscribe(func(Event) {})
+	unsubscribe()
+
+	if got := len(bus.subscribers); got != 0 {
+		t.Fatalf("subscriber count = %d, want 0", got)
+	}
+}

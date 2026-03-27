@@ -18,25 +18,32 @@ type persistedState struct {
 
 type EventBus struct {
 	mu          sync.Mutex
-	subscribers []func(Event)
+	nextID      int
+	subscribers map[int]func(Event)
 }
 
 func (b *EventBus) Subscribe(fn func(Event)) func() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.subscribers = append(b.subscribers, fn)
-	idx := len(b.subscribers) - 1
+	if b.subscribers == nil {
+		b.subscribers = make(map[int]func(Event))
+	}
+	id := b.nextID
+	b.nextID++
+	b.subscribers[id] = fn
 	return func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		b.subscribers[idx] = nil
+		delete(b.subscribers, id)
 	}
 }
 
 func (b *EventBus) Emit(event Event) {
 	b.mu.Lock()
-	subs := make([]func(Event), len(b.subscribers))
-	copy(subs, b.subscribers)
+	subs := make([]func(Event), 0, len(b.subscribers))
+	for _, fn := range b.subscribers {
+		subs = append(subs, fn)
+	}
 	b.mu.Unlock()
 	for _, fn := range subs {
 		if fn != nil {
@@ -171,9 +178,12 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 		UpdatedAt: now,
 	}
 
+	previousActive := c.activeSessionID
 	c.sessions[id] = sess
 	c.activeSessionID = id
 	if err := c.saveLocked(); err != nil {
+		delete(c.sessions, id)
+		c.activeSessionID = previousActive
 		c.mu.Unlock()
 		return nil, err
 	}
@@ -240,9 +250,13 @@ func (c *Core) SetActive(id string) (*Session, error) {
 		return nil, fmt.Errorf("session %q not found", id)
 	}
 
+	previousActive := c.activeSessionID
+	previousUpdatedAt := sess.UpdatedAt
 	c.activeSessionID = id
 	sess.UpdatedAt = time.Now()
 	if err := c.saveLocked(); err != nil {
+		c.activeSessionID = previousActive
+		sess.UpdatedAt = previousUpdatedAt
 		return nil, err
 	}
 
@@ -262,9 +276,13 @@ func (c *Core) ResolveActive(noSessionsError, noActiveError string) (*Session, e
 	}
 
 	if len(c.sessions) == 1 {
+		previousActive := c.activeSessionID
 		for id, sess := range c.sessions {
 			c.activeSessionID = id
-			_ = c.saveLocked()
+			if err := c.saveLocked(); err != nil {
+				c.activeSessionID = previousActive
+				return nil, fmt.Errorf("persisting active session: %w", err)
+			}
 			return CloneSession(sess), nil
 		}
 	}
@@ -284,12 +302,18 @@ func (c *Core) DeleteSession(id string) error {
 		return fmt.Errorf("session %q not found", id)
 	}
 
+	deleted := c.sessions[id]
+	previousActive := c.activeSessionID
 	delete(c.sessions, id)
 	if c.activeSessionID == id {
 		c.activeSessionID = latestSessionIDLocked(c.sessions)
 	}
 
 	err := c.saveLocked()
+	if err != nil {
+		c.sessions[id] = deleted
+		c.activeSessionID = previousActive
+	}
 	c.mu.Unlock()
 
 	if err == nil {
@@ -313,9 +337,9 @@ func (c *Core) BeginRequest(id string, userMessage Message) (*Request, *Session,
 	sess.Busy = true
 	sess.Messages = AppendMessageWithLimit(sess.Messages, userMessage, c.maxMessages)
 	snapshot := CloneSession(sess)
+	c.wg.Add(1)
 	c.mu.Unlock()
 
-	c.wg.Add(1)
 	c.Emit(Event{Type: EventMessageReceived, SessionID: id, Message: CloneMessage(&userMessage)})
 	c.Emit(Event{Type: EventBusyChanged, SessionID: id, Busy: true})
 
