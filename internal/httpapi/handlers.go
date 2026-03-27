@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,11 +13,16 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
-	"github.com/zevro-ai/remote-control-on-demand/internal/session"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions := s.sessionMgr.List()
+	if s.runtimeProvider == nil {
+		writeJSON(w, http.StatusOK, []sessionResponse{})
+		return
+	}
+
+	sessions := s.runtimeProvider.ListSessions()
 	resp := make([]sessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
 		resp = append(resp, toSessionResponse(sess))
@@ -25,12 +31,17 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	if s.runtimeProvider == nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+		return
+	}
+
 	var req createSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
-	sess, err := s.sessionMgr.Start(req.Folder)
+	sess, err := s.runtimeProvider.CreateSession(req.Folder)
 	if err != nil {
 		writeManagerError(w, err)
 		return
@@ -39,8 +50,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	if s.runtimeProvider == nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+		return
+	}
+
 	id := r.PathValue("id")
-	if err := s.sessionMgr.Kill(id); err != nil {
+	if err := s.runtimeProvider.DeleteSession(id); err != nil {
 		writeManagerError(w, err)
 		return
 	}
@@ -48,12 +64,17 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
+	if s.runtimeProvider == nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+		return
+	}
+
 	id := r.PathValue("id")
-	if err := s.sessionMgr.Restart(id); err != nil {
+	if err := s.runtimeProvider.RestartSession(id); err != nil {
 		writeManagerError(w, err)
 		return
 	}
-	sess, ok := s.sessionMgr.Get(id)
+	sess, ok := s.runtimeProvider.GetSession(id)
 	if !ok {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "restarted"})
 		return
@@ -62,8 +83,13 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
+	if s.runtimeProvider == nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+		return
+	}
+
 	id := r.PathValue("id")
-	sess, ok := s.sessionMgr.Get(id)
+	sess, ok := s.runtimeProvider.GetSession(id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
@@ -76,16 +102,17 @@ func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	lines := sess.OutputBuf.Lines(n)
+	lines := sess.SnapshotLogs(n)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
 }
 
 // Generic Chat Provider Handlers
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
-	providers := make([]string, 0, len(s.providers))
-	for id := range s.providers {
-		providers = append(providers, id)
+	chatProviders := s.registry.ChatProviders()
+	providers := make([]string, 0, len(chatProviders))
+	for _, p := range chatProviders {
+		providers = append(providers, p.Metadata().ID)
 	}
 	sort.Strings(providers)
 	writeJSON(w, http.StatusOK, providers)
@@ -96,11 +123,12 @@ func (s *Server) handleListChatSessions(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	providerID := p.Metadata().ID
 
 	sessions := p.ListSessions()
 	resp := make([]chatSessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
-		resp = append(resp, toChatSessionResponse(sess, p.ID()))
+		resp = append(resp, toChatSessionResponse(sess, providerID))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -110,6 +138,7 @@ func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	providerID := p.Metadata().ID
 
 	var req createSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -122,7 +151,7 @@ func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request)
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, p.ID()))
+	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, providerID))
 }
 
 func (s *Server) handleGetChatMessages(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +179,7 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	providerID := p.Metadata().ID
 
 	id := r.PathValue("id")
 	message, attachments, err := s.parseSendMessageRequest(r, id)
@@ -172,7 +202,7 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toChatSessionResponse(sess, p.ID()),
+		"session": toChatSessionResponse(sess, providerID),
 	})
 }
 
@@ -199,6 +229,7 @@ func (s *Server) handleRunChatCommand(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	providerID := p.Metadata().ID
 
 	id := r.PathValue("id")
 	var req runCommandRequest
@@ -219,7 +250,7 @@ func (s *Server) handleRunChatCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toChatSessionResponse(sess, p.ID()),
+		"session": toChatSessionResponse(sess, providerID),
 	})
 }
 
@@ -244,9 +275,9 @@ func (s *Server) handleDeleteChatSession(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) getProvider(w http.ResponseWriter, r *http.Request) (chat.Provider, bool) {
+func (s *Server) getProvider(w http.ResponseWriter, r *http.Request) (provider.ChatProvider, bool) {
 	id := r.PathValue("provider")
-	p, ok := s.providers[id]
+	p, ok := s.registry.ChatProvider(id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q not found", id)})
 		return nil, false
@@ -255,8 +286,50 @@ func (s *Server) getProvider(w http.ResponseWriter, r *http.Request) (chat.Provi
 }
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
-	folders := s.sessionMgr.ListFolders()
+	if s.runtimeProvider == nil {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+	folders := listFolders(s.runtimeProvider.BaseFolder())
 	writeJSON(w, http.StatusOK, folders)
+}
+
+func listFolders(baseFolder string) []string {
+	info, err := os.Stat(baseFolder)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+
+	var folders []string
+	_ = filepath.WalkDir(baseFolder, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || path == baseFolder {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
+		if strings.HasPrefix(name, ".") {
+			return filepath.SkipDir
+		}
+		switch name {
+		case "node_modules", "vendor", "dist", "build", "tmp":
+			return filepath.SkipDir
+		}
+
+		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+			rel, err := filepath.Rel(baseFolder, path)
+			if err == nil && rel != "." {
+				folders = append(folders, rel)
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
+	sort.Strings(folders)
+	return folders
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -317,26 +390,22 @@ func storedAttachmentsFromMessages(messages []chat.Message) []storedAttachment {
 
 // Helpers
 
-func toSessionResponse(sess *session.Session) sessionResponse {
-	pid := 0
-	if sess.Cmd != nil && sess.Cmd.Process != nil {
-		pid = sess.Cmd.Process.Pid
+func toSessionResponse(sess provider.RuntimeSession) sessionResponse {
+	if sess == nil {
+		return sessionResponse{}
 	}
-	url := sess.ClaudeURL
-	if url == "" {
-		url = sess.URL
-	}
+	snapshot := sess.Snapshot()
 	return sessionResponse{
-		ID:        sess.ID,
-		Folder:    sess.Folder,
-		RelName:   sess.RelName,
-		Status:    string(sess.Status),
+		ID:        snapshot.ID,
+		Folder:    snapshot.Folder,
+		RelName:   snapshot.RelName,
+		Status:    snapshot.Status,
 		Agent:     "claude",
-		URL:       url,
-		PID:       pid,
-		StartedAt: formatTime(sess.StartedAt),
-		Restarts:  sess.Restarts,
-		Uptime:    time.Since(sess.StartedAt).Truncate(time.Second).String(),
+		URL:       snapshot.URL,
+		PID:       snapshot.PID,
+		StartedAt: formatTime(snapshot.StartedAt),
+		Restarts:  snapshot.Restarts,
+		Uptime:    time.Since(snapshot.StartedAt).Truncate(time.Second).String(),
 	}
 }
 
