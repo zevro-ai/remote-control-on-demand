@@ -36,8 +36,15 @@ func newHub() *Hub {
 
 func (h *Hub) start(runtimeProvider provider.RuntimeProvider, registry *provider.Registry) {
 	if runtimeProvider != nil {
+		metadata := runtimeProvider.Metadata()
+		providerMeta := toProviderMetadataResponse(metadata)
 		h.unsubSession = runtimeProvider.Subscribe(func(notification provider.RuntimeNotification) {
-			h.broadcast(wsMessage{Type: "notification", Provider: notification.Provider, Line: notification.Message})
+			h.broadcast(wsMessage{
+				Type:         "notification",
+				Provider:     notification.Provider,
+				ProviderMeta: &providerMeta,
+				Line:         notification.Message,
+			})
 		})
 	}
 
@@ -46,24 +53,26 @@ func (h *Hub) start(runtimeProvider provider.RuntimeProvider, registry *provider
 	}
 
 	for _, p := range registry.ChatProviders() {
-		providerID := p.Metadata().ID
+		metadata := p.Metadata()
 		unsub := p.Subscribe(func(e chat.Event) {
-			h.handleChatEvent(providerID, e)
+			h.handleChatEvent(metadata, e)
 		})
 		h.unsubChat = append(h.unsubChat, unsub)
 	}
 }
 
-func (h *Hub) handleChatEvent(providerID string, e chat.Event) {
+func (h *Hub) handleChatEvent(metadata provider.Metadata, e chat.Event) {
+	providerMeta := toProviderMetadataResponse(metadata)
 	msg := wsMessage{
-		Provider:  providerID,
-		SessionID: e.SessionID,
+		Provider:     metadata.ID,
+		ProviderMeta: &providerMeta,
+		SessionID:    e.SessionID,
 	}
 
 	switch e.Type {
 	case chat.EventSessionCreated:
 		msg.Type = "chat_session_added"
-		msg.Session = toChatSessionResponse(e.Session, providerID)
+		msg.Session = toChatSessionResponse(e.Session, metadata)
 	case chat.EventSessionClosed:
 		msg.Type = "chat_session_removed"
 	case chat.EventMessageReceived:
@@ -238,6 +247,9 @@ func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
 	if s.runtimeProvider == nil {
 		return
 	}
+	runtimeMetadata := s.runtimeProvider.Metadata()
+	runtimeProviderID := runtimeMetadata.ID
+	runtimeProviderMeta := toProviderMetadataResponse(runtimeMetadata)
 
 	sess, ok := s.runtimeProvider.GetSession(sessionID)
 	if !ok {
@@ -258,10 +270,11 @@ func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
 
 	for _, line := range snapshot {
 		data, _ := json.Marshal(wsMessage{
-			Type:      "log",
-			Provider:  s.runtimeProvider.Metadata().ID,
-			SessionID: sessionID,
-			Line:      line,
+			Type:         "log",
+			Provider:     runtimeProviderID,
+			ProviderMeta: &runtimeProviderMeta,
+			SessionID:    sessionID,
+			Line:         line,
 		})
 		select {
 		case c.send <- data:
@@ -284,10 +297,11 @@ func (s *Server) subscribeClientToSession(c *wsClient, sessionID string) {
 					return
 				}
 				data, _ := json.Marshal(wsMessage{
-					Type:      "log",
-					Provider:  s.runtimeProvider.Metadata().ID,
-					SessionID: sessionID,
-					Line:      line,
+					Type:         "log",
+					Provider:     runtimeProviderID,
+					ProviderMeta: &runtimeProviderMeta,
+					SessionID:    sessionID,
+					Line:         line,
 				})
 				select {
 				case c.send <- data:

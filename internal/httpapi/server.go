@@ -55,6 +55,7 @@ func (s *Server) Start() {
 	mux.HandleFunc("GET /api/sessions/{id}/logs", s.handleSessionLogs)
 
 	// Generic Chat Provider API
+	mux.HandleFunc("GET /api/providers", s.handleListProviderMetadata)
 	mux.HandleFunc("GET /api/chat/providers", s.handleListProviders)
 	mux.HandleFunc("GET /api/chat/{provider}/sessions", s.handleListChatSessions)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions", s.handleCreateChatSession)

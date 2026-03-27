@@ -53,6 +53,7 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	mux.HandleFunc("GET /api/folders", srv.handleListFolders)
 
 	// Generic Chat Provider API
+	mux.HandleFunc("GET /api/providers", srv.handleListProviderMetadata)
 	mux.HandleFunc("GET /api/chat/providers", srv.handleListProviders)
 	mux.HandleFunc("GET /api/chat/{provider}/sessions", srv.handleListChatSessions)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions", srv.handleCreateChatSession)
@@ -330,10 +331,30 @@ func TestListCodexSessions_Empty(t *testing.T) {
 	}
 }
 
-func TestListProviders_ReturnsProviderMetadata(t *testing.T) {
+func TestListChatProviders_ReturnsLegacyProviderIDs(t *testing.T) {
 	_, mux := setupTestServer(t)
 
 	req := httptest.NewRequest("GET", "/api/chat/providers", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var providers []string
+	if err := json.NewDecoder(rr.Body).Decode(&providers); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if len(providers) != 2 || providers[0] != "claude" || providers[1] != "codex" {
+		t.Fatalf("providers = %#v, want [claude codex]", providers)
+	}
+}
+
+func TestListProviderMetadata_ReturnsProviderMetadata(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/providers", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -394,6 +415,9 @@ func TestCreateSession_ResponseIncludesProvider(t *testing.T) {
 	if resp.Provider != "claude" || resp.Agent != "claude" {
 		t.Fatalf("runtime session provider = %q agent = %q, want claude/claude", resp.Provider, resp.Agent)
 	}
+	if resp.ProviderMeta.ID != "claude" || resp.ProviderMeta.Runtime == nil {
+		t.Fatalf("runtime provider metadata = %#v", resp.ProviderMeta)
+	}
 
 	if err := srv.runtimeProvider.DeleteSession(resp.ID); err == nil {
 		waitForRuntimeSessionStopped(t, srv.runtimeProvider, resp.ID)
@@ -428,6 +452,9 @@ func TestCreateChatSession_ResponseIncludesProvider(t *testing.T) {
 	}
 	if resp.Provider != "codex" || resp.Agent != "codex" {
 		t.Fatalf("chat session provider = %q agent = %q, want codex/codex", resp.Provider, resp.Agent)
+	}
+	if resp.ProviderMeta.ID != "codex" || resp.ProviderMeta.Chat == nil {
+		t.Fatalf("chat provider metadata = %#v", resp.ProviderMeta)
 	}
 }
 
@@ -868,7 +895,17 @@ func TestHubHandleChatEvent_EmbedsProviderInSessionPayload(t *testing.T) {
 	hub.addClient(client)
 	defer hub.removeClient(client)
 
-	hub.handleChatEvent("codex", chat.Event{
+	hub.handleChatEvent(provider.Metadata{
+		ID:          "codex",
+		DisplayName: "Codex",
+		Chat: &provider.ChatCapabilities{
+			StreamingDeltas:   true,
+			ToolCallStreaming: true,
+			ShellCommandExec:  true,
+			ThreadResume:      true,
+			ImageAttachments:  true,
+		},
+	}, chat.Event{
 		Type:      chat.EventSessionCreated,
 		SessionID: "codex-1",
 		Session: &chat.Session{
@@ -883,9 +920,10 @@ func TestHubHandleChatEvent_EmbedsProviderInSessionPayload(t *testing.T) {
 	select {
 	case data := <-client.send:
 		var msg struct {
-			Type     string              `json:"type"`
-			Provider string              `json:"provider"`
-			Session  chatSessionResponse `json:"session"`
+			Type         string                   `json:"type"`
+			Provider     string                   `json:"provider"`
+			ProviderMeta providerMetadataResponse `json:"provider_meta"`
+			Session      chatSessionResponse      `json:"session"`
 		}
 		if err := json.Unmarshal(data, &msg); err != nil {
 			t.Fatalf("Unmarshal(): %v", err)
@@ -896,8 +934,14 @@ func TestHubHandleChatEvent_EmbedsProviderInSessionPayload(t *testing.T) {
 		if msg.Provider != "codex" {
 			t.Fatalf("provider = %q, want %q", msg.Provider, "codex")
 		}
+		if msg.ProviderMeta.ID != "codex" || msg.ProviderMeta.Chat == nil {
+			t.Fatalf("provider_meta = %#v", msg.ProviderMeta)
+		}
 		if msg.Session.Provider != "codex" || msg.Session.Agent != "codex" {
 			t.Fatalf("session payload = %#v", msg.Session)
+		}
+		if msg.Session.ProviderMeta.ID != "codex" || msg.Session.ProviderMeta.Chat == nil {
+			t.Fatalf("session provider metadata = %#v", msg.Session.ProviderMeta)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for websocket payload")
@@ -943,6 +987,9 @@ func TestSubscribeClientToSession_LogPayloadIncludesProvider(t *testing.T) {
 		}
 		if msg.Provider != "claude" {
 			t.Fatalf("provider = %q, want %q", msg.Provider, "claude")
+		}
+		if msg.ProviderMeta == nil || msg.ProviderMeta.ID != "claude" || msg.ProviderMeta.Runtime == nil {
+			t.Fatalf("provider_meta = %#v", msg.ProviderMeta)
 		}
 		if msg.SessionID != "runtime-1" {
 			t.Fatalf("session_id = %q, want %q", msg.SessionID, "runtime-1")

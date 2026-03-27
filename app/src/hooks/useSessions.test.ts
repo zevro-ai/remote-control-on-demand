@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { Session } from "../api/types";
-import { reduceSessionsState, resolveBootstrapResults, sessionsInitialState } from "./useSessions";
+import type { ProviderMetadata, Session } from "../api/types";
+import { normalizeProviders, reduceSessionsState, resolveBootstrapResults, sessionsInitialState } from "./useSessions";
 
 function makeSession(overrides: Partial<Session>): Session {
   return {
@@ -85,5 +85,31 @@ describe("resolveBootstrapResults", () => {
     expect(results.loadError).toBe(
       "Some services failed to load: RC: sessions down; Claude: claude down; Codex: codex down"
     );
+  });
+});
+
+describe("normalizeProviders", () => {
+  it("preserves provider metadata objects from the backend", () => {
+    const metadata: ProviderMetadata = {
+      id: "codex",
+      display_name: "Codex",
+      chat: {
+        streaming_deltas: true,
+        tool_call_streaming: true,
+        image_attachments: true,
+        shell_command_exec: true,
+        thread_resume: true,
+        external_url_detection: false,
+      },
+    };
+
+    expect(normalizeProviders([metadata])).toEqual([metadata]);
+  });
+
+  it("normalizes legacy provider id arrays into metadata objects", () => {
+    expect(normalizeProviders(["claude", "codex"])).toEqual([
+      { id: "claude", display_name: "Claude" },
+      { id: "codex", display_name: "Codex" },
+    ]);
   });
 });

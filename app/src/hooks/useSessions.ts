@@ -22,6 +22,7 @@ import { mergeIncomingMessage, removeOptimisticMessage } from "../lib/realtimeMe
 import { isUnauthorizedError } from "../lib/requestErrors";
 
 interface State {
+  providers: Record<string, ProviderMetadata>;
   sessions: Session[];
   chatSessions: Record<string, ChatSession[]>; // provider -> sessions
   logs: Record<string, string[]>;
@@ -32,6 +33,7 @@ interface State {
 }
 
 interface BootstrapData {
+  providers: Record<string, ProviderMetadata>;
   sessions: Session[];
   chatSessions: Record<string, ChatSession[]>;
   authRequired: boolean;
@@ -39,6 +41,7 @@ interface BootstrapData {
 }
 
 type Action =
+  | { type: "SET_PROVIDERS"; providers: Record<string, ProviderMetadata> }
   | { type: "SET_SESSIONS"; sessions: Session[] }
   | { type: "SET_CHAT_SESSIONS"; provider: string; sessions: ChatSession[] }
   | { type: "UPDATE_SESSION"; session: Session }
@@ -65,6 +68,8 @@ const MAX_LOG_LINES = 100;
 
 export function reduceSessionsState(state: State, action: Action): State {
   switch (action.type) {
+    case "SET_PROVIDERS":
+      return { ...state, providers: action.providers };
     case "SET_SESSIONS":
       return { ...state, sessions: action.sessions };
     case "SET_CHAT_SESSIONS":
@@ -223,6 +228,7 @@ function omitKey<T>(input: Record<string, T>, key: string) {
 }
 
 export const sessionsInitialState: State = {
+  providers: {},
   sessions: [],
   chatSessions: {},
   logs: {},
@@ -236,8 +242,12 @@ function resolveProviderLabel(provider: string) {
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
-function normalizeProviderIds(providers: Array<string | ProviderMetadata>) {
-  return providers.map((provider) => (typeof provider === "string" ? provider : provider.id));
+export function normalizeProviders(providers: Array<string | ProviderMetadata>) {
+  return providers.map((provider) =>
+    typeof provider === "string"
+      ? { id: provider, display_name: resolveProviderLabel(provider) }
+      : provider
+  );
 }
 
 export function resolveBootstrapResults(
@@ -267,6 +277,7 @@ export function resolveBootstrapResults(
   const authRequired = !anySuccess && results.some((res) => res.status === "rejected" && isUnauthorizedError(res.reason));
 
   return {
+    providers: {},
     sessions,
     chatSessions,
     authRequired,
@@ -275,12 +286,21 @@ export function resolveBootstrapResults(
 }
 
 async function fetchBootstrapData(): Promise<BootstrapData> {
-  const providerResponse = await api.get<Array<string | ProviderMetadata>>("/api/chat/providers");
-  const providers = normalizeProviderIds(providerResponse);
+  const providerResponse = await api
+    .get<Array<string | ProviderMetadata>>("/api/providers")
+    .catch(async (error) => {
+      if ((error as { status?: number }).status === 404) {
+        return api.get<Array<string | ProviderMetadata>>("/api/chat/providers");
+      }
+      throw error;
+    });
+  const providers = normalizeProviders(providerResponse);
+  const providerIDs = providers.map((provider) => provider.id);
+  const providerMap = Object.fromEntries(providers.map((provider) => [provider.id, provider])) as Record<string, ProviderMetadata>;
 
-  const chatPromises = providers.map(async (p) => {
-    const sessions = await api.get<ChatSession[]>(`/api/chat/${p}/sessions`);
-    return { provider: p, sessions };
+  const chatPromises = providerIDs.map(async (provider) => {
+    const sessions = await api.get<ChatSession[]>(`/api/chat/${provider}/sessions`);
+    return { provider, sessions };
   });
 
   const results = await Promise.allSettled([
@@ -288,7 +308,8 @@ async function fetchBootstrapData(): Promise<BootstrapData> {
     ...chatPromises,
   ]);
 
-  return resolveBootstrapResults(providers, results);
+  const bootstrap = resolveBootstrapResults(providerIDs, results);
+  return { ...bootstrap, providers: providerMap };
 }
 
 type Actions = {
@@ -358,6 +379,7 @@ export function useSessionsReducer() {
   const subscribedSessionIdsRef = useRef(new Set<string>());
 
   const applyBootstrapData = (data: BootstrapData) => {
+    dispatch({ type: "SET_PROVIDERS", providers: data.providers });
     dispatch({ type: "SET_SESSIONS", sessions: data.sessions });
     Object.entries(data.chatSessions).forEach(([provider, sessions]) => {
       dispatch({ type: "SET_CHAT_SESSIONS", provider, sessions });

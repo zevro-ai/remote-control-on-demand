@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,11 +21,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providerID := s.runtimeProvider.Metadata().ID
+	metadata := s.runtimeProvider.Metadata()
 	sessions := s.runtimeProvider.ListSessions()
 	resp := make([]sessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
-		resp = append(resp, toSessionResponse(sess, providerID))
+		resp = append(resp, toSessionResponse(sess, metadata))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -45,7 +46,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toSessionResponse(sess, s.runtimeProvider.Metadata().ID))
+	writeJSON(w, http.StatusCreated, toSessionResponse(sess, s.runtimeProvider.Metadata()))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +79,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "restarted"})
 		return
 	}
-	writeJSON(w, http.StatusOK, toSessionResponse(sess, s.runtimeProvider.Metadata().ID))
+	writeJSON(w, http.StatusOK, toSessionResponse(sess, s.runtimeProvider.Metadata()))
 }
 
 func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +109,16 @@ func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 // Generic Chat Provider Handlers
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
+	chatProviders := s.registry.ChatProviders()
+	providers := make([]string, 0, len(chatProviders))
+	for _, p := range chatProviders {
+		providers = append(providers, p.Metadata().ID)
+	}
+	sort.Strings(providers)
+	writeJSON(w, http.StatusOK, providers)
+}
+
+func (s *Server) handleListProviderMetadata(w http.ResponseWriter, r *http.Request) {
 	tools := s.registry.Tools()
 	providers := make([]providerMetadataResponse, 0, len(tools))
 	for _, tool := range tools {
@@ -124,12 +135,12 @@ func (s *Server) handleListChatSessions(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	providerID := p.Metadata().ID
 
 	sessions := p.ListSessions()
+	metadata := p.Metadata()
 	resp := make([]chatSessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
-		resp = append(resp, toChatSessionResponse(sess, providerID))
+		resp = append(resp, toChatSessionResponse(sess, metadata))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -139,7 +150,6 @@ func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	providerID := p.Metadata().ID
 
 	var req createSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -152,7 +162,7 @@ func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request)
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, providerID))
+	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, p.Metadata()))
 }
 
 func (s *Server) handleGetChatMessages(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +190,6 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	providerID := p.Metadata().ID
 
 	id := r.PathValue("id")
 	message, attachments, err := s.parseSendMessageRequest(r, id)
@@ -203,7 +212,7 @@ func (s *Server) handleSendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toChatSessionResponse(sess, providerID),
+		"session": toChatSessionResponse(sess, p.Metadata()),
 	})
 }
 
@@ -230,7 +239,6 @@ func (s *Server) handleRunChatCommand(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	providerID := p.Metadata().ID
 
 	id := r.PathValue("id")
 	var req runCommandRequest
@@ -251,7 +259,7 @@ func (s *Server) handleRunChatCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"session": toChatSessionResponse(sess, providerID),
+		"session": toChatSessionResponse(sess, p.Metadata()),
 	})
 }
 
@@ -353,27 +361,28 @@ func storedAttachmentsFromMessages(messages []chat.Message) []storedAttachment {
 
 // Helpers
 
-func toSessionResponse(sess provider.RuntimeSession, providerID string) sessionResponse {
+func toSessionResponse(sess provider.RuntimeSession, metadata provider.Metadata) sessionResponse {
 	if sess == nil {
 		return sessionResponse{}
 	}
 	snapshot := sess.Snapshot()
 	return sessionResponse{
-		ID:        snapshot.ID,
-		Folder:    snapshot.Folder,
-		RelName:   snapshot.RelName,
-		Status:    snapshot.Status,
-		Provider:  providerID,
-		Agent:     providerID,
-		URL:       snapshot.URL,
-		PID:       snapshot.PID,
-		StartedAt: formatTime(snapshot.StartedAt),
-		Restarts:  snapshot.Restarts,
-		Uptime:    time.Since(snapshot.StartedAt).Truncate(time.Second).String(),
+		ID:           snapshot.ID,
+		Folder:       snapshot.Folder,
+		RelName:      snapshot.RelName,
+		Status:       snapshot.Status,
+		Provider:     metadata.ID,
+		ProviderMeta: toProviderMetadataResponse(metadata),
+		Agent:        metadata.ID,
+		URL:          snapshot.URL,
+		PID:          snapshot.PID,
+		StartedAt:    formatTime(snapshot.StartedAt),
+		Restarts:     snapshot.Restarts,
+		Uptime:       time.Since(snapshot.StartedAt).Truncate(time.Second).String(),
 	}
 }
 
-func toChatSessionResponse(sess *chat.Session, provider string) chatSessionResponse {
+func toChatSessionResponse(sess *chat.Session, metadata provider.Metadata) chatSessionResponse {
 	if sess == nil {
 		return chatSessionResponse{}
 	}
@@ -382,16 +391,17 @@ func toChatSessionResponse(sess *chat.Session, provider string) chatSessionRespo
 		msgs = append(msgs, toMessagePayload(m))
 	}
 	return chatSessionResponse{
-		ID:        sess.ID,
-		Folder:    sess.Folder,
-		RelName:   sess.RelName,
-		Provider:  provider,
-		Agent:     provider,
-		ThreadID:  sess.ThreadID,
-		Busy:      sess.Busy,
-		CreatedAt: formatTime(sess.CreatedAt),
-		UpdatedAt: formatTime(sess.UpdatedAt),
-		Messages:  msgs,
+		ID:           sess.ID,
+		Folder:       sess.Folder,
+		RelName:      sess.RelName,
+		Provider:     metadata.ID,
+		ProviderMeta: toProviderMetadataResponse(metadata),
+		Agent:        metadata.ID,
+		ThreadID:     sess.ThreadID,
+		Busy:         sess.Busy,
+		CreatedAt:    formatTime(sess.CreatedAt),
+		UpdatedAt:    formatTime(sess.UpdatedAt),
+		Messages:     msgs,
 	}
 }
 
