@@ -131,6 +131,9 @@ func (c *Core) Restore() error {
 			continue
 		}
 		sess.Busy = false
+		if !sess.ThreadReady && sess.ThreadID != "" && sessionHasAssistantTextReply(sess) {
+			sess.ThreadReady = true
+		}
 		c.sessions[sess.ID] = sess
 	}
 	if _, ok := c.sessions[c.activeSessionID]; !ok {
@@ -138,6 +141,15 @@ func (c *Core) Restore() error {
 	}
 
 	return nil
+}
+
+func sessionHasAssistantTextReply(sess *Session) bool {
+	for _, msg := range sess.Messages {
+		if msg.Role == "assistant" && msg.Kind == "text" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Core) CreateSession(folder string) (*Session, error) {

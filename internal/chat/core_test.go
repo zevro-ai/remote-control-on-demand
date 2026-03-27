@@ -46,6 +46,47 @@ func TestCoreRestoreResetsBusyState(t *testing.T) {
 	}
 }
 
+func TestCoreRestoreInfersThreadReadyFromAssistantReply(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "sessions.json")
+	now := time.Now().UTC()
+	data, err := json.Marshal(persistedState{
+		ActiveSessionID: "one",
+		Sessions: []*Session{
+			{
+				ID:        "one",
+				Folder:    "/tmp/demo",
+				RelName:   "demo",
+				ThreadID:  "019d-thread",
+				CreatedAt: now,
+				UpdatedAt: now,
+				Messages: []Message{
+					{Role: "user", Kind: "text", Content: "ping", Timestamp: now},
+					{Role: "assistant", Kind: "text", Content: "pong", Timestamp: now},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal(): %v", err)
+	}
+	if err := os.WriteFile(statePath, data, 0600); err != nil {
+		t.Fatalf("WriteFile(): %v", err)
+	}
+
+	core := NewCore(t.TempDir(), statePath, 10)
+	if err := core.Restore(); err != nil {
+		t.Fatalf("Restore(): %v", err)
+	}
+
+	sess, ok := core.GetSession("one")
+	if !ok {
+		t.Fatal("expected restored session")
+	}
+	if !sess.ThreadReady {
+		t.Fatal("expected restored session to infer thread readiness from assistant reply")
+	}
+}
+
 func TestCoreCreateDeleteAndResolveActive(t *testing.T) {
 	baseDir := t.TempDir()
 	for _, name := range []string{"one", "two", "three"} {

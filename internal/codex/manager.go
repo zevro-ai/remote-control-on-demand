@@ -202,6 +202,7 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []cha
 	clone, saveErr := request.Complete(func(current *chat.Session) *chat.Message {
 		if threadID != "" {
 			current.ThreadID = threadID
+			current.ThreadReady = true
 		}
 		if err != nil || reply == "" {
 			return nil
@@ -369,7 +370,7 @@ func buildCodexArgs(
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
 
-	if !hasAssistantReply(sess) {
+	if !sess.ThreadReady || sess.ThreadID == "" {
 		args = append(args, "--json")
 		if !dangerouslyBypassSandbox {
 			args = append(args, "--sandbox", sandbox)
@@ -390,15 +391,6 @@ func buildCodexArgs(
 	args = append(args, sess.ThreadID, prompt)
 	args = appendImageArgs(args, attachments)
 	return args
-}
-
-func hasAssistantReply(sess *chat.Session) bool {
-	for _, msg := range sess.Messages {
-		if msg.Role == "assistant" && msg.Kind == "text" {
-			return true
-		}
-	}
-	return false
 }
 
 func appendImageArgs(args []string, attachments []chat.Attachment) []string {

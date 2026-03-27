@@ -105,8 +105,9 @@ func TestBuildCodexArgsNewSessionWithImages(t *testing.T) {
 
 func TestBuildCodexArgsResumeDangerousBypass(t *testing.T) {
 	sess := &chat.Session{
-		RelName:  "remote-control-on-demand",
-		ThreadID: "thread-123",
+		RelName:     "remote-control-on-demand",
+		ThreadID:    "thread-123",
+		ThreadReady: true,
 		Messages: []chat.Message{
 			{Role: "assistant", Kind: "text", Content: "done"},
 		},
@@ -131,8 +132,9 @@ func TestBuildCodexArgsResumeDangerousBypass(t *testing.T) {
 
 func TestBuildCodexArgsResumeWithImages(t *testing.T) {
 	sess := &chat.Session{
-		RelName:  "remote-control-on-demand",
-		ThreadID: "thread-123",
+		RelName:     "remote-control-on-demand",
+		ThreadID:    "thread-123",
+		ThreadReady: true,
 		Messages: []chat.Message{
 			{Role: "assistant", Kind: "text", Content: "done"},
 		},
@@ -298,6 +300,9 @@ func TestSendStartsNewCodexSessionWithoutResumeID(t *testing.T) {
 	if updated.ThreadID != "019d3066-632d-7d83-8be4-725ab37de218" {
 		t.Fatalf("updated.ThreadID = %q", updated.ThreadID)
 	}
+	if !updated.ThreadReady {
+		t.Fatal("updated.ThreadReady = false, want true after first successful Codex reply")
+	}
 }
 
 func TestBuildCodexArgsLegacyThreadIDWithoutAssistantReplyStartsFreshExec(t *testing.T) {
@@ -318,6 +323,33 @@ func TestBuildCodexArgsLegacyThreadIDWithoutAssistantReplyStartsFreshExec(t *tes
 		"--model",
 		"gpt-5",
 		initialPrompt(sess, "continue"),
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("buildCodexArgs() mismatch\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestBuildCodexArgsResumesThreadReadySessionWithoutAssistantTextInWindow(t *testing.T) {
+	sess := &chat.Session{
+		RelName:     "remote-control-on-demand",
+		ThreadID:    "019d-real-thread",
+		ThreadReady: true,
+		Messages: []chat.Message{
+			{Role: "user", Kind: "bash", Content: "ls"},
+			{Role: "assistant", Kind: "bash_result", Content: "file.txt"},
+		},
+	}
+
+	got := buildCodexArgs(sess, "continue", nil, "workspace-write", "gpt-5", false)
+	want := []string{
+		"exec",
+		"resume",
+		"--json",
+		"--model",
+		"gpt-5",
+		"019d-real-thread",
+		"continue",
 	}
 
 	if !reflect.DeepEqual(got, want) {
