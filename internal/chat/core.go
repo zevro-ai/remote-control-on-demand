@@ -368,9 +368,9 @@ func (c *Core) saveLocked() error {
 
 	sessions := make([]*Session, 0, len(c.sessions))
 	for _, sess := range c.sessions {
-		copy := CloneSession(sess)
-		copy.Busy = false
-		sessions = append(sessions, copy)
+		cloned := CloneSession(sess)
+		cloned.Busy = false
+		sessions = append(sessions, cloned)
 	}
 
 	sort.Slice(sessions, func(i, j int) bool {

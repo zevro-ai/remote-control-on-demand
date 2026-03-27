@@ -477,10 +477,11 @@ func TestClosePromotesMostRecentRemainingSession(t *testing.T) {
 	}
 	_ = first
 
+	time.Sleep(50 * time.Millisecond)
 	if _, err := mgr.SetActive(second.ID); err != nil {
 		t.Fatalf("SetActive(second): %v", err)
 	}
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	if _, err := mgr.SetActive(third.ID); err != nil {
 		t.Fatalf("SetActive(third): %v", err)
 	}
