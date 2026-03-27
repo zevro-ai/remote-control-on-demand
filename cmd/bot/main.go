@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/bot"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
@@ -81,15 +80,16 @@ func main() {
 		log.Fatalf("Creating state directory: %v", err)
 	}
 
+	claudeRuntime := cfg.ClaudeRuntimeSettings()
 	statePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "sessions.json")
 	mgr := session.NewManager(
 		runner,
-		cfg.RC.BaseFolder,
+		claudeRuntime.BaseFolder,
 		statePath,
-		cfg.RC.AutoRestart,
-		cfg.RC.MaxRestarts,
-		time.Duration(cfg.RC.RestartDelaySeconds)*time.Second,
-		cfg.RC.Notifications,
+		claudeRuntime.AutoRestart,
+		claudeRuntime.MaxRestarts,
+		claudeRuntime.RestartDelay,
+		claudeRuntime.Notifications,
 	)
 
 	if err := mgr.Restore(); err != nil {

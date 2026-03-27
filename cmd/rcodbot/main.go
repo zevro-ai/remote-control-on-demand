@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
@@ -88,14 +87,15 @@ func main() {
 	}
 
 	sessionStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "sessions.json")
+	claudeRuntime := cfg.ClaudeRuntimeSettings()
 	sessionMgr := session.NewManager(
 		runner,
-		cfg.RC.BaseFolder,
+		claudeRuntime.BaseFolder,
 		sessionStatePath,
-		cfg.RC.AutoRestart,
-		cfg.RC.MaxRestarts,
-		time.Duration(cfg.RC.RestartDelaySeconds)*time.Second,
-		cfg.RC.Notifications,
+		claudeRuntime.AutoRestart,
+		claudeRuntime.MaxRestarts,
+		claudeRuntime.RestartDelay,
+		claudeRuntime.Notifications,
 	)
 	if err := sessionMgr.Restore(); err != nil {
 		log.Printf("Warning: Failed to restore Claude sessions: %v", err)
@@ -103,14 +103,14 @@ func main() {
 
 	codexStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "codex_sessions.json")
 	codexMgr := codex.NewManager(cfg.RC.BaseFolder, codexStatePath)
-	codexMgr.ConfigurePermissionMode(cfg.RC.PermissionMode)
+	codexMgr.ConfigurePermissionMode(cfg.CodexChatPermissionMode())
 	if err := codexMgr.Restore(); err != nil {
 		log.Fatalf("Restoring Codex sessions: %v", err)
 	}
 
 	claudeStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "claude_sessions.json")
 	claudeMgr := claudechat.NewManager(cfg.RC.BaseFolder, claudeStatePath)
-	claudeMgr.ConfigurePermissionMode(cfg.RC.PermissionMode)
+	claudeMgr.ConfigurePermissionMode(cfg.ClaudeChatPermissionMode())
 	if err := claudeMgr.Restore(); err != nil {
 		log.Fatalf("Restoring Claude chat sessions: %v", err)
 	}
@@ -135,7 +135,7 @@ func main() {
 			DisplayName: "Claude",
 			Runtime: &provider.RuntimeCapabilities{
 				LongRunningProcesses: true,
-				AutoRestart:          cfg.RC.AutoRestart,
+				AutoRestart:          claudeRuntime.AutoRestart,
 				ExternalURLDetection: true,
 			},
 		}, sessionMgr)
@@ -154,7 +154,7 @@ func main() {
 			log.Fatalf("Registering Codex chat provider: %v", err)
 		}
 
-		httpSrv = httpapi.NewServer(cfg.API, runtimeProvider, registry)
+		httpSrv = httpapi.NewServer(cfg.API, "claude", registry)
 		go httpSrv.Start()
 	}
 

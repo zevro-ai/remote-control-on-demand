@@ -291,3 +291,110 @@ func TestConfigValidatePermissionMode(t *testing.T) {
 		t.Fatalf("expected rc.permission_mode error, got %v", err)
 	}
 }
+
+func TestConfigValidateProviderSpecificSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &Config{
+		Telegram: TelegramConfig{
+			Token:         "token",
+			AllowedUserID: 123,
+		},
+		RC: RCConfig{
+			BaseFolder: tmpDir,
+		},
+		Providers: ProvidersConfig{
+			Claude: ClaudeProviderConfig{
+				Chat: ProviderChatConfig{
+					PermissionMode: "plan",
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected invalid provider-specific permission mode error")
+	}
+	if !strings.Contains(err.Error(), "providers: claude: chat") {
+		t.Fatalf("expected providers claude chat error, got %v", err)
+	}
+}
+
+func TestConfigResolvedProviderSettings(t *testing.T) {
+	cfg := &Config{
+		RC: RCConfig{
+			BaseFolder:          "/tmp/projects",
+			PermissionMode:      PermissionModeReadOnly,
+			AutoRestart:         true,
+			MaxRestarts:         3,
+			RestartDelaySeconds: 5,
+			Notifications: &NotificationsConfig{
+				IdleTimeout: Duration(5 * time.Minute),
+			},
+		},
+		Providers: ProvidersConfig{
+			Claude: ClaudeProviderConfig{
+				Chat: ProviderChatConfig{
+					PermissionMode: PermissionModeDangerFull,
+				},
+				Runtime: ProviderRuntimeConfig{
+					AutoRestart:         boolPtr(false),
+					MaxRestarts:         intPtr(9),
+					RestartDelaySeconds: intPtr(12),
+				},
+			},
+			Codex: CodexProviderConfig{
+				Chat: ProviderChatConfig{
+					PermissionMode: PermissionModeWorkspace,
+				},
+			},
+		},
+	}
+
+	runtimeSettings := cfg.ClaudeRuntimeSettings()
+	if runtimeSettings.BaseFolder != "/tmp/projects" {
+		t.Fatalf("BaseFolder = %q", runtimeSettings.BaseFolder)
+	}
+	if runtimeSettings.AutoRestart {
+		t.Fatal("expected provider runtime auto_restart override to disable restarts")
+	}
+	if runtimeSettings.MaxRestarts != 9 {
+		t.Fatalf("MaxRestarts = %d, want 9", runtimeSettings.MaxRestarts)
+	}
+	if runtimeSettings.RestartDelay != 12*time.Second {
+		t.Fatalf("RestartDelay = %v, want 12s", runtimeSettings.RestartDelay)
+	}
+	if runtimeSettings.Notifications == nil || time.Duration(runtimeSettings.Notifications.IdleTimeout) != 5*time.Minute {
+		t.Fatalf("Notifications = %#v", runtimeSettings.Notifications)
+	}
+	if cfg.ClaudeChatPermissionMode() != PermissionModeDangerFull {
+		t.Fatalf("ClaudeChatPermissionMode() = %q", cfg.ClaudeChatPermissionMode())
+	}
+	if cfg.CodexChatPermissionMode() != PermissionModeWorkspace {
+		t.Fatalf("CodexChatPermissionMode() = %q", cfg.CodexChatPermissionMode())
+	}
+}
+
+func TestConfigResolvedProviderSettingsFallbackToLegacyRC(t *testing.T) {
+	cfg := &Config{
+		RC: RCConfig{
+			BaseFolder:          "/tmp/projects",
+			PermissionMode:      PermissionModeWorkspace,
+			AutoRestart:         true,
+			MaxRestarts:         2,
+			RestartDelaySeconds: 7,
+		},
+	}
+
+	runtimeSettings := cfg.ClaudeRuntimeSettings()
+	if !runtimeSettings.AutoRestart || runtimeSettings.MaxRestarts != 2 || runtimeSettings.RestartDelay != 7*time.Second {
+		t.Fatalf("runtime settings = %#v", runtimeSettings)
+	}
+	if cfg.ClaudeChatPermissionMode() != PermissionModeWorkspace {
+		t.Fatalf("ClaudeChatPermissionMode() = %q", cfg.ClaudeChatPermissionMode())
+	}
+	if cfg.CodexChatPermissionMode() != PermissionModeWorkspace {
+		t.Fatalf("CodexChatPermissionMode() = %q", cfg.CodexChatPermissionMode())
+	}
+}

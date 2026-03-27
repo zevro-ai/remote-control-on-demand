@@ -33,6 +33,12 @@ func TestRunOnboardingEnablesDashboardAndWritesConfig(t *testing.T) {
 	if cfg.API.Token != "generated-dashboard-token" {
 		t.Fatalf("expected generated dashboard token to be saved, got %q", cfg.API.Token)
 	}
+	if cfg.CodexChatPermissionMode() != DefaultCodexPermissionMode {
+		t.Fatalf("expected codex permission mode %q, got %q", DefaultCodexPermissionMode, cfg.CodexChatPermissionMode())
+	}
+	if cfg.ClaudeRuntimeSettings().AutoRestart {
+		t.Fatal("expected onboarding fixture to keep claude runtime auto_restart disabled")
+	}
 
 	if !strings.Contains(output, "Dashboard URL: http://127.0.0.1:3001/") {
 		t.Fatalf("expected output to include dashboard URL, got %q", output)
@@ -54,6 +60,9 @@ func TestRunOnboardingEnablesDashboardAndWritesConfig(t *testing.T) {
 	}
 	if !strings.Contains(configYAML, "token: generated-dashboard-token") {
 		t.Fatalf("expected saved config to include dashboard token, got %q", configYAML)
+	}
+	if !strings.Contains(configYAML, "providers:\n") || !strings.Contains(configYAML, "claude:\n") || !strings.Contains(configYAML, "codex:\n") {
+		t.Fatalf("expected saved config to include provider sections, got %q", configYAML)
 	}
 }
 

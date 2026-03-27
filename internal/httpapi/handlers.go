@@ -16,13 +16,14 @@ import (
 )
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	if s.runtimeProvider == nil {
+	runtimeProvider, ok := s.defaultRuntimeProvider()
+	if !ok {
 		writeJSON(w, http.StatusOK, []sessionResponse{})
 		return
 	}
 
-	metadata := s.runtimeProvider.Metadata()
-	sessions := s.runtimeProvider.ListSessions()
+	metadata := runtimeProvider.Metadata()
+	sessions := runtimeProvider.ListSessions()
 	resp := make([]sessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
 		resp = append(resp, toSessionResponse(sess, metadata))
@@ -31,7 +32,8 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
-	if s.runtimeProvider == nil {
+	runtimeProvider, ok := s.defaultRuntimeProvider()
+	if !ok {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
 		return
 	}
@@ -41,22 +43,27 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
-	sess, err := s.runtimeProvider.CreateSession(req.Folder)
+	sess, err := runtimeProvider.CreateSession(req.Folder)
 	if err != nil {
 		writeManagerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toSessionResponse(sess, s.runtimeProvider.Metadata()))
+	writeJSON(w, http.StatusCreated, toSessionResponse(sess, runtimeProvider.Metadata()))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	if s.runtimeProvider == nil {
-		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+	runtimeProvider, _, ok := s.findRuntimeProviderBySessionID(r.PathValue("id"))
+	if !ok {
+		if _, exists := s.defaultRuntimeProvider(); !exists {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+			return
+		}
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
 	}
 
 	id := r.PathValue("id")
-	if err := s.runtimeProvider.DeleteSession(id); err != nil {
+	if err := runtimeProvider.DeleteSession(id); err != nil {
 		writeManagerError(w, err)
 		return
 	}
@@ -64,32 +71,32 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request) {
-	if s.runtimeProvider == nil {
-		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+	runtimeProvider, metadata, ok := s.findRuntimeProviderBySessionID(r.PathValue("id"))
+	if !ok {
+		if _, exists := s.defaultRuntimeProvider(); !exists {
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+			return
+		}
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
 	}
 
 	id := r.PathValue("id")
-	if err := s.runtimeProvider.RestartSession(id); err != nil {
+	if err := runtimeProvider.RestartSession(id); err != nil {
 		writeManagerError(w, err)
 		return
 	}
-	sess, ok := s.runtimeProvider.GetSession(id)
+	sess, ok := runtimeProvider.GetSession(id)
 	if !ok {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "restarted"})
 		return
 	}
-	writeJSON(w, http.StatusOK, toSessionResponse(sess, s.runtimeProvider.Metadata()))
+	writeJSON(w, http.StatusOK, toSessionResponse(sess, metadata))
 }
 
 func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
-	if s.runtimeProvider == nil {
-		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
-		return
-	}
-
 	id := r.PathValue("id")
-	sess, ok := s.runtimeProvider.GetSession(id)
+	_, _, sess, ok := s.findRuntimeSession(id)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
 		return
@@ -104,6 +111,94 @@ func (s *Server) handleSessionLogs(w http.ResponseWriter, r *http.Request) {
 
 	lines := sess.SnapshotLogs(n)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
+}
+
+func (s *Server) handleListProviderRuntimeSessions(w http.ResponseWriter, r *http.Request) {
+	runtimeProvider, metadata, ok := s.getRuntimeProvider(w, r)
+	if !ok {
+		return
+	}
+
+	sessions := runtimeProvider.ListSessions()
+	resp := make([]sessionResponse, 0, len(sessions))
+	for _, sess := range sessions {
+		resp = append(resp, toSessionResponse(sess, metadata))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleCreateProviderRuntimeSession(w http.ResponseWriter, r *http.Request) {
+	runtimeProvider, metadata, ok := s.getRuntimeProvider(w, r)
+	if !ok {
+		return
+	}
+
+	var req createSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		return
+	}
+
+	sess, err := runtimeProvider.CreateSession(req.Folder)
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toSessionResponse(sess, metadata))
+}
+
+func (s *Server) handleDeleteProviderRuntimeSession(w http.ResponseWriter, r *http.Request) {
+	runtimeProvider, _, ok := s.getRuntimeProvider(w, r)
+	if !ok {
+		return
+	}
+
+	if err := runtimeProvider.DeleteSession(r.PathValue("id")); err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRestartProviderRuntimeSession(w http.ResponseWriter, r *http.Request) {
+	runtimeProvider, metadata, ok := s.getRuntimeProvider(w, r)
+	if !ok {
+		return
+	}
+
+	id := r.PathValue("id")
+	if err := runtimeProvider.RestartSession(id); err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	sess, ok := runtimeProvider.GetSession(id)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "restarted"})
+		return
+	}
+	writeJSON(w, http.StatusOK, toSessionResponse(sess, metadata))
+}
+
+func (s *Server) handleProviderRuntimeSessionLogs(w http.ResponseWriter, r *http.Request) {
+	runtimeProvider, _, ok := s.getRuntimeProvider(w, r)
+	if !ok {
+		return
+	}
+
+	sess, ok := runtimeProvider.GetSession(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "session not found"})
+		return
+	}
+
+	n := 50
+	if qn := r.URL.Query().Get("lines"); qn != "" {
+		if parsed, err := strconv.Atoi(qn); err == nil && parsed > 0 {
+			n = parsed
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"lines": sess.SnapshotLogs(n)})
 }
 
 // Generic Chat Provider Handlers
@@ -126,6 +221,15 @@ func (s *Server) handleListProviderMetadata(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 		providers = append(providers, toProviderMetadataResponse(tool.Metadata))
+	}
+	writeJSON(w, http.StatusOK, providers)
+}
+
+func (s *Server) handleListRuntimeProviderMetadata(w http.ResponseWriter, r *http.Request) {
+	runtimeProviders := s.registry.RuntimeProviders()
+	providers := make([]providerMetadataResponse, 0, len(runtimeProviders))
+	for _, runtimeProvider := range runtimeProviders {
+		providers = append(providers, toProviderMetadataResponse(runtimeProvider.Metadata()))
 	}
 	writeJSON(w, http.StatusOK, providers)
 }
@@ -294,13 +398,89 @@ func (s *Server) getProvider(w http.ResponseWriter, r *http.Request) (provider.C
 	return p, true
 }
 
+func (s *Server) getRuntimeProvider(w http.ResponseWriter, r *http.Request) (provider.RuntimeProvider, provider.Metadata, bool) {
+	id := strings.TrimSpace(r.PathValue("provider"))
+	if id == "" {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "runtime provider not configured"})
+		return nil, provider.Metadata{}, false
+	}
+
+	runtimeProvider, ok := s.registry.RuntimeProvider(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("runtime provider %q not found", id)})
+		return nil, provider.Metadata{}, false
+	}
+	return runtimeProvider, runtimeProvider.Metadata(), true
+}
+
+func (s *Server) defaultRuntimeProvider() (provider.RuntimeProvider, bool) {
+	if s.registry == nil {
+		return nil, false
+	}
+
+	if s.defaultRuntimeProviderID != "" {
+		runtimeProvider, ok := s.registry.RuntimeProvider(s.defaultRuntimeProviderID)
+		if ok {
+			return runtimeProvider, true
+		}
+	}
+
+	runtimeProviders := s.registry.RuntimeProviders()
+	if len(runtimeProviders) == 1 {
+		return runtimeProviders[0], true
+	}
+
+	return nil, false
+}
+
+func (s *Server) findRuntimeProviderBySessionID(sessionID string) (provider.RuntimeProvider, provider.Metadata, bool) {
+	if sessionID == "" || s.registry == nil {
+		return nil, provider.Metadata{}, false
+	}
+
+	if runtimeProvider, ok := s.defaultRuntimeProvider(); ok {
+		if _, exists := runtimeProvider.GetSession(sessionID); exists {
+			return runtimeProvider, runtimeProvider.Metadata(), true
+		}
+	}
+
+	for _, runtimeProvider := range s.registry.RuntimeProviders() {
+		if _, exists := runtimeProvider.GetSession(sessionID); exists {
+			return runtimeProvider, runtimeProvider.Metadata(), true
+		}
+	}
+
+	return nil, provider.Metadata{}, false
+}
+
+func (s *Server) findRuntimeSession(sessionID string) (provider.RuntimeProvider, provider.Metadata, provider.RuntimeSession, bool) {
+	runtimeProvider, metadata, ok := s.findRuntimeProviderBySessionID(sessionID)
+	if !ok {
+		return nil, provider.Metadata{}, nil, false
+	}
+
+	sess, ok := runtimeProvider.GetSession(sessionID)
+	if !ok {
+		return nil, provider.Metadata{}, nil, false
+	}
+	return runtimeProvider, metadata, sess, true
+}
+
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {
-	if s.runtimeProvider == nil {
+	runtimeProvider, ok := s.defaultRuntimeProvider()
+	if !ok {
 		writeJSON(w, http.StatusOK, []string{})
 		return
 	}
-	folders := s.runtimeProvider.ListFolders()
-	writeJSON(w, http.StatusOK, folders)
+	writeJSON(w, http.StatusOK, runtimeProvider.ListFolders())
+}
+
+func (s *Server) handleListProviderFolders(w http.ResponseWriter, r *http.Request) {
+	runtimeProvider, _, ok := s.getRuntimeProvider(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, runtimeProvider.ListFolders())
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {

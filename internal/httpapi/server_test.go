@@ -41,8 +41,8 @@ func setupTestServer(t *testing.T) (*Server, *http.ServeMux) {
 func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, claudeMgr *claudechat.Manager, codexMgr *codex.Manager) (*Server, *http.ServeMux) {
 	t.Helper()
 
-	runtimeProvider, registry := testProviders(t, sessionMgr, claudeMgr, codexMgr)
-	srv := NewServer(config.APIConfig{Port: 0, Token: "test-token"}, runtimeProvider, registry)
+	_, registry := testProviders(t, sessionMgr, claudeMgr, codexMgr)
+	srv := NewServer(config.APIConfig{Port: 0, Token: "test-token"}, "claude", registry)
 	srv.uploadDir = t.TempDir()
 
 	mux := http.NewServeMux()
@@ -50,6 +50,13 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	mux.HandleFunc("POST /api/sessions", srv.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/restart", srv.handleRestartSession)
+	mux.HandleFunc("GET /api/runtime/providers", srv.handleListRuntimeProviderMetadata)
+	mux.HandleFunc("GET /api/runtime/{provider}/sessions", srv.handleListProviderRuntimeSessions)
+	mux.HandleFunc("POST /api/runtime/{provider}/sessions", srv.handleCreateProviderRuntimeSession)
+	mux.HandleFunc("DELETE /api/runtime/{provider}/sessions/{id}", srv.handleDeleteProviderRuntimeSession)
+	mux.HandleFunc("POST /api/runtime/{provider}/sessions/{id}/restart", srv.handleRestartProviderRuntimeSession)
+	mux.HandleFunc("GET /api/runtime/{provider}/sessions/{id}/logs", srv.handleProviderRuntimeSessionLogs)
+	mux.HandleFunc("GET /api/runtime/{provider}/folders", srv.handleListProviderFolders)
 	mux.HandleFunc("GET /api/folders", srv.handleListFolders)
 
 	// Generic Chat Provider API
@@ -100,6 +107,16 @@ func testProviders(t *testing.T, sessionMgr *session.Manager, claudeMgr *claudec
 	}
 
 	return runtimeProvider, registry
+}
+
+func requireDefaultRuntimeProvider(t *testing.T, srv *Server) provider.RuntimeProvider {
+	t.Helper()
+
+	runtimeProvider, ok := srv.defaultRuntimeProvider()
+	if !ok {
+		t.Fatal("expected default runtime provider")
+	}
+	return runtimeProvider
 }
 
 type testRunner struct{}
@@ -299,10 +316,65 @@ func TestListSessions_Empty(t *testing.T) {
 	}
 }
 
+func TestListProviderRuntimeSessions_Empty(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/runtime/claude/sessions", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var sessions []sessionResponse
+	if err := json.NewDecoder(rr.Body).Decode(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected 0 sessions, got %d", len(sessions))
+	}
+}
+
+func TestListRuntimeProviderMetadata_ReturnsRuntimeProviders(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/runtime/providers", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var providers []providerMetadataResponse
+	if err := json.NewDecoder(rr.Body).Decode(&providers); err != nil {
+		t.Fatal(err)
+	}
+	if len(providers) != 1 {
+		t.Fatalf("expected 1 runtime provider, got %d", len(providers))
+	}
+	if providers[0].ID != "claude" || providers[0].Runtime == nil {
+		t.Fatalf("runtime provider payload = %#v", providers[0])
+	}
+}
+
 func TestListFolders(t *testing.T) {
 	_, mux := setupTestServer(t)
 
 	req := httptest.NewRequest("GET", "/api/folders", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestListProviderFolders(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/runtime/claude/folders", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -419,8 +491,9 @@ func TestCreateSession_ResponseIncludesProvider(t *testing.T) {
 		t.Fatalf("runtime provider metadata = %#v", resp.ProviderMeta)
 	}
 
-	if err := srv.runtimeProvider.DeleteSession(resp.ID); err == nil {
-		waitForRuntimeSessionStopped(t, srv.runtimeProvider, resp.ID)
+	runtimeProvider := requireDefaultRuntimeProvider(t, srv)
+	if err := runtimeProvider.DeleteSession(resp.ID); err == nil {
+		waitForRuntimeSessionStopped(t, runtimeProvider, resp.ID)
 	}
 }
 
@@ -759,20 +832,21 @@ func TestSendCodexMessage_NotFoundReturns404(t *testing.T) {
 
 func TestCreateSession_AlreadyRunningReturns409(t *testing.T) {
 	srv, mux := setupTestServer(t)
+	runtimeProvider := requireDefaultRuntimeProvider(t, srv)
 
-	projectDir := filepath.Join(srv.runtimeProvider.BaseFolder(), "demo")
+	projectDir := filepath.Join(runtimeProvider.BaseFolder(), "demo")
 	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0755); err != nil {
 		t.Fatalf("MkdirAll(.git): %v", err)
 	}
 
-	sess, err := srv.runtimeProvider.CreateSession("demo")
+	sess, err := runtimeProvider.CreateSession("demo")
 	if err != nil {
 		t.Fatalf("Start(): %v", err)
 	}
 	t.Cleanup(func() {
 		sessionID := sess.Snapshot().ID
-		if err := srv.runtimeProvider.DeleteSession(sessionID); err == nil {
-			waitForRuntimeSessionStopped(t, srv.runtimeProvider, sessionID)
+		if err := runtimeProvider.DeleteSession(sessionID); err == nil {
+			waitForRuntimeSessionStopped(t, runtimeProvider, sessionID)
 		}
 	})
 
@@ -788,21 +862,22 @@ func TestCreateSession_AlreadyRunningReturns409(t *testing.T) {
 
 func TestDeleteSession_NotRunningReturns409(t *testing.T) {
 	srv, mux := setupTestServer(t)
+	runtimeProvider := requireDefaultRuntimeProvider(t, srv)
 
-	projectDir := filepath.Join(srv.runtimeProvider.BaseFolder(), "demo")
+	projectDir := filepath.Join(runtimeProvider.BaseFolder(), "demo")
 	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0755); err != nil {
 		t.Fatalf("MkdirAll(.git): %v", err)
 	}
 
-	sess, err := srv.runtimeProvider.CreateSession("demo")
+	sess, err := runtimeProvider.CreateSession("demo")
 	if err != nil {
 		t.Fatalf("Start(): %v", err)
 	}
 	sessionID := sess.Snapshot().ID
-	if err := srv.runtimeProvider.DeleteSession(sessionID); err != nil {
+	if err := runtimeProvider.DeleteSession(sessionID); err != nil {
 		t.Fatalf("Kill(): %v", err)
 	}
-	waitForRuntimeSessionStopped(t, srv.runtimeProvider, sessionID)
+	waitForRuntimeSessionStopped(t, runtimeProvider, sessionID)
 
 	req := httptest.NewRequest("DELETE", "/api/sessions/"+sessionID, nil)
 	rr := httptest.NewRecorder()
@@ -831,9 +906,9 @@ func TestWebSocket_Connect(t *testing.T) {
 	claudeMgr := claudechat.NewManager(t.TempDir(), "")
 	codexMgr := codex.NewManager(t.TempDir(), "")
 
-	runtimeProvider, registry := testProviders(t, sessionMgr, claudeMgr, codexMgr)
-	srv := NewServer(config.APIConfig{}, runtimeProvider, registry)
-	srv.hub.start(runtimeProvider, registry)
+	_, registry := testProviders(t, sessionMgr, claudeMgr, codexMgr)
+	srv := NewServer(config.APIConfig{}, "claude", registry)
+	srv.hub.start(registry)
 	defer srv.hub.stop()
 
 	mux := http.NewServeMux()
@@ -856,9 +931,9 @@ func TestWebSocket_RejectsCrossOrigin(t *testing.T) {
 	claudeMgr := claudechat.NewManager(t.TempDir(), "")
 	codexMgr := codex.NewManager(t.TempDir(), "")
 
-	runtimeProvider, registry := testProviders(t, sessionMgr, claudeMgr, codexMgr)
-	srv := NewServer(config.APIConfig{}, runtimeProvider, registry)
-	srv.hub.start(runtimeProvider, registry)
+	_, registry := testProviders(t, sessionMgr, claudeMgr, codexMgr)
+	srv := NewServer(config.APIConfig{}, "claude", registry)
+	srv.hub.start(registry)
 	defer srv.hub.stop()
 
 	mux := http.NewServeMux()
@@ -949,7 +1024,8 @@ func TestHubHandleChatEvent_EmbedsProviderInSessionPayload(t *testing.T) {
 }
 
 func TestSubscribeClientToSession_LogPayloadIncludesProvider(t *testing.T) {
-	srv := NewServer(config.APIConfig{}, stubRuntimeProvider{
+	registry := provider.NewRegistry()
+	runtimeProvider := stubRuntimeProvider{
 		metadata: provider.Metadata{
 			ID:          "claude",
 			DisplayName: "Claude",
@@ -963,7 +1039,12 @@ func TestSubscribeClientToSession_LogPayloadIncludesProvider(t *testing.T) {
 				logs:     []string{"line one"},
 			},
 		},
-	}, provider.NewRegistry())
+	}
+	if err := registry.RegisterRuntime(runtimeProvider); err != nil {
+		t.Fatalf("RegisterRuntime(): %v", err)
+	}
+
+	srv := NewServer(config.APIConfig{}, "claude", registry)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
