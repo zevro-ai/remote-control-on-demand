@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { clearToken, getToken, setToken } from "./api/client";
+import { api, clearToken, getToken, setToken } from "./api/client";
+import type { AuthStatus } from "./api/types";
 import { SessionsContext, useSessionsReducer } from "./hooks/useSessions";
 import { useWs } from "./hooks/WebSocketContext";
 import { useFolders } from "./hooks/useFolders";
@@ -17,6 +18,27 @@ export default function App() {
   const [showModal, setShowModal] = useState(false);
   const [density, setDensity] = useState<OverviewDensity>("comfortable");
   const [tokenDraft, setTokenDraft] = useState(() => getToken() || "");
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    api.get<AuthStatus>("/api/auth/status")
+      .then((status) => {
+        if (!cancelled) {
+          setAuthStatus(status);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuthStatus(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!focusedPanel) {
@@ -39,10 +61,16 @@ export default function App() {
     <SessionsContext.Provider value={{ state, dispatch, actions }}>
       <div className="app-shell">
         <Sidebar
+          authStatus={authStatus}
           providers={state.providers}
           chatSessions={state.chatSessions}
           connected={connected}
           focusedPanel={focusedPanel}
+          onLogout={async () => {
+            clearToken();
+            await api.post("/api/auth/logout");
+            window.location.reload();
+          }}
           onNewSession={() => setShowModal(true)}
           onSelectSession={focusPanel}
         />
@@ -54,6 +82,7 @@ export default function App() {
             </div>
           ) : state.authRequired ? (
             <AuthPrompt
+              authStatus={authStatus}
               value={tokenDraft}
               hasStoredToken={Boolean(getToken())}
               onChange={setTokenDraft}
@@ -92,11 +121,13 @@ export default function App() {
   );
 }
 
-function AuthPrompt({
+export function AuthPrompt({
+  authStatus,
   value,
   hasStoredToken,
   onChange,
 }: {
+  authStatus: AuthStatus | null;
   value: string;
   hasStoredToken: boolean;
   onChange: (value: string) => void;
@@ -116,6 +147,35 @@ function AuthPrompt({
     clearToken();
     onChange("");
   };
+
+  if (authStatus?.mode === "external") {
+    const providerName = authStatus.provider?.display_name || "identity provider";
+    return (
+      <div className="dashboard-empty">
+        <div className="auth-prompt">
+          <div className="auth-prompt__kicker">login required</div>
+          <h2>Unlock dashboard access</h2>
+          <p>
+            This RCOD deployment uses external authentication. Continue with {providerName}
+            to open the dashboard.
+          </p>
+          <div className="auth-prompt__actions">
+            <button
+              type="button"
+              onClick={() => window.location.assign(authStatus.login_url || "/api/auth/login")}
+            >
+              Sign in with {providerName}
+            </button>
+            {hasStoredToken && (
+              <button type="button" className="is-secondary" onClick={handleClear}>
+                Clear stored token
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard-empty">

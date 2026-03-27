@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/zevro-ai/remote-control-on-demand/internal/httpauth"
 )
 
-func authMiddleware(token string, next http.Handler) http.Handler {
-	if token == "" {
+func authMiddleware(auth *httpauth.Service, next http.Handler) http.Handler {
+	if auth == nil || !auth.Enabled() {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -16,13 +18,7 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 			return
 		}
 
-		auth := r.Header.Get("Authorization")
-		if auth == "Bearer "+token {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		if allowsQueryToken(r.URL.Path) && requestToken(r) == token {
+		if _, ok := auth.AuthenticateRequest(r); ok {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -33,25 +29,17 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 }
 
 func requiresAuth(path string) bool {
+	if strings.HasPrefix(path, "/api/auth/") {
+		return false
+	}
 	return path == "/api" ||
 		strings.HasPrefix(path, "/api/") ||
 		path == "/ws"
 }
 
-func allowsQueryToken(path string) bool {
-	return path == "/ws" || strings.HasPrefix(path, "/api/uploads/")
-}
-
-func requestToken(r *http.Request) string {
-	if token := strings.TrimSpace(r.URL.Query().Get("access_token")); token != "" {
-		return token
-	}
-	return strings.TrimSpace(r.URL.Query().Get("token"))
-}
-
-func corsMiddleware(token string, next http.Handler) http.Handler {
+func corsMiddleware(token string, externalAuth bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if origin := allowedCORSOrigin(token, r); origin != "" {
+		if origin := allowedCORSOrigin(token, externalAuth, r); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
@@ -65,8 +53,8 @@ func corsMiddleware(token string, next http.Handler) http.Handler {
 	})
 }
 
-func allowedCORSOrigin(token string, r *http.Request) string {
-	if strings.TrimSpace(token) == "" {
+func allowedCORSOrigin(token string, externalAuth bool, r *http.Request) string {
+	if strings.TrimSpace(token) == "" && !externalAuth {
 		return "*"
 	}
 

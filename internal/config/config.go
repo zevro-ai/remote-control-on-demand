@@ -12,8 +12,34 @@ import (
 )
 
 type APIConfig struct {
-	Port  int    `yaml:"port"`            // default 0 = disabled
-	Token string `yaml:"token,omitempty"` // optional bearer token
+	Port  int            `yaml:"port"`            // default 0 = disabled
+	Token string         `yaml:"token,omitempty"` // optional bearer token
+	Auth  *APIAuthConfig `yaml:"auth,omitempty"`
+}
+
+type APIAuthConfig struct {
+	SessionSecret string             `yaml:"session_secret,omitempty"`
+	OIDC          *OIDCAuthConfig    `yaml:"oidc,omitempty"`
+	GitHub        *GitHubAuthConfig  `yaml:"github,omitempty"`
+}
+
+type OIDCAuthConfig struct {
+	IssuerURL     string   `yaml:"issuer_url,omitempty"`
+	ClientID      string   `yaml:"client_id,omitempty"`
+	ClientSecret  string   `yaml:"client_secret,omitempty"`
+	RedirectURL   string   `yaml:"redirect_url,omitempty"`
+	Scopes        []string `yaml:"scopes,omitempty"`
+	AllowedUsers  []string `yaml:"allowed_users,omitempty"`
+	AllowedEmails []string `yaml:"allowed_emails,omitempty"`
+	AllowedGroups []string `yaml:"allowed_groups,omitempty"`
+}
+
+type GitHubAuthConfig struct {
+	ClientID     string   `yaml:"client_id,omitempty"`
+	ClientSecret string   `yaml:"client_secret,omitempty"`
+	RedirectURL  string   `yaml:"redirect_url,omitempty"`
+	AllowedUsers []string `yaml:"allowed_users,omitempty"`
+	AllowedOrgs  []string `yaml:"allowed_orgs,omitempty"`
 }
 
 type Config struct {
@@ -193,6 +219,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("rc.notifications: %w", err)
 		}
 	}
+	if c.API.Auth != nil {
+		if err := c.API.Auth.Validate(); err != nil {
+			return fmt.Errorf("api.auth: %w", err)
+		}
+	}
 	if err := c.Providers.Validate(); err != nil {
 		return fmt.Errorf("providers: %w", err)
 	}
@@ -215,6 +246,75 @@ func ValidateCodexPermissionMode(permissionMode string) error {
 	default:
 		return fmt.Errorf("must be one of %q, %q, %q, or %q", PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull)
 	}
+}
+
+func (c APIConfig) HasExternalAuth() bool {
+	return c.Auth != nil && (c.Auth.OIDC != nil || c.Auth.GitHub != nil)
+}
+
+func (c *APIAuthConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if len(strings.TrimSpace(c.SessionSecret)) < 32 {
+		return fmt.Errorf("session_secret must be at least 32 characters")
+	}
+
+	providers := 0
+	if c.OIDC != nil {
+		providers++
+		if err := c.OIDC.Validate(); err != nil {
+			return fmt.Errorf("oidc: %w", err)
+		}
+	}
+	if c.GitHub != nil {
+		providers++
+		if err := c.GitHub.Validate(); err != nil {
+			return fmt.Errorf("github: %w", err)
+		}
+	}
+	if providers == 0 {
+		return fmt.Errorf("one auth provider must be configured")
+	}
+	if providers > 1 {
+		return fmt.Errorf("configure only one auth provider at a time")
+	}
+	return nil
+}
+
+func (c *OIDCAuthConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if strings.TrimSpace(c.IssuerURL) == "" {
+		return fmt.Errorf("issuer_url is required")
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return fmt.Errorf("client_id is required")
+	}
+	if strings.TrimSpace(c.ClientSecret) == "" {
+		return fmt.Errorf("client_secret is required")
+	}
+	if strings.TrimSpace(c.RedirectURL) == "" {
+		return fmt.Errorf("redirect_url is required")
+	}
+	return nil
+}
+
+func (c *GitHubAuthConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return fmt.Errorf("client_id is required")
+	}
+	if strings.TrimSpace(c.ClientSecret) == "" {
+		return fmt.Errorf("client_secret is required")
+	}
+	if strings.TrimSpace(c.RedirectURL) == "" {
+		return fmt.Errorf("redirect_url is required")
+	}
+	return nil
 }
 
 func (p ProvidersConfig) Validate() error {

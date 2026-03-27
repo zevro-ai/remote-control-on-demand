@@ -117,12 +117,72 @@ providers:
 
 See [config.example.yaml](./config.example.yaml) for a fuller example with notifications.
 
+### Dashboard Auth
+
+The dashboard/API can run in three auth modes:
+
+- no API auth at all when `api.port` is enabled without `api.token` or `api.auth`
+- bearer token auth with `api.token`
+- external browser login with `api.auth`, using either generic OIDC (for Authentik and similar providers) or GitHub OAuth
+
+External auth uses an RCOD-managed session cookie after login. Browser API calls and WebSocket connections then reuse that cookie automatically. Token auth remains available for scripts and can also stay enabled alongside external auth if you want both machine access and interactive login.
+
+External auth requires:
+
+- `api.auth.session_secret` with at least 32 random characters
+- exactly one provider under `api.auth.oidc` or `api.auth.github`
+- a callback URL pointing back to RCOD, usually `https://your-host/api/auth/callback`
+
+OIDC is the recommended path for Authentik and other self-hosted identity providers. GitHub login is supported separately for teams that want a lightweight OAuth flow without a dedicated IdP.
+
+Example OIDC/Authentik-style config:
+
+```yaml
+api:
+  port: 8080
+  token: ""
+  auth:
+    session_secret: "replace-with-at-least-32-random-characters"
+    oidc:
+      issuer_url: "https://auth.example.com/application/o/rcod/"
+      client_id: "rcod"
+      client_secret: "replace-me"
+      redirect_url: "https://rcod.example.com/api/auth/callback"
+      scopes: ["openid", "profile", "email"]
+      allowed_emails:
+        - "you@example.com"
+      allowed_groups:
+        - "rcod-admins"
+```
+
+Example GitHub config:
+
+```yaml
+api:
+  port: 8080
+  auth:
+    session_secret: "replace-with-at-least-32-random-characters"
+    github:
+      client_id: "Iv1.xxxxx"
+      client_secret: "replace-me"
+      redirect_url: "https://rcod.example.com/api/auth/callback"
+      allowed_users:
+        - "octocat"
+      allowed_orgs:
+        - "zevro-ai"
+```
+
 ### Global Config Fields
 
 | Field | Description |
 | --- | --- |
 | `telegram.token` | Bot token from @BotFather |
 | `telegram.allowed_user_id` | Only this Telegram user can control the bot |
+| `api.port` | Enables the HTTP dashboard/API when greater than `0` |
+| `api.token` | Optional bearer token for API clients and legacy dashboard auth |
+| `api.auth.session_secret` | Required for external dashboard sessions; must be at least 32 characters |
+| `api.auth.oidc.*` | Generic OIDC provider config for Authentik and similar identity providers |
+| `api.auth.github.*` | GitHub OAuth config for external dashboard login |
 | `rc.base_folder` | Directory RCOD scans for git repositories |
 | `providers.claude.runtime.auto_restart` | Enables automatic restart for crashed `claude rc` runtime sessions |
 | `providers.claude.runtime.max_restarts` | Maximum restart attempts before giving up |
@@ -233,7 +293,9 @@ gofmt -w cmd internal
 ## Security Notes
 
 - `config.yaml` contains your Telegram bot token and should stay local
+- `api.auth.session_secret`, OIDC client secrets, and GitHub client secrets should be treated like any other credential
 - Only `telegram.allowed_user_id` can control the bot
+- Dashboard/API auth can be enforced either with `api.token` or an external login provider under `api.auth`
 - Child processes inherit your user account permissions
 - RCOD strips Claude session environment variables before spawning nested `claude rc` processes
 

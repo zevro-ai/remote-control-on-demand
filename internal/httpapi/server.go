@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
+	"github.com/zevro-ai/remote-control-on-demand/internal/httpauth"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi/dashboard"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
@@ -22,6 +23,7 @@ type Server struct {
 	cfg                      config.APIConfig
 	defaultRuntimeProviderID string
 	registry                 *provider.Registry
+	auth                     *httpauth.Service
 	hub                      *Hub
 	httpServer               *http.Server
 	uploadDir                string
@@ -38,6 +40,7 @@ func NewServer(cfg config.APIConfig, defaultRuntimeProviderID string, registry *
 		cfg:                      cfg,
 		defaultRuntimeProviderID: strings.TrimSpace(defaultRuntimeProviderID),
 		registry:                 registry,
+		auth:                     httpauth.NewService(cfg),
 		hub:                      newHub(),
 		uploadDir:                filepath.Join(".rcodbot", "uploads"),
 		spaFS:                    spaFS,
@@ -46,6 +49,13 @@ func NewServer(cfg config.APIConfig, defaultRuntimeProviderID string, registry *
 
 func (s *Server) Start() {
 	mux := http.NewServeMux()
+
+	// Remote Control sessions (legacy/generic)
+	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("GET /api/auth/callback", s.handleAuthCallback)
+	mux.HandleFunc("GET /api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
 
 	// Remote Control sessions (legacy/generic)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
@@ -82,8 +92,8 @@ func (s *Server) Start() {
 	mux.HandleFunc("/", s.handleSPA)
 
 	var handler http.Handler = mux
-	handler = authMiddleware(s.cfg.Token, handler)
-	handler = corsMiddleware(s.cfg.Token, handler)
+	handler = authMiddleware(s.auth, handler)
+	handler = corsMiddleware(strings.TrimSpace(s.cfg.Token), s.auth != nil && s.auth.HasExternalAuth(), handler)
 
 	s.hub.start(s.registry)
 

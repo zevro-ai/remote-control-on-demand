@@ -48,6 +48,29 @@ export interface ProviderMetadata {
   runtime?: RuntimeCapabilities;
 }
 
+export interface AuthProvider {
+  id: string;
+  display_name: string;
+}
+
+export interface AuthUser {
+  provider: string;
+  subject: string;
+  login?: string;
+  name?: string;
+  email?: string;
+}
+
+export interface AuthStatus {
+  mode: "none" | "token" | "external";
+  token_enabled: boolean;
+  provider?: AuthProvider;
+  authenticated: boolean;
+  user?: AuthUser;
+  login_url?: string;
+  logout_url?: string;
+}
+
 export interface Session {
   id: string;
   folder: string;

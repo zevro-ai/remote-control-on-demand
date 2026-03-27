@@ -2,6 +2,29 @@ package httpapi
 
 import "github.com/zevro-ai/remote-control-on-demand/internal/provider"
 
+type authProviderResponse struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
+type authUserResponse struct {
+	Provider string `json:"provider"`
+	Subject  string `json:"subject"`
+	Login    string `json:"login,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Email    string `json:"email,omitempty"`
+}
+
+type authStatusResponse struct {
+	Mode          string                `json:"mode"`
+	TokenEnabled  bool                  `json:"token_enabled"`
+	Provider      *authProviderResponse `json:"provider,omitempty"`
+	Authenticated bool                  `json:"authenticated"`
+	User          *authUserResponse     `json:"user,omitempty"`
+	LoginURL      string                `json:"login_url,omitempty"`
+	LogoutURL     string                `json:"logout_url,omitempty"`
+}
+
 type providerMetadataResponse struct {
 	ID          string                        `json:"id"`
 	DisplayName string                        `json:"display_name"`
