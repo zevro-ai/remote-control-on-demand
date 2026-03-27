@@ -150,21 +150,7 @@ func main() {
 			log.Fatalf("Registering Claude chat provider: %v", err)
 		}
 
-		codexProvider, err := provider.NewChatAdapter(provider.Metadata{
-			ID:          "codex",
-			DisplayName: "Codex",
-			Chat: &provider.ChatCapabilities{
-				StreamingDeltas:   true,
-				ToolCallStreaming: true,
-				ShellCommandExec:  true,
-				ThreadResume:      true,
-				ImageAttachments:  true,
-			},
-		}, codexMgr)
-		if err != nil {
-			log.Fatalf("Creating Codex chat provider registry entry: %v", err)
-		}
-		if err := registry.RegisterChat(codexProvider); err != nil {
+		if err := registry.RegisterChat(codexMgr); err != nil {
 			log.Fatalf("Registering Codex chat provider: %v", err)
 		}
 
