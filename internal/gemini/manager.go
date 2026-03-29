@@ -186,8 +186,12 @@ func (m *Manager) RunCommand(ctx context.Context, id, command string) error {
 }
 
 func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []chat.Attachment) (*chat.Session, string, error) {
+	if len(attachments) > 0 {
+		return nil, "", fmt.Errorf("Gemini chat provider does not support attachments")
+	}
+
 	prompt = strings.TrimSpace(prompt)
-	if prompt == "" && len(attachments) == 0 {
+	if prompt == "" {
 		return nil, "", fmt.Errorf("message cannot be empty")
 	}
 
