@@ -53,11 +53,11 @@ export function SessionGrid({
       ))}
       {chatSessions.map((s) => (
         <ChatCard
-          key={s.id}
+          key={`${s.agent}:${s.id}`}
           session={s}
           busy={chatBusy[s.id] || false}
-          expanded={expandedId === s.id}
-          onToggle={() => toggle(s.id)}
+          expanded={expandedId === `${s.agent}:${s.id}`}
+          onToggle={() => toggle(`${s.agent}:${s.id}`)}
           onSend={onChatSend}
           onClose={onChatClose}
         />

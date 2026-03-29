@@ -290,11 +290,20 @@ func (b *Bot) handleNew(c tele.Context) error {
 	}
 }
 
+type sessionWithProvider struct {
+	sess       *chat.Session
+	providerID string
+}
+
 func (b *Bot) handleSessions(c tele.Context) error {
-	var sessions []*chat.Session
-	sessions = append(sessions, b.codexMgr.ListSessions()...)
+	var sessions []sessionWithProvider
+	for _, s := range b.codexMgr.ListSessions() {
+		sessions = append(sessions, sessionWithProvider{s, "codex"})
+	}
 	if b.geminiMgr != nil {
-		sessions = append(sessions, b.geminiMgr.ListSessions()...)
+		for _, s := range b.geminiMgr.ListSessions() {
+			sessions = append(sessions, sessionWithProvider{s, "gemini"})
+		}
 	}
 
 	if len(sessions) == 0 {
@@ -309,14 +318,12 @@ func (b *Bot) handleSessions(c tele.Context) error {
 
 	var sb strings.Builder
 	sb.WriteString("<b>Chat sessions</b>\n")
-	for _, sess := range sessions {
-		providerID := "codex"
-		isActive := activeCodex != nil && activeCodex.ID == sess.ID
-		if b.geminiMgr != nil {
-			if _, ok := b.geminiMgr.GetSession(sess.ID); ok {
-				providerID = "gemini"
-				isActive = activeGemini != nil && activeGemini.ID == sess.ID
-			}
+	for _, swp := range sessions {
+		isActive := false
+		if swp.providerID == "codex" {
+			isActive = activeCodex != nil && activeCodex.ID == swp.sess.ID
+		} else {
+			isActive = activeGemini != nil && activeGemini.ID == swp.sess.ID
 		}
 
 		marker := " "
@@ -326,9 +333,9 @@ func (b *Bot) handleSessions(c tele.Context) error {
 		sb.WriteString(fmt.Sprintf(
 			"%s <code>%s</code> | <code>%s</code> | %s\n",
 			marker,
-			html.EscapeString(sess.ID),
-			html.EscapeString(sess.RelName),
-			providerID,
+			html.EscapeString(swp.sess.ID),
+			html.EscapeString(swp.sess.RelName),
+			swp.providerID,
 		))
 	}
 
@@ -336,18 +343,30 @@ func (b *Bot) handleSessions(c tele.Context) error {
 }
 
 func (b *Bot) handleUse(c tele.Context) error {
-	id := strings.TrimSpace(c.Message().Payload)
-	if id == "" {
+	payload := strings.TrimSpace(c.Message().Payload)
+	if payload == "" {
 		return b.sendSessionPicker(c, "use", "<b>Select the active session</b>")
+	}
+
+	// For direct commands, we try to guess or require namespacing.
+	// We'll support <provider>:<id> or just <id> (with fallback lookup)
+	parts := strings.Split(payload, ":")
+	var providerID, id string
+	if len(parts) == 2 {
+		providerID, id = parts[0], parts[1]
+	} else {
+		id = payload
 	}
 
 	var sess *chat.Session
 	var err error
-	var providerID string
-	if _, ok := b.codexMgr.GetSession(id); ok {
-		sess, err = b.codexMgr.SetActive(id)
-		providerID = "codex"
-	} else if b.geminiMgr != nil {
+	if providerID == "codex" || providerID == "" {
+		if _, ok := b.codexMgr.GetSession(id); ok {
+			sess, err = b.codexMgr.SetActive(id)
+			providerID = "codex"
+		}
+	}
+	if sess == nil && (providerID == "gemini" || providerID == "") && b.geminiMgr != nil {
 		if _, ok := b.geminiMgr.GetSession(id); ok {
 			sess, err = b.geminiMgr.SetActive(id)
 			providerID = "gemini"
@@ -365,24 +384,35 @@ func (b *Bot) handleUse(c tele.Context) error {
 	b.setCurrentProviderID(providerID)
 
 	return c.Send(
-		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)),
-		b.sessionActions(sess),
+		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code> (%s)", html.EscapeString(sess.ID), html.EscapeString(sess.RelName), providerID),
+		b.sessionActions(sess, providerID),
 		tele.ModeHTML,
 	)
 }
 
 func (b *Bot) handleClose(c tele.Context) error {
-	id := strings.TrimSpace(c.Message().Payload)
-	if id == "" {
+	payload := strings.TrimSpace(c.Message().Payload)
+	if payload == "" {
 		return b.sendSessionPicker(c, "close", "<b>Select a session to close</b>")
+	}
+
+	parts := strings.Split(payload, ":")
+	var providerID, id string
+	if len(parts) == 2 {
+		providerID, id = parts[0], parts[1]
+	} else {
+		id = payload
 	}
 
 	var err error
 	var found bool
-	if _, ok := b.codexMgr.GetSession(id); ok {
-		err = b.codexMgr.DeleteSession(id)
-		found = true
-	} else if b.geminiMgr != nil {
+	if providerID == "codex" || providerID == "" {
+		if _, ok := b.codexMgr.GetSession(id); ok {
+			err = b.codexMgr.DeleteSession(id)
+			found = true
+		}
+	}
+	if !found && (providerID == "gemini" || providerID == "") && b.geminiMgr != nil {
 		if _, ok := b.geminiMgr.GetSession(id); ok {
 			err = b.geminiMgr.DeleteSession(id)
 			found = true
@@ -417,6 +447,11 @@ func (b *Bot) handleCurrent(c tele.Context) error {
 	}
 	if hasGemini {
 		sb.WriteString(fmt.Sprintf("<b>Active Gemini</b>: <code>%s</code> in <code>%s</code>\n", html.EscapeString(activeGemini.ID), html.EscapeString(activeGemini.RelName)))
+	}
+
+	currentID := b.getCurrentProviderID()
+	if currentID != "" {
+		sb.WriteString(fmt.Sprintf("\nDefault provider for chat: <b>%s</b>", currentID))
 	}
 
 	return c.Send(sb.String(), tele.ModeHTML)
@@ -458,7 +493,7 @@ func (b *Bot) handleChat(c tele.Context) error {
 			if sess, ok := b.codexMgr.Active(); ok {
 				mgr = b.codexMgr
 				b.setCurrentProviderID("codex")
-				_ = sess // satisfy unused
+				_ = sess
 			}
 		}
 	}
@@ -524,21 +559,16 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		}
 		return b.handleProviderPick(c, parts[1], parts[2])
 	case "use":
-		if len(parts) != 2 {
+		if len(parts) != 3 {
 			return nil
 		}
-		id := parts[1]
+		providerID, id := parts[1], parts[2]
 		var sess *chat.Session
 		var err error
-		var providerID string
-		if _, ok := b.codexMgr.GetSession(id); ok {
+		if providerID == "codex" {
 			sess, err = b.codexMgr.SetActive(id)
-			providerID = "codex"
-		} else if b.geminiMgr != nil {
-			if _, ok := b.geminiMgr.GetSession(id); ok {
-				sess, err = b.geminiMgr.SetActive(id)
-				providerID = "gemini"
-			}
+		} else if providerID == "gemini" && b.geminiMgr != nil {
+			sess, err = b.geminiMgr.SetActive(id)
 		}
 		if sess == nil {
 			return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
@@ -547,30 +577,24 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
 		b.setCurrentProviderID(providerID)
-		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.sessionActions(sess), tele.ModeHTML)
+		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code> (%s)", html.EscapeString(sess.ID), html.EscapeString(sess.RelName), providerID), b.sessionActions(sess, providerID), tele.ModeHTML)
 	case "close":
-		if len(parts) != 2 {
+		if len(parts) != 3 {
 			return nil
 		}
-		id := parts[1]
+		providerID, id := parts[1], parts[2]
 		var err error
-		var found bool
-		if _, ok := b.codexMgr.GetSession(id); ok {
+		if providerID == "codex" {
 			err = b.codexMgr.DeleteSession(id)
-			found = true
-		} else if b.geminiMgr != nil {
-			if _, ok := b.geminiMgr.GetSession(id); ok {
-				err = b.geminiMgr.DeleteSession(id)
-				found = true
-			}
-		}
-		if !found {
+		} else if providerID == "gemini" && b.geminiMgr != nil {
+			err = b.geminiMgr.DeleteSession(id)
+		} else {
 			return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
 		}
 		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
-		return c.Send(fmt.Sprintf("Closed session <code>%s</code>.", html.EscapeString(id)), tele.ModeHTML)
+		return c.Send(fmt.Sprintf("Closed session <code>%s</code> (%s).", html.EscapeString(id), providerID), tele.ModeHTML)
 	case "start", "kill", "status", "logs", "restart":
 		if len(parts) != 2 {
 			return nil
@@ -655,7 +679,7 @@ func (b *Bot) handleProviderPick(c tele.Context, provider, indexStr string) erro
 		html.EscapeString(sess.ID),
 		html.EscapeString(sess.RelName),
 	)
-	return c.Send(msg, b.sessionActions(sess), tele.ModeHTML)
+	return c.Send(msg, b.sessionActions(sess, provider), tele.ModeHTML)
 }
 
 func (b *Bot) sendChatFolderPicker(c tele.Context, provider string, page int, text string) error {
@@ -690,10 +714,14 @@ func (b *Bot) handleChatNavigation(c tele.Context, data string) error {
 }
 
 func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {
-	var sessions []*chat.Session
-	sessions = append(sessions, b.codexMgr.ListSessions()...)
+	var sessions []sessionWithProvider
+	for _, s := range b.codexMgr.ListSessions() {
+		sessions = append(sessions, sessionWithProvider{s, "codex"})
+	}
 	if b.geminiMgr != nil {
-		sessions = append(sessions, b.geminiMgr.ListSessions()...)
+		for _, s := range b.geminiMgr.ListSessions() {
+			sessions = append(sessions, sessionWithProvider{s, "gemini"})
+		}
 	}
 
 	if len(sessions) == 0 {
@@ -701,33 +729,33 @@ func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {
 	}
 
 	var items []botutil.PickerItem
-	for _, sess := range sessions {
+	for _, swp := range sessions {
 		items = append(items, botutil.PickerItem{
-			Label: fmt.Sprintf("%s - %s", sess.ID, sess.RelName),
-			Data:  action + ":" + sess.ID,
+			Label: fmt.Sprintf("%s - %s (%s)", swp.sess.ID, swp.sess.RelName, swp.providerID),
+			Data:  fmt.Sprintf("%s:%s:%s", action, swp.providerID, swp.sess.ID),
 		})
 	}
 	return c.Send(text, botutil.PickerMarkup(items), tele.ModeHTML)
 }
 
-func (b *Bot) sessionActions(sess *chat.Session) *tele.ReplyMarkup {
+func (b *Bot) sessionActions(sess *chat.Session, providerID string) *tele.ReplyMarkup {
 	markup := &tele.ReplyMarkup{}
 	markup.InlineKeyboard = [][]tele.InlineButton{
 		{
-			{Text: "Use", Data: "use:" + sess.ID},
-			{Text: "Close", Data: "close:" + sess.ID},
+			{Text: "Use", Data: fmt.Sprintf("use:%s:%s", providerID, sess.ID)},
+			{Text: "Close", Data: fmt.Sprintf("close:%s:%s", providerID, sess.ID)},
 		},
 	}
 	return markup
 }
 
-func (b *Bot) sessionPickerMarkup(sessions []*chat.Session) *tele.ReplyMarkup {
+func (b *Bot) sessionPickerMarkup(sessions []sessionWithProvider) *tele.ReplyMarkup {
 	markup := &tele.ReplyMarkup{}
 	var rows [][]tele.InlineButton
-	for _, sess := range sessions {
+	for _, swp := range sessions {
 		rows = append(rows, []tele.InlineButton{
-			{Text: "Use " + sess.ID, Data: "use:" + sess.ID},
-			{Text: "Close", Data: "close:" + sess.ID},
+			{Text: "Use " + swp.sess.ID, Data: fmt.Sprintf("use:%s:%s", swp.providerID, swp.sess.ID)},
+			{Text: "Close", Data: fmt.Sprintf("close:%s:%s", swp.providerID, swp.sess.ID)},
 		})
 	}
 	markup.InlineKeyboard = rows
