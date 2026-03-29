@@ -235,32 +235,40 @@ func TestRedactToken(t *testing.T) {
 }
 
 func TestValidateCodexPermissionMode(t *testing.T) {
-	validModes := []string{
+	validCodexModes := []string{
 		"",
 		PermissionModeBypass,
 		PermissionModeReadOnly,
 		PermissionModeWorkspace,
 		PermissionModeDangerFull,
-		PermissionModeGeminiAutoEdit,
-		PermissionModeGeminiPlan,
-		PermissionModeGeminiYolo,
 	}
 
-	for _, mode := range validModes {
-		t.Run("valid "+NormalizeCodexPermissionMode(mode), func(t *testing.T) {
+	for _, mode := range validCodexModes {
+		t.Run("valid codex "+NormalizeCodexPermissionMode(mode), func(t *testing.T) {
 			if err := ValidateCodexPermissionMode(mode); err != nil {
 				t.Fatalf("expected mode %q to be valid, got %v", mode, err)
 			}
 		})
 	}
 
-	t.Run("invalid mode", func(t *testing.T) {
-		err := ValidateCodexPermissionMode("invalid-mode")
+	validGeminiModes := []string{
+		PermissionModeGeminiAutoEdit,
+		PermissionModeGeminiPlan,
+		PermissionModeGeminiYolo,
+	}
+
+	for _, mode := range validGeminiModes {
+		t.Run("valid gemini "+mode, func(t *testing.T) {
+			if err := ValidateGeminiPermissionMode(mode); err != nil {
+				t.Fatalf("expected mode %q to be valid for Gemini, got %v", mode, err)
+			}
+		})
+	}
+
+	t.Run("invalid codex mode", func(t *testing.T) {
+		err := ValidateCodexPermissionMode("plan")
 		if err == nil {
-			t.Fatal("expected invalid mode error")
-		}
-		if !strings.Contains(err.Error(), PermissionModeWorkspace) {
-			t.Fatalf("expected allowed values in error, got %v", err)
+			t.Fatal("expected invalid mode error for Codex")
 		}
 	})
 }

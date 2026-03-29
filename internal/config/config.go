@@ -251,6 +251,15 @@ func NormalizeCodexPermissionMode(permissionMode string) string {
 
 func ValidateCodexPermissionMode(permissionMode string) error {
 	switch NormalizeCodexPermissionMode(permissionMode) {
+	case PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull:
+		return nil
+	default:
+		return fmt.Errorf("must be one of %q, %q, %q, or %q", PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull)
+	}
+}
+
+func ValidateGeminiPermissionMode(permissionMode string) error {
+	switch NormalizeCodexPermissionMode(permissionMode) {
 	case PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull,
 		PermissionModeGeminiAutoEdit, PermissionModeGeminiPlan, PermissionModeGeminiYolo:
 		return nil
@@ -344,7 +353,7 @@ func (p ProvidersConfig) Validate() error {
 }
 
 func (p ClaudeProviderConfig) Validate() error {
-	if err := p.Chat.Validate(); err != nil {
+	if err := p.Chat.validateWith(ValidateCodexPermissionMode); err != nil {
 		return fmt.Errorf("chat: %w", err)
 	}
 	if err := p.Runtime.Validate(); err != nil {
@@ -354,24 +363,24 @@ func (p ClaudeProviderConfig) Validate() error {
 }
 
 func (p CodexProviderConfig) Validate() error {
-	if err := p.Chat.Validate(); err != nil {
+	if err := p.Chat.validateWith(ValidateCodexPermissionMode); err != nil {
 		return fmt.Errorf("chat: %w", err)
 	}
 	return nil
 }
 
 func (p GeminiProviderConfig) Validate() error {
-	if err := p.Chat.Validate(); err != nil {
+	if err := p.Chat.validateWith(ValidateGeminiPermissionMode); err != nil {
 		return fmt.Errorf("chat: %w", err)
 	}
 	return nil
 }
 
-func (p ProviderChatConfig) Validate() error {
+func (p ProviderChatConfig) validateWith(validator func(string) error) error {
 	if strings.TrimSpace(p.PermissionMode) == "" {
 		return nil
 	}
-	return ValidateCodexPermissionMode(p.PermissionMode)
+	return validator(p.PermissionMode)
 }
 
 func (p ProviderRuntimeConfig) Validate() error {
