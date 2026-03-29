@@ -12,6 +12,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/gemini"
+	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
 )
@@ -24,12 +25,13 @@ type Notifier interface {
 }
 
 type Bot struct {
-	tb            *tele.Bot
-	sessionMgr    *session.Manager
-	codexMgr      *codex.Manager
-	geminiMgr     *gemini.Manager
-	allowedUserID int64
-	unsubSession  func()
+	tb                *tele.Bot
+	sessionMgr        *session.Manager
+	codexMgr          *codex.Manager
+	geminiMgr         *gemini.Manager
+	allowedUserID     int64
+	unsubSession      func()
+	currentProviderID string
 }
 
 // NopBot returns a no-op Notifier for HTTP-only mode.
@@ -173,7 +175,7 @@ func (b *Bot) handleStart(c tele.Context) error {
 }
 
 func (b *Bot) handleHelp(c tele.Context) error {
-	msg := `<b>RCOD + Codex</b>
+	msg := `<b>RCOD + Codex & Gemini</b>
 
 <b>Claude remote control</b>
 <code>/start repo</code> start a Claude session
@@ -184,14 +186,14 @@ func (b *Bot) handleHelp(c tele.Context) error {
 <code>/restart id</code> restart a Claude session
 <code>/folders</code> browse repos for Claude
 
-<b>Codex chat</b>
-<code>/new repo</code> create a Codex session
-<code>/sessions</code> list Codex sessions
-<code>/use id</code> switch active Codex session
-<code>/close id</code> close a Codex session
-<code>/current</code> show active Codex session
+<b>Codex & Gemini chat</b>
+<code>/new repo</code> create a chat session
+<code>/sessions</code> list chat sessions
+<code>/use id</code> switch active chat session
+<code>/close id</code> close a chat session
+<code>/current</code> show active chat session
 
-After creating a Codex session, send a normal text message and it will go to Codex.`
+After creating a chat session, send a normal text message and it will go to the active agent.`
 	return c.Send(msg, tele.ModeHTML)
 }
 
@@ -269,10 +271,13 @@ func (b *Bot) handleUse(c tele.Context) error {
 
 	var sess *chat.Session
 	var err error
+	var providerID string
 	if _, ok := b.codexMgr.GetSession(id); ok {
 		sess, err = b.codexMgr.SetActive(id)
+		providerID = "codex"
 	} else if _, ok = b.geminiMgr.GetSession(id); ok {
 		sess, err = b.geminiMgr.SetActive(id)
+		providerID = "gemini"
 	} else {
 		return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
 	}
@@ -280,6 +285,9 @@ func (b *Bot) handleUse(c tele.Context) error {
 	if err != nil {
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
+
+	b.currentProviderID = providerID
+
 
 	return c.Send(
 		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)),
@@ -337,13 +345,30 @@ func (b *Bot) handleChat(c tele.Context) error {
 		return nil
 	}
 
-	// Default to Gemini if active, then fallback to Codex
 	var mgr chatProvider
-	if _, ok := b.geminiMgr.Active(); ok {
-		mgr = b.geminiMgr
-	} else if _, ok = b.codexMgr.Active(); ok {
-		mgr = b.codexMgr
-	} else {
+	switch b.currentProviderID {
+	case "gemini":
+		if _, ok := b.geminiMgr.Active(); ok {
+			mgr = b.geminiMgr
+		}
+	case "codex":
+		if _, ok := b.codexMgr.Active(); ok {
+			mgr = b.codexMgr
+		}
+	}
+
+	// Fallback logic if currentProviderID is not set or session is gone
+	if mgr == nil {
+		if _, ok := b.geminiMgr.Active(); ok {
+			mgr = b.geminiMgr
+			b.currentProviderID = "gemini"
+		} else if _, ok = b.codexMgr.Active(); ok {
+			mgr = b.codexMgr
+			b.currentProviderID = "codex"
+		}
+	}
+
+	if mgr == nil {
 		return c.Send("No active chat session. Use /new or /use.")
 	}
 
@@ -358,11 +383,12 @@ func (b *Bot) handleChat(c tele.Context) error {
 		return c.Send(err.Error())
 	}
 
-	header := fmt.Sprintf("[%s | %s]\n", replySession.ID, replySession.RelName)
+	header := fmt.Sprintf("[%s | %s | %s]\n", mgr.Metadata().DisplayName, replySession.ID, replySession.RelName)
 	return b.sendTextChunks(c, header+response)
 }
 
 type chatProvider interface {
+	Metadata() provider.Metadata
 	ResolveActive() (*chat.Session, error)
 	Send(ctx context.Context, id, prompt string, attachments []chat.Attachment) (*chat.Session, string, error)
 }
@@ -409,14 +435,18 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		id := parts[1]
 		var sess *chat.Session
 		var err error
+		var providerID string
 		if _, ok := b.codexMgr.GetSession(id); ok {
 			sess, err = b.codexMgr.SetActive(id)
+			providerID = "codex"
 		} else {
 			sess, err = b.geminiMgr.SetActive(id)
+			providerID = "gemini"
 		}
 		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
+		b.currentProviderID = providerID
 		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.sessionActions(sess), tele.ModeHTML)
 	case "close":
 		if len(parts) != 2 {
@@ -493,6 +523,8 @@ func (b *Bot) handleProviderPick(c tele.Context, provider, folder string) error 
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
 
+	b.currentProviderID = provider
+
 	msg := fmt.Sprintf(
 		"<b>%s session created</b>\nID: <code>%s</code>\nProject: <code>%s</code>\n\nSend text to chat.",
 		strings.Title(provider),
@@ -528,9 +560,9 @@ func (b *Bot) handleChatNavigation(c tele.Context, data string) error {
 	if len(parts) != 2 {
 		return nil
 	}
-	provider := parts[0]
+	providerID := parts[0]
 	page, _ := strconv.Atoi(parts[1])
-	return b.sendChatFolderPicker(c, provider, page, "<b>Available repositories</b>\nTap to create a session.")
+	return b.sendChatFolderPicker(c, providerID, page, "<b>Available repositories</b>\nTap to create a session.")
 }
 
 func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {

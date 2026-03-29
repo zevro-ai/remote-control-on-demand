@@ -58,10 +58,12 @@ func (m *Manager) ConfigurePermissionMode(mode string) {
 
 func normalizePermissionMode(mode string) string {
 	switch config.NormalizeCodexPermissionMode(mode) {
-	case config.PermissionModeBypass, config.PermissionModeDangerFull:
+	case config.PermissionModeBypass, config.PermissionModeDangerFull, config.PermissionModeGeminiYolo:
 		return "yolo"
-	case config.PermissionModeReadOnly:
+	case config.PermissionModeReadOnly, config.PermissionModeGeminiPlan:
 		return "plan"
+	case config.PermissionModeGeminiAutoEdit:
+		return "auto_edit"
 	default:
 		return defaultPermissionMode
 	}
