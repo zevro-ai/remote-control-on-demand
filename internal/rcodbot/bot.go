@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"strconv"
 	"strings"
 	"time"
 
@@ -197,13 +198,13 @@ After creating a Codex session, send a normal text message and it will go to Cod
 func (b *Bot) handleNew(c tele.Context) error {
 	folder := strings.TrimSpace(c.Message().Payload)
 	if folder == "" {
-		return b.sendCodexFolderPicker(c, 0, "<b>Select a repository for a new Codex session</b>")
+		return b.sendProviderPicker(c, 0, "<b>Select a provider for a new chat session</b>")
 	}
 
 	resolved, matches := botutil.MatchFolderQuery(b.listGitFolders(), folder)
 	switch {
 	case resolved != "":
-		return b.createSession(c, resolved)
+		return b.sendProviderPickerForFolder(c, resolved, "<b>Select a provider for <code>"+html.EscapeString(resolved)+"</code></b>")
 	case len(matches) == 0:
 		return c.Send(fmt.Sprintf("No project matched <code>%s</code>.", html.EscapeString(folder)), tele.ModeHTML)
 	default:
@@ -223,49 +224,66 @@ func (b *Bot) handleFolders(c tele.Context) error {
 }
 
 func (b *Bot) handleSessions(c tele.Context) error {
-	sessions := b.codexMgr.ListSessions()
+	var sessions []*chat.Session
+	sessions = append(sessions, b.codexMgr.ListSessions()...)
+	sessions = append(sessions, b.geminiMgr.ListSessions()...)
+
 	if len(sessions) == 0 {
-		return c.Send("No Codex sessions yet. Use /new.")
+		return c.Send("No chat sessions yet. Use /new.")
 	}
 
-	active, _ := b.codexMgr.Active()
+	activeCodex, _ := b.codexMgr.Active()
+	activeGemini, _ := b.geminiMgr.Active()
+
 	var sb strings.Builder
-	sb.WriteString("<b>Codex sessions</b>\n")
+	sb.WriteString("<b>Chat sessions</b>\n")
 	for _, sess := range sessions {
-		marker := " "
-		if active != nil && active.ID == sess.ID {
-			marker = "*"
+		providerID := "codex"
+		isActive := activeCodex != nil && activeCodex.ID == sess.ID
+		if _, ok := b.geminiMgr.GetSession(sess.ID); ok {
+			providerID = "gemini"
+			isActive = activeGemini != nil && activeGemini.ID == sess.ID
 		}
-		thread := "new"
-		if sess.ThreadID != "" {
-			thread = "live"
+
+		marker := " "
+		if isActive {
+			marker = "*"
 		}
 		sb.WriteString(fmt.Sprintf(
 			"%s <code>%s</code> | <code>%s</code> | %s\n",
 			marker,
 			html.EscapeString(sess.ID),
 			html.EscapeString(sess.RelName),
-			thread,
+			providerID,
 		))
 	}
 
-	return c.Send(sb.String(), b.codexSessionPickerMarkup(sessions), tele.ModeHTML)
+	return c.Send(sb.String(), b.sessionPickerMarkup(sessions), tele.ModeHTML)
 }
 
 func (b *Bot) handleUse(c tele.Context) error {
 	id := strings.TrimSpace(c.Message().Payload)
 	if id == "" {
-		return b.sendCodexSessionPicker(c, "cuse", "<b>Select the active session</b>")
+		return b.sendSessionPicker(c, "use", "<b>Select the active session</b>")
 	}
 
-	sess, err := b.codexMgr.SetActive(id)
+	var sess *chat.Session
+	var err error
+	if _, ok := b.codexMgr.GetSession(id); ok {
+		sess, err = b.codexMgr.SetActive(id)
+	} else if _, ok = b.geminiMgr.GetSession(id); ok {
+		sess, err = b.geminiMgr.SetActive(id)
+	} else {
+		return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
+	}
+
 	if err != nil {
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
 
 	return c.Send(
 		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)),
-		b.codexSessionActions(sess),
+		b.sessionActions(sess),
 		tele.ModeHTML,
 	)
 }
@@ -273,32 +291,41 @@ func (b *Bot) handleUse(c tele.Context) error {
 func (b *Bot) handleClose(c tele.Context) error {
 	id := strings.TrimSpace(c.Message().Payload)
 	if id == "" {
-		return b.sendCodexSessionPicker(c, "cclose", "<b>Select a session to close</b>")
+		return b.sendSessionPicker(c, "close", "<b>Select a session to close</b>")
 	}
 
-	if err := b.codexMgr.DeleteSession(id); err != nil {
+	var err error
+	if _, ok := b.codexMgr.GetSession(id); ok {
+		err = b.codexMgr.DeleteSession(id)
+	} else if _, ok = b.geminiMgr.GetSession(id); ok {
+		err = b.geminiMgr.DeleteSession(id)
+	} else {
+		return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
+	}
+
+	if err != nil {
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
 	return c.Send(fmt.Sprintf("Closed session <code>%s</code>.", html.EscapeString(id)), tele.ModeHTML)
 }
 
 func (b *Bot) handleCurrent(c tele.Context) error {
-	sess, ok := b.codexMgr.Active()
-	if !ok {
+	activeCodex, hasCodex := b.codexMgr.Active()
+	activeGemini, hasGemini := b.geminiMgr.Active()
+
+	if !hasCodex && !hasGemini {
 		return c.Send("No active session. Use /new or /use.")
 	}
 
-	thread := "not started"
-	if sess.ThreadID != "" {
-		thread = sess.ThreadID
+	var sb strings.Builder
+	if hasCodex {
+		sb.WriteString(fmt.Sprintf("<b>Active Codex</b>: <code>%s</code> in <code>%s</code>\n", html.EscapeString(activeCodex.ID), html.EscapeString(activeCodex.RelName)))
 	}
-	msg := fmt.Sprintf(
-		"<b>Active session</b>\nID: <code>%s</code>\nProject: <code>%s</code>\nThread: <code>%s</code>",
-		html.EscapeString(sess.ID),
-		html.EscapeString(sess.RelName),
-		html.EscapeString(thread),
-	)
-	return c.Send(msg, b.codexSessionActions(sess), tele.ModeHTML)
+	if hasGemini {
+		sb.WriteString(fmt.Sprintf("<b>Active Gemini</b>: <code>%s</code> in <code>%s</code>\n", html.EscapeString(activeGemini.ID), html.EscapeString(activeGemini.RelName)))
+	}
+
+	return c.Send(sb.String(), tele.ModeHTML)
 }
 
 func (b *Bot) handleChat(c tele.Context) error {
@@ -310,19 +337,34 @@ func (b *Bot) handleChat(c tele.Context) error {
 		return nil
 	}
 
-	sess, err := b.codexMgr.ResolveActive()
+	// Default to Gemini if active, then fallback to Codex
+	var mgr chatProvider
+	if _, ok := b.geminiMgr.Active(); ok {
+		mgr = b.geminiMgr
+	} else if _, ok = b.codexMgr.Active(); ok {
+		mgr = b.codexMgr
+	} else {
+		return c.Send("No active chat session. Use /new or /use.")
+	}
+
+	sess, err := mgr.ResolveActive()
 	if err != nil {
 		return c.Send(err.Error())
 	}
 
 	_ = c.Notify(tele.Typing)
-	replySession, response, err := b.codexMgr.Send(context.Background(), sess.ID, msg.Text, nil)
+	replySession, response, err := mgr.Send(context.Background(), sess.ID, msg.Text, nil)
 	if err != nil {
 		return c.Send(err.Error())
 	}
 
 	header := fmt.Sprintf("[%s | %s]\n", replySession.ID, replySession.RelName)
 	return b.sendTextChunks(c, header+response)
+}
+
+type chatProvider interface {
+	ResolveActive() (*chat.Session, error)
+	Send(ctx context.Context, id, prompt string, attachments []chat.Attachment) (*chat.Session, string, error)
 }
 
 func (b *Bot) handleCallback(c tele.Context) error {
@@ -349,29 +391,48 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		if len(parts) != 2 {
 			return nil
 		}
-		return b.handleCodexFolderPick(c, parts[1])
+		return b.handleChatFolderPickLegacy(c, parts[1])
 	case "cnav":
 		if len(parts) != 2 {
 			return nil
 		}
-		return b.handleCodexNavigation(c, parts[1])
-	case "cuse":
+		return b.handleChatNavigation(c, parts[1])
+	case "p-pick":
+		if len(parts) != 3 {
+			return nil
+		}
+		return b.handleProviderPick(c, parts[1], parts[2])
+	case "use":
 		if len(parts) != 2 {
 			return nil
 		}
-		sess, err := b.codexMgr.SetActive(parts[1])
+		id := parts[1]
+		var sess *chat.Session
+		var err error
+		if _, ok := b.codexMgr.GetSession(id); ok {
+			sess, err = b.codexMgr.SetActive(id)
+		} else {
+			sess, err = b.geminiMgr.SetActive(id)
+		}
 		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
-		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.codexSessionActions(sess), tele.ModeHTML)
-	case "cclose":
+		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.sessionActions(sess), tele.ModeHTML)
+	case "close":
 		if len(parts) != 2 {
 			return nil
 		}
-		if err := b.codexMgr.DeleteSession(parts[1]); err != nil {
+		id := parts[1]
+		var err error
+		if _, ok := b.codexMgr.GetSession(id); ok {
+			err = b.codexMgr.DeleteSession(id)
+		} else {
+			err = b.geminiMgr.DeleteSession(id)
+		}
+		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
-		return c.Send(fmt.Sprintf("Closed session <code>%s</code>.", html.EscapeString(parts[1])), tele.ModeHTML)
+		return c.Send(fmt.Sprintf("Closed session <code>%s</code>.", html.EscapeString(id)), tele.ModeHTML)
 	case "start", "kill", "status", "logs", "restart":
 		if len(parts) != 2 {
 			return nil
@@ -393,21 +454,128 @@ func (b *Bot) handleCallback(c tele.Context) error {
 	return nil
 }
 
-func (b *Bot) createSession(c tele.Context, folder string) error {
-	sess, err := b.codexMgr.CreateSession(folder)
+func (b *Bot) sendProviderPicker(c tele.Context, page int, text string) error {
+	markup := &tele.ReplyMarkup{}
+	markup.InlineKeyboard = [][]tele.InlineButton{
+		{
+			{Text: "Codex", Data: "p-pick:codex:browse"},
+			{Text: "Gemini", Data: "p-pick:gemini:browse"},
+		},
+	}
+	return c.Send(text, markup, tele.ModeHTML)
+}
+
+func (b *Bot) sendProviderPickerForFolder(c tele.Context, folder string, text string) error {
+	markup := &tele.ReplyMarkup{}
+	markup.InlineKeyboard = [][]tele.InlineButton{
+		{
+			{Text: "Codex", Data: "p-pick:codex:" + folder},
+			{Text: "Gemini", Data: "p-pick:gemini:" + folder},
+		},
+	}
+	return c.Send(text, markup, tele.ModeHTML)
+}
+
+func (b *Bot) handleProviderPick(c tele.Context, provider, folder string) error {
+	if folder == "browse" {
+		return b.sendChatFolderPicker(c, provider, 0, "<b>Select a repository for <code>"+provider+"</code></b>")
+	}
+
+	var sess *chat.Session
+	var err error
+	if provider == "codex" {
+		sess, err = b.codexMgr.CreateSession(folder)
+	} else {
+		sess, err = b.geminiMgr.CreateSession(folder)
+	}
+
 	if err != nil {
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
 
 	msg := fmt.Sprintf(
-		"<b>Codex session created</b>\nID: <code>%s</code>\nProject: <code>%s</code>\n\nSend a normal text message now and I will forward it to Codex.",
+		"<b>%s session created</b>\nID: <code>%s</code>\nProject: <code>%s</code>\n\nSend text to chat.",
+		strings.Title(provider),
 		html.EscapeString(sess.ID),
 		html.EscapeString(sess.RelName),
 	)
-	return c.Send(msg, b.codexSessionActions(sess), tele.ModeHTML)
+	return c.Send(msg, b.sessionActions(sess), tele.ModeHTML)
 }
 
-// Claude folder picker — uses pick:{action}:{index} / nav:{action}:{page} callbacks.
+func (b *Bot) sendChatFolderPicker(c tele.Context, provider string, page int, text string) error {
+	folders := b.listGitFolders()
+	if len(folders) == 0 {
+		return c.Send("No git repositories found.")
+	}
+
+	markup := botutil.FolderPickerMarkup(botutil.FolderPickerConfig{
+		Folders:  folders,
+		Page:     page,
+		PickData: func(index int) string { return fmt.Sprintf("p-pick:%s:%s", provider, folders[index]) },
+		NavData:  func(p int) string { return fmt.Sprintf("cnav:%s:%d", provider, p) },
+		Label:    func(folder string) string { return "Repo " + folder },
+	})
+	return c.Send(text, markup, tele.ModeHTML)
+}
+
+func (b *Bot) handleChatFolderPickLegacy(c tele.Context, indexStr string) error {
+	// Fallback for old cpick format if needed, but new code uses p-pick
+	return nil
+}
+
+func (b *Bot) handleChatNavigation(c tele.Context, data string) error {
+	parts := strings.Split(data, ":")
+	if len(parts) != 2 {
+		return nil
+	}
+	provider := parts[0]
+	page, _ := strconv.Atoi(parts[1])
+	return b.sendChatFolderPicker(c, provider, page, "<b>Available repositories</b>\nTap to create a session.")
+}
+
+func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {
+	var sessions []*chat.Session
+	sessions = append(sessions, b.codexMgr.ListSessions()...)
+	sessions = append(sessions, b.geminiMgr.ListSessions()...)
+
+	if len(sessions) == 0 {
+		return c.Send("No chat sessions yet.")
+	}
+
+	var items []botutil.PickerItem
+	for _, sess := range sessions {
+		items = append(items, botutil.PickerItem{
+			Label: fmt.Sprintf("%s - %s", sess.ID, sess.RelName),
+			Data:  action + ":" + sess.ID,
+		})
+	}
+	return c.Send(text, botutil.PickerMarkup(items), tele.ModeHTML)
+}
+
+func (b *Bot) sessionActions(sess *chat.Session) *tele.ReplyMarkup {
+	markup := &tele.ReplyMarkup{}
+	markup.InlineKeyboard = [][]tele.InlineButton{
+		{
+			{Text: "Use", Data: "use:" + sess.ID},
+			{Text: "Close", Data: "close:" + sess.ID},
+		},
+	}
+	return markup
+}
+
+func (b *Bot) sessionPickerMarkup(sessions []*chat.Session) *tele.ReplyMarkup {
+	markup := &tele.ReplyMarkup{}
+	var rows [][]tele.InlineButton
+	for _, sess := range sessions {
+		rows = append(rows, []tele.InlineButton{
+			{Text: "Use " + sess.ID, Data: "use:" + sess.ID},
+			{Text: "Close", Data: "close:" + sess.ID},
+		})
+	}
+	markup.InlineKeyboard = rows
+	return markup
+}
+
 func (b *Bot) sendClaudeFolderPicker(c tele.Context, action string, page int, text string) error {
 	folders := b.listGitFolders()
 	if len(folders) == 0 {
@@ -422,39 +590,6 @@ func (b *Bot) sendClaudeFolderPicker(c tele.Context, action string, page int, te
 		Label:    func(folder string) string { return "📂 " + folder },
 	})
 	return c.Send(text, markup, tele.ModeHTML)
-}
-
-// Codex folder picker — uses cpick:{index} / cnav:{page} callbacks.
-func (b *Bot) sendCodexFolderPicker(c tele.Context, page int, text string) error {
-	folders := b.listGitFolders()
-	if len(folders) == 0 {
-		return c.Send("No git repositories found in the projects folder.")
-	}
-
-	markup := botutil.FolderPickerMarkup(botutil.FolderPickerConfig{
-		Folders:  folders,
-		Page:     page,
-		PickData: func(index int) string { return fmt.Sprintf("cpick:%d", index) },
-		NavData:  func(p int) string { return fmt.Sprintf("cnav:%d", p) },
-		Label:    func(folder string) string { return "Repo " + folder },
-	})
-	return c.Send(text, markup, tele.ModeHTML)
-}
-
-func (b *Bot) sendCodexSessionPicker(c tele.Context, action, text string) error {
-	sessions := b.codexMgr.ListSessions()
-	if len(sessions) == 0 {
-		return c.Send("No Codex sessions yet. Use /new.")
-	}
-
-	var items []botutil.PickerItem
-	for _, sess := range sessions {
-		items = append(items, botutil.PickerItem{
-			Label: fmt.Sprintf("%s - %s", sess.ID, sess.RelName),
-			Data:  action + ":" + sess.ID,
-		})
-	}
-	return c.Send(text, botutil.PickerMarkup(items), tele.ModeHTML)
 }
 
 func (b *Bot) sendClaudeSessionPicker(c tele.Context, action, text string) error {
@@ -495,46 +630,6 @@ func (b *Bot) handleClaudeNavigation(c tele.Context, action string, pageStr stri
 	page := 0
 	fmt.Sscanf(pageStr, "%d", &page)
 	return b.sendClaudeFolderPicker(c, action, page, "<b>Available projects</b>\nTap to start a Claude session.")
-}
-
-func (b *Bot) handleCodexFolderPick(c tele.Context, indexStr string) error {
-	folders := b.listGitFolders()
-	index := 0
-	fmt.Sscanf(indexStr, "%d", &index)
-	if index < 0 || index >= len(folders) {
-		return c.Send("That repository is no longer available. Refresh with /new.")
-	}
-	return b.createSession(c, folders[index])
-}
-
-func (b *Bot) handleCodexNavigation(c tele.Context, pageStr string) error {
-	page := 0
-	fmt.Sscanf(pageStr, "%d", &page)
-	return b.sendCodexFolderPicker(c, page, "<b>Available repositories</b>\nTap to create a Codex session.")
-}
-
-func (b *Bot) codexSessionActions(sess *chat.Session) *tele.ReplyMarkup {
-	markup := &tele.ReplyMarkup{}
-	markup.InlineKeyboard = [][]tele.InlineButton{
-		{
-			{Text: "Use", Data: "cuse:" + sess.ID},
-			{Text: "Close", Data: "cclose:" + sess.ID},
-		},
-	}
-	return markup
-}
-
-func (b *Bot) codexSessionPickerMarkup(sessions []*chat.Session) *tele.ReplyMarkup {
-	markup := &tele.ReplyMarkup{}
-	var rows [][]tele.InlineButton
-	for _, sess := range sessions {
-		rows = append(rows, []tele.InlineButton{
-			{Text: "Use " + sess.ID, Data: "cuse:" + sess.ID},
-			{Text: "Close", Data: "cclose:" + sess.ID},
-		})
-	}
-	markup.InlineKeyboard = rows
-	return markup
 }
 
 func (b *Bot) sendTextChunks(c tele.Context, text string) error {

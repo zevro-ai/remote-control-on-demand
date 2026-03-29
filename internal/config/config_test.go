@@ -241,6 +241,9 @@ func TestValidateCodexPermissionMode(t *testing.T) {
 		PermissionModeReadOnly,
 		PermissionModeWorkspace,
 		PermissionModeDangerFull,
+		PermissionModeGeminiAutoEdit,
+		PermissionModeGeminiPlan,
+		PermissionModeGeminiYolo,
 	}
 
 	for _, mode := range validModes {
@@ -252,7 +255,7 @@ func TestValidateCodexPermissionMode(t *testing.T) {
 	}
 
 	t.Run("invalid mode", func(t *testing.T) {
-		err := ValidateCodexPermissionMode("plan")
+		err := ValidateCodexPermissionMode("invalid-mode")
 		if err == nil {
 			t.Fatal("expected invalid mode error")
 		}
@@ -276,7 +279,7 @@ func TestConfigValidatePermissionMode(t *testing.T) {
 		},
 		RC: RCConfig{
 			BaseFolder:          tmpDir,
-			PermissionMode:      "plan",
+			PermissionMode:      "unsupported-mode",
 			AutoRestart:         true,
 			MaxRestarts:         3,
 			RestartDelaySeconds: 5,
@@ -367,7 +370,7 @@ func TestConfigValidateProviderSpecificSettings(t *testing.T) {
 		Providers: ProvidersConfig{
 			Claude: ClaudeProviderConfig{
 				Chat: ProviderChatConfig{
-					PermissionMode: "plan",
+					PermissionMode: "invalid-provider-mode",
 				},
 			},
 		},

@@ -427,7 +427,11 @@ func resolveGeminiCommandEnv() (string, []string, error) {
 
 func resolveGeminiBinary() (string, error) {
 	if configured := strings.TrimSpace(os.Getenv("GEMINI_BIN")); configured != "" {
-		path, err := validateExecutable(configured)
+		absPath, err := filepath.Abs(configured)
+		if err != nil {
+			return "", fmt.Errorf("resolving absolute path for GEMINI_BIN=%q: %w", configured, err)
+		}
+		path, err := validateExecutable(absPath)
 		if err != nil {
 			return "", fmt.Errorf("GEMINI_BIN=%q is invalid: %w", configured, err)
 		}
