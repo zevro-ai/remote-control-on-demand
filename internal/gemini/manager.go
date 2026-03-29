@@ -355,61 +355,61 @@ type StreamCallback struct {
 }
 
 func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb StreamCallback) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	reader := bufio.NewReader(r)
 
 	var partial strings.Builder
 	var nextToolIndex int
 	toolMap := make(map[string]int)
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		raw.WriteString(line)
-		raw.WriteByte('\n')
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			raw.Write(line)
 
-		var event streamEnvelope
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-
-		switch event.Type {
-		case "init":
-			if event.SessionID != "" {
-				result.SessionID = event.SessionID
-			}
-		case "message":
-			if event.Role == "assistant" && event.Content != "" {
-				if event.Delta {
-					partial.WriteString(event.Content)
-					if cb.OnTextDelta != nil {
-						cb.OnTextDelta(event.Content)
+			var event streamEnvelope
+			if err := json.Unmarshal(line, &event); err == nil {
+				switch event.Type {
+				case "init":
+					if event.SessionID != "" {
+						result.SessionID = event.SessionID
 					}
-				} else {
-					// Full message at once? (Should not happen with stream-json but handle just in case)
-					if partial.Len() == 0 {
-						partial.WriteString(event.Content)
-						if cb.OnTextDelta != nil {
-							cb.OnTextDelta(event.Content)
+				case "message":
+					if event.Role == "assistant" && event.Content != "" {
+						if event.Delta {
+							partial.WriteString(event.Content)
+							if cb.OnTextDelta != nil {
+								cb.OnTextDelta(event.Content)
+							}
+						} else {
+							if partial.Len() == 0 {
+								partial.WriteString(event.Content)
+								if cb.OnTextDelta != nil {
+									cb.OnTextDelta(event.Content)
+								}
+							}
 						}
 					}
+				case "tool_use":
+					idx := nextToolIndex
+					nextToolIndex++
+					if event.ToolID != "" {
+						toolMap[event.ToolID] = idx
+					}
+					if cb.OnToolStart != nil {
+						cb.OnToolStart(idx, event.ToolID, event.ToolName, event.Parameters)
+					}
+				case "tool_result":
+					if idx, ok := toolMap[event.ToolID]; ok {
+						if cb.OnToolFinish != nil {
+							cb.OnToolFinish(idx)
+						}
+						delete(toolMap, event.ToolID)
+					}
 				}
 			}
-		case "tool_use":
-			idx := nextToolIndex
-			nextToolIndex++
-			if event.ToolID != "" {
-				toolMap[event.ToolID] = idx
-			}
-			if cb.OnToolStart != nil {
-				cb.OnToolStart(idx, event.ToolID, event.ToolName, event.Parameters)
-			}
-		case "tool_result":
-			if idx, ok := toolMap[event.ToolID]; ok {
-				if cb.OnToolFinish != nil {
-					cb.OnToolFinish(idx)
-				}
-				delete(toolMap, event.ToolID)
-			}
+		}
+		if err != nil {
+			break
 		}
 	}
 

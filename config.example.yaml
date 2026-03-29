@@ -59,5 +59,6 @@ providers:
       permission_mode: "workspace-write"  # use bypassPermissions only for full local access
 
   gemini:
+    enabled: true
     chat:
-      permission_mode: "auto_edit"
+      permission_mode: "auto_edit" # Options: auto_edit, plan, yolo, read-only, workspace-write

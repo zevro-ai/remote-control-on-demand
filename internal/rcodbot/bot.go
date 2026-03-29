@@ -176,7 +176,12 @@ func (b *Bot) registerCommands() {
 }
 
 func (b *Bot) sendWelcome() {
-	msg := `<b>RCOD + Codex & Gemini</b>
+	title := "<b>RCOD + Codex</b>"
+	if b.geminiMgr != nil {
+		title = "<b>RCOD + Codex & Gemini</b>"
+	}
+
+	msg := title + `
 
 Remote Control On Demand with AI agents.
 
@@ -185,7 +190,7 @@ Remote Control On Demand with AI agents.
 /list
 /folders
 
-<b>Codex & Gemini chat</b>
+<b>Chat sessions</b>
 /new repo
 /sessions
 /current
@@ -223,7 +228,12 @@ func (b *Bot) handleFolders(c tele.Context) error {
 }
 
 func (b *Bot) handleHelp(c tele.Context) error {
-	msg := `<b>RCOD + Codex & Gemini</b>
+	title := "<b>RCOD + Codex</b>"
+	if b.geminiMgr != nil {
+		title = "<b>RCOD + Codex & Gemini</b>"
+	}
+
+	msg := title + `
 
 <b>Claude remote control</b>
 <code>/start repo</code> start a Claude session
@@ -234,7 +244,7 @@ func (b *Bot) handleHelp(c tele.Context) error {
 <code>/restart id</code> restart a Claude session
 <code>/folders</code> browse repos for Claude
 
-<b>Codex & Gemini chat</b>
+<b>Chat sessions</b>
 <code>/new repo</code> create a chat session
 <code>/sessions</code> list chat sessions
 <code>/use id</code> switch active chat session
@@ -283,23 +293,30 @@ func (b *Bot) handleNew(c tele.Context) error {
 func (b *Bot) handleSessions(c tele.Context) error {
 	var sessions []*chat.Session
 	sessions = append(sessions, b.codexMgr.ListSessions()...)
-	sessions = append(sessions, b.geminiMgr.ListSessions()...)
+	if b.geminiMgr != nil {
+		sessions = append(sessions, b.geminiMgr.ListSessions()...)
+	}
 
 	if len(sessions) == 0 {
 		return c.Send("No chat sessions yet. Use /new.")
 	}
 
 	activeCodex, _ := b.codexMgr.Active()
-	activeGemini, _ := b.geminiMgr.Active()
+	var activeGemini *chat.Session
+	if b.geminiMgr != nil {
+		activeGemini, _ = b.geminiMgr.Active()
+	}
 
 	var sb strings.Builder
 	sb.WriteString("<b>Chat sessions</b>\n")
 	for _, sess := range sessions {
 		providerID := "codex"
 		isActive := activeCodex != nil && activeCodex.ID == sess.ID
-		if _, ok := b.geminiMgr.GetSession(sess.ID); ok {
-			providerID = "gemini"
-			isActive = activeGemini != nil && activeGemini.ID == sess.ID
+		if b.geminiMgr != nil {
+			if _, ok := b.geminiMgr.GetSession(sess.ID); ok {
+				providerID = "gemini"
+				isActive = activeGemini != nil && activeGemini.ID == sess.ID
+			}
 		}
 
 		marker := " "
@@ -330,10 +347,14 @@ func (b *Bot) handleUse(c tele.Context) error {
 	if _, ok := b.codexMgr.GetSession(id); ok {
 		sess, err = b.codexMgr.SetActive(id)
 		providerID = "codex"
-	} else if _, ok = b.geminiMgr.GetSession(id); ok {
-		sess, err = b.geminiMgr.SetActive(id)
-		providerID = "gemini"
-	} else {
+	} else if b.geminiMgr != nil {
+		if _, ok := b.geminiMgr.GetSession(id); ok {
+			sess, err = b.geminiMgr.SetActive(id)
+			providerID = "gemini"
+		}
+	}
+
+	if sess == nil {
 		return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
 	}
 
@@ -357,11 +378,18 @@ func (b *Bot) handleClose(c tele.Context) error {
 	}
 
 	var err error
+	var found bool
 	if _, ok := b.codexMgr.GetSession(id); ok {
 		err = b.codexMgr.DeleteSession(id)
-	} else if _, ok = b.geminiMgr.GetSession(id); ok {
-		err = b.geminiMgr.DeleteSession(id)
-	} else {
+		found = true
+	} else if b.geminiMgr != nil {
+		if _, ok := b.geminiMgr.GetSession(id); ok {
+			err = b.geminiMgr.DeleteSession(id)
+			found = true
+		}
+	}
+
+	if !found {
 		return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
 	}
 
@@ -373,7 +401,11 @@ func (b *Bot) handleClose(c tele.Context) error {
 
 func (b *Bot) handleCurrent(c tele.Context) error {
 	activeCodex, hasCodex := b.codexMgr.Active()
-	activeGemini, hasGemini := b.geminiMgr.Active()
+	var activeGemini *chat.Session
+	var hasGemini bool
+	if b.geminiMgr != nil {
+		activeGemini, hasGemini = b.geminiMgr.Active()
+	}
 
 	if !hasCodex && !hasGemini {
 		return c.Send("No active session. Use /new or /use.")
@@ -403,8 +435,10 @@ func (b *Bot) handleChat(c tele.Context) error {
 	currentID := b.getCurrentProviderID()
 	switch currentID {
 	case "gemini":
-		if _, ok := b.geminiMgr.Active(); ok {
-			mgr = b.geminiMgr
+		if b.geminiMgr != nil {
+			if _, ok := b.geminiMgr.Active(); ok {
+				mgr = b.geminiMgr
+			}
 		}
 	case "codex":
 		if _, ok := b.codexMgr.Active(); ok {
@@ -414,12 +448,18 @@ func (b *Bot) handleChat(c tele.Context) error {
 
 	// Fallback logic if currentProviderID is not set or session is gone
 	if mgr == nil {
-		if _, ok := b.geminiMgr.Active(); ok {
-			mgr = b.geminiMgr
-			b.setCurrentProviderID("gemini")
-		} else if _, ok = b.codexMgr.Active(); ok {
-			mgr = b.codexMgr
-			b.setCurrentProviderID("codex")
+		if b.geminiMgr != nil {
+			if _, ok := b.geminiMgr.Active(); ok {
+				mgr = b.geminiMgr
+				b.setCurrentProviderID("gemini")
+			}
+		}
+		if mgr == nil {
+			if sess, ok := b.codexMgr.Active(); ok {
+				mgr = b.codexMgr
+				b.setCurrentProviderID("codex")
+				_ = sess // satisfy unused
+			}
 		}
 	}
 
@@ -494,9 +534,14 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		if _, ok := b.codexMgr.GetSession(id); ok {
 			sess, err = b.codexMgr.SetActive(id)
 			providerID = "codex"
-		} else {
-			sess, err = b.geminiMgr.SetActive(id)
-			providerID = "gemini"
+		} else if b.geminiMgr != nil {
+			if _, ok := b.geminiMgr.GetSession(id); ok {
+				sess, err = b.geminiMgr.SetActive(id)
+				providerID = "gemini"
+			}
+		}
+		if sess == nil {
+			return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
 		}
 		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
@@ -509,10 +554,18 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		}
 		id := parts[1]
 		var err error
+		var found bool
 		if _, ok := b.codexMgr.GetSession(id); ok {
 			err = b.codexMgr.DeleteSession(id)
-		} else {
-			err = b.geminiMgr.DeleteSession(id)
+			found = true
+		} else if b.geminiMgr != nil {
+			if _, ok := b.geminiMgr.GetSession(id); ok {
+				err = b.geminiMgr.DeleteSession(id)
+				found = true
+			}
+		}
+		if !found {
+			return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
 		}
 		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
@@ -540,24 +593,28 @@ func (b *Bot) handleCallback(c tele.Context) error {
 }
 
 func (b *Bot) sendProviderPicker(c tele.Context, page int, text string) error {
-	markup := &tele.ReplyMarkup{}
-	markup.InlineKeyboard = [][]tele.InlineButton{
-		{
-			{Text: "Codex", Data: "p-pick:codex:browse"},
-			{Text: "Gemini", Data: "p-pick:gemini:browse"},
-		},
+	buttons := []tele.InlineButton{
+		{Text: "Codex", Data: "p-pick:codex:browse"},
 	}
+	if b.geminiMgr != nil {
+		buttons = append(buttons, tele.InlineButton{Text: "Gemini", Data: "p-pick:gemini:browse"})
+	}
+
+	markup := &tele.ReplyMarkup{}
+	markup.InlineKeyboard = [][]tele.InlineButton{buttons}
 	return c.Send(text, markup, tele.ModeHTML)
 }
 
 func (b *Bot) sendProviderPickerForFolder(c tele.Context, index int, text string) error {
-	markup := &tele.ReplyMarkup{}
-	markup.InlineKeyboard = [][]tele.InlineButton{
-		{
-			{Text: "Codex", Data: fmt.Sprintf("p-pick:codex:%d", index)},
-			{Text: "Gemini", Data: fmt.Sprintf("p-pick:gemini:%d", index)},
-		},
+	buttons := []tele.InlineButton{
+		{Text: "Codex", Data: fmt.Sprintf("p-pick:codex:%d", index)},
 	}
+	if b.geminiMgr != nil {
+		buttons = append(buttons, tele.InlineButton{Text: "Gemini", Data: fmt.Sprintf("p-pick:gemini:%d", index)})
+	}
+
+	markup := &tele.ReplyMarkup{}
+	markup.InlineKeyboard = [][]tele.InlineButton{buttons}
 	return c.Send(text, markup, tele.ModeHTML)
 }
 
@@ -580,8 +637,10 @@ func (b *Bot) handleProviderPick(c tele.Context, provider, indexStr string) erro
 	var sess *chat.Session
 	if provider == "codex" {
 		sess, err = b.codexMgr.CreateSession(resolvedFolder)
-	} else {
+	} else if b.geminiMgr != nil && provider == "gemini" {
 		sess, err = b.geminiMgr.CreateSession(resolvedFolder)
+	} else {
+		return c.Send("Provider not available.", tele.ModeHTML)
 	}
 
 	if err != nil {
@@ -633,7 +692,9 @@ func (b *Bot) handleChatNavigation(c tele.Context, data string) error {
 func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {
 	var sessions []*chat.Session
 	sessions = append(sessions, b.codexMgr.ListSessions()...)
-	sessions = append(sessions, b.geminiMgr.ListSessions()...)
+	if b.geminiMgr != nil {
+		sessions = append(sessions, b.geminiMgr.ListSessions()...)
+	}
 
 	if len(sessions) == 0 {
 		return c.Send("No chat sessions yet.")
