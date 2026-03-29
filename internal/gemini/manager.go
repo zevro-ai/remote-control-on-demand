@@ -434,7 +434,13 @@ func resolveGeminiCommandEnv() (string, []string, error) {
 	geminiOnce.Do(func() {
 		geminiBinCache, geminiErrCache = resolveGeminiBinary()
 		if geminiErrCache == nil {
-			env := withPATH(os.Environ(), filepath.Dir(geminiBinCache))
+			var cleanEnv []string
+			for _, key := range []string{"GEMINI_API_KEY", "USER", "LOGNAME", "HOME", "PATH"} {
+				if val := os.Getenv(key); val != "" {
+					cleanEnv = append(cleanEnv, key+"="+val)
+				}
+			}
+			env := withPATH(cleanEnv, filepath.Dir(geminiBinCache))
 			geminiEnvCache = ensureHome(env)
 		}
 	})
