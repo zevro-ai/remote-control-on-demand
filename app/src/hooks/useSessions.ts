@@ -120,7 +120,12 @@ export function reduceSessionsState(state: State, action: Action): State {
         streamBlocks: omitKey(state.streamBlocks, `${action.provider}:${action.sessionId}`),
       };
     case "ADD_CHAT_MESSAGE": {
-      const enrichedMessage = { ...action.message, timestamp: action.message.timestamp || new Date().toISOString() };
+      const key = `${action.provider}:${action.sessionId}`;
+      const enrichedMessage = {
+        ...action.message,
+        timestamp: action.message.timestamp || new Date().toISOString(),
+        blocks: action.message.role === "assistant" ? state.streamBlocks[key] : undefined,
+      };
       return {
         ...state,
         chatSessions: {
@@ -138,7 +143,7 @@ export function reduceSessionsState(state: State, action: Action): State {
               : s
           ),
         },
-        streamBlocks: omitKey(state.streamBlocks, `${action.provider}:${action.sessionId}`),
+        streamBlocks: omitKey(state.streamBlocks, key),
       };
     }
     case "REMOVE_OPTIMISTIC_MESSAGE":
@@ -586,11 +591,10 @@ export function useSessionsReducer() {
       return session;
     },
     loadAdoptableChatSessions: async (provider: string) => {
-      const resp = await api.get<{ sessions: AdoptableSession[] }>(`/api/chat/${provider}/adoptable`);
-      return resp.sessions;
+      return await api.get<AdoptableSession[]>(`/api/chat/${provider}/adoptable`);
     },
-    adoptChatSession: async (provider: string, threadID: string) => {
-      const session = await api.post<ChatSession>(`/api/chat/${provider}/adopt`, { threadID });
+    adoptChatSession: async (provider: string, thread_id: string) => {
+      const session = await api.post<ChatSession>(`/api/chat/${provider}/adopt`, { thread_id });
       dispatch({ type: "ADD_CHAT_SESSION", provider, session });
       return session;
     },
