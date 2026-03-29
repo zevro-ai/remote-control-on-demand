@@ -9,6 +9,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - AI-generated commits must always pass commitlint.
 - AI-generated commits may only use the prefixes `feat:` or `fix:`.
 - Prefer `feat:` for new behavior and `fix:` for regressions, bugs, and repair work.
+- PR titles must also use clear English `feat:` or `fix:` prefixes when the change is intended to ship, because repository automation derives release tagging from merged PR titles.
 
 **Branches:** `{type}/{issue-number}-short-description` when working on a GitHub issue, e.g. `feat/42-session-auto-cleanup`. Without an issue: `{type}/short-description`, e.g. `fix/crash-on-empty-config`.
 
@@ -21,6 +22,8 @@ For repository changes that go through GitHub PRs, use the Zevro Review loop by 
 3. Treat Zevro review findings as the primary feedback loop and address them in follow-up commits.
 4. After each review-driven change, rerun the relevant tests locally and summarize verification in English on the PR.
 5. Repeat until the PR is approved or otherwise ready to merge.
+6. Before merging, make sure the final PR title still matches the intended release semantics (`feat:` vs `fix:`) and is clean enough to become the squash/merge title if GitHub uses it verbatim.
+7. After the review loop, prefer cleaning up the branch with a sensible rebase/history pass and merging without squash when release automation depends on PR titles or merge commits. Only use squash when that repository-specific automation will still behave correctly.
 
 Before every push for an open PR, rerun the relevant local test/build commands and wait for them to finish successfully. Do not rely on CI to do the first validation pass.
 
