@@ -117,10 +117,13 @@ func main() {
 	}
 
 	geminiStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "gemini_sessions.json")
-	geminiMgr := gemini.NewManager(cfg.RC.BaseFolder, geminiStatePath)
-	geminiMgr.ConfigurePermissionMode(cfg.GeminiChatPermissionMode())
-	if err := geminiMgr.Restore(); err != nil {
-		log.Fatalf("Restoring Gemini chat sessions: %v", err)
+	var geminiMgr *gemini.Manager
+	if cfg.Providers.Gemini.Enabled {
+		geminiMgr = gemini.NewManager(cfg.RC.BaseFolder, geminiStatePath)
+		geminiMgr.ConfigurePermissionMode(cfg.GeminiChatPermissionMode())
+		if err := geminiMgr.Restore(); err != nil {
+			log.Fatalf("Restoring Gemini chat sessions: %v", err)
+		}
 	}
 
 	var notifier rcodbot.Notifier
@@ -163,8 +166,10 @@ func main() {
 			log.Fatalf("Registering Codex chat provider: %v", err)
 		}
 
-		if err := registry.RegisterChat(geminiMgr); err != nil {
-			log.Fatalf("Registering Gemini chat provider: %v", err)
+		if geminiMgr != nil {
+			if err := registry.RegisterChat(geminiMgr); err != nil {
+				log.Fatalf("Registering Gemini chat provider: %v", err)
+			}
 		}
 
 		httpSrv = httpapi.NewServer(cfg.API, "claude", registry)

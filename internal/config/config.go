@@ -79,7 +79,8 @@ type CodexProviderConfig struct {
 }
 
 type GeminiProviderConfig struct {
-	Chat ProviderChatConfig `yaml:"chat,omitempty"`
+	Enabled bool               `yaml:"enabled,omitempty"`
+	Chat    ProviderChatConfig `yaml:"chat,omitempty"`
 }
 
 type ProviderChatConfig struct {
