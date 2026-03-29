@@ -57,3 +57,7 @@ providers:
   codex:
     chat:
       permission_mode: "workspace-write"  # use bypassPermissions only for full local access
+
+  gemini:
+    chat:
+      permission_mode: "auto_edit"

@@ -1,6 +1,7 @@
 const styles: Record<string, string> = {
   claude: "border border-accent-blue/20 bg-accent-blue/10 text-accent-blue",
   codex: "border border-accent-orange/20 bg-accent-orange/10 text-accent-orange",
+  gemini: "border border-accent-green/20 bg-accent-green/10 text-accent-green",
 };
 
 export function AgentBadge({ agent, label }: { agent: string; label?: string }) {

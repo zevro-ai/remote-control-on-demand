@@ -66,6 +66,7 @@ type RCConfig struct {
 type ProvidersConfig struct {
 	Claude ClaudeProviderConfig `yaml:"claude,omitempty"`
 	Codex  CodexProviderConfig  `yaml:"codex,omitempty"`
+	Gemini GeminiProviderConfig `yaml:"gemini,omitempty"`
 }
 
 type ClaudeProviderConfig struct {
@@ -74,6 +75,10 @@ type ClaudeProviderConfig struct {
 }
 
 type CodexProviderConfig struct {
+	Chat ProviderChatConfig `yaml:"chat,omitempty"`
+}
+
+type GeminiProviderConfig struct {
 	Chat ProviderChatConfig `yaml:"chat,omitempty"`
 }
 
@@ -324,6 +329,9 @@ func (p ProvidersConfig) Validate() error {
 	if err := p.Codex.Validate(); err != nil {
 		return fmt.Errorf("codex: %w", err)
 	}
+	if err := p.Gemini.Validate(); err != nil {
+		return fmt.Errorf("gemini: %w", err)
+	}
 	return nil
 }
 
@@ -338,6 +346,13 @@ func (p ClaudeProviderConfig) Validate() error {
 }
 
 func (p CodexProviderConfig) Validate() error {
+	if err := p.Chat.Validate(); err != nil {
+		return fmt.Errorf("chat: %w", err)
+	}
+	return nil
+}
+
+func (p GeminiProviderConfig) Validate() error {
 	if err := p.Chat.Validate(); err != nil {
 		return fmt.Errorf("chat: %w", err)
 	}
@@ -407,6 +422,13 @@ func (c *Config) ClaudeChatPermissionMode() string {
 
 func (c *Config) CodexChatPermissionMode() string {
 	if mode := strings.TrimSpace(c.Providers.Codex.Chat.PermissionMode); mode != "" {
+		return NormalizeCodexPermissionMode(mode)
+	}
+	return NormalizeCodexPermissionMode(c.RC.PermissionMode)
+}
+
+func (c *Config) GeminiChatPermissionMode() string {
+	if mode := strings.TrimSpace(c.Providers.Gemini.Chat.PermissionMode); mode != "" {
 		return NormalizeCodexPermissionMode(mode)
 	}
 	return NormalizeCodexPermissionMode(c.RC.PermissionMode)

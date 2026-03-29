@@ -12,6 +12,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/claudechat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
 	"github.com/zevro-ai/remote-control-on-demand/internal/config"
+	"github.com/zevro-ai/remote-control-on-demand/internal/gemini"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi"
 	"github.com/zevro-ai/remote-control-on-demand/internal/process"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
@@ -115,9 +116,16 @@ func main() {
 		log.Fatalf("Restoring Claude chat sessions: %v", err)
 	}
 
+	geminiStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "gemini_sessions.json")
+	geminiMgr := gemini.NewManager(cfg.RC.BaseFolder, geminiStatePath)
+	geminiMgr.ConfigurePermissionMode(cfg.GeminiChatPermissionMode())
+	if err := geminiMgr.Restore(); err != nil {
+		log.Fatalf("Restoring Gemini chat sessions: %v", err)
+	}
+
 	var notifier rcodbot.Notifier
 	if cfg.Telegram.Token != "" {
-		bt, err := rcodbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr)
+		bt, err := rcodbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr, geminiMgr)
 		if err != nil {
 			log.Fatalf("Creating bot: %v", err)
 		}
@@ -154,6 +162,10 @@ func main() {
 			log.Fatalf("Registering Codex chat provider: %v", err)
 		}
 
+		if err := registry.RegisterChat(geminiMgr); err != nil {
+			log.Fatalf("Registering Gemini chat provider: %v", err)
+		}
+
 		httpSrv = httpapi.NewServer(cfg.API, "claude", registry)
 		go httpSrv.Start()
 	}
@@ -170,6 +182,7 @@ func main() {
 		}
 		claudeMgr.Shutdown()
 		codexMgr.Shutdown()
+		geminiMgr.Shutdown()
 		stopped := sessionMgr.StopAll()
 		notifier.SendMessage(fmt.Sprintf("<b>RCOD bot stopped.</b>\nClosed Claude sessions: <code>%d</code>", stopped))
 		notifier.Stop()
