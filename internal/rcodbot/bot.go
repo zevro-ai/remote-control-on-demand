@@ -251,10 +251,21 @@ func (b *Bot) handleNew(c tele.Context) error {
 		return b.sendProviderPicker(c, 0, "<b>Select a provider for a new chat session</b>")
 	}
 
-	resolved, matches := botutil.MatchFolderQuery(b.listGitFolders(), folder)
+	folders := b.listGitFolders()
+	resolved, matches := botutil.MatchFolderQuery(folders, folder)
 	switch {
 	case resolved != "":
-		return b.sendProviderPickerForFolder(c, resolved, "<b>Select a provider for <code>"+html.EscapeString(resolved)+"</code></b>")
+		index := -1
+		for i, f := range folders {
+			if f == resolved {
+				index = i
+				break
+			}
+		}
+		if index == -1 {
+			return c.Send("Repository no longer available. Refresh with /new.", tele.ModeHTML)
+		}
+		return b.sendProviderPickerForFolder(c, index, "<b>Select a provider for <code>"+html.EscapeString(resolved)+"</code></b>")
 	case len(matches) == 0:
 		return c.Send(fmt.Sprintf("No project matched <code>%s</code>.", html.EscapeString(folder)), tele.ModeHTML)
 	default:
@@ -539,45 +550,34 @@ func (b *Bot) sendProviderPicker(c tele.Context, page int, text string) error {
 	return c.Send(text, markup, tele.ModeHTML)
 }
 
-func (b *Bot) sendProviderPickerForFolder(c tele.Context, folder string, text string) error {
+func (b *Bot) sendProviderPickerForFolder(c tele.Context, index int, text string) error {
 	markup := &tele.ReplyMarkup{}
 	markup.InlineKeyboard = [][]tele.InlineButton{
 		{
-			{Text: "Codex", Data: "p-pick:codex:" + folder},
-			{Text: "Gemini", Data: "p-pick:gemini:" + folder},
+			{Text: "Codex", Data: fmt.Sprintf("p-pick:codex:%d", index)},
+			{Text: "Gemini", Data: fmt.Sprintf("p-pick:gemini:%d", index)},
 		},
 	}
 	return c.Send(text, markup, tele.ModeHTML)
 }
 
-func (b *Bot) handleProviderPick(c tele.Context, provider, folderOrIndex string) error {
-	if folderOrIndex == "browse" {
+func (b *Bot) handleProviderPick(c tele.Context, provider, indexStr string) error {
+	if indexStr == "browse" {
 		return b.sendChatFolderPicker(c, provider, 0, "<b>Select a repository for <code>"+provider+"</code></b>")
 	}
 
-	folders := b.listGitFolders()
-	var resolvedFolder string
-
-	// Try as index first
-	var index int
-	if _, err := fmt.Sscanf(folderOrIndex, "%d", &index); err == nil && index >= 0 && index < len(folders) {
-		resolvedFolder = folders[index]
-	} else {
-		// Try as literal folder name
-		for _, f := range folders {
-			if f == folderOrIndex {
-				resolvedFolder = f
-				break
-			}
-		}
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		return c.Send("Invalid repository selection.")
 	}
 
-	if resolvedFolder == "" {
+	folders := b.listGitFolders()
+	if index < 0 || index >= len(folders) {
 		return c.Send("That repository is no longer available. Refresh with /new.", tele.ModeHTML)
 	}
+	resolvedFolder := folders[index]
 
 	var sess *chat.Session
-	var err error
 	if provider == "codex" {
 		sess, err = b.codexMgr.CreateSession(resolvedFolder)
 	} else {
