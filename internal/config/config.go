@@ -107,6 +107,11 @@ const (
 	PermissionModeReadOnly     = "read-only"
 	PermissionModeWorkspace    = "workspace-write"
 	PermissionModeDangerFull   = "danger-full-access"
+
+	// Gemini CLI specific modes
+	PermissionModeGeminiAutoEdit = "auto_edit"
+	PermissionModeGeminiPlan     = "plan"
+	PermissionModeGeminiYolo     = "yolo"
 )
 
 // ProjectConfig represents per-project settings in .rcod.yaml
@@ -246,10 +251,13 @@ func NormalizeCodexPermissionMode(permissionMode string) string {
 
 func ValidateCodexPermissionMode(permissionMode string) error {
 	switch NormalizeCodexPermissionMode(permissionMode) {
-	case PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull:
+	case PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull,
+		PermissionModeGeminiAutoEdit, PermissionModeGeminiPlan, PermissionModeGeminiYolo:
 		return nil
 	default:
-		return fmt.Errorf("must be one of %q, %q, %q, or %q", PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull)
+		return fmt.Errorf("must be one of %q, %q, %q, %q, %q, %q, or %q",
+			PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull,
+			PermissionModeGeminiAutoEdit, PermissionModeGeminiPlan, PermissionModeGeminiYolo)
 	}
 }
 
