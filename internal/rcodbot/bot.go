@@ -10,6 +10,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/botutil"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
+	"github.com/zevro-ai/remote-control-on-demand/internal/gemini"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
 )
@@ -25,6 +26,7 @@ type Bot struct {
 	tb            *tele.Bot
 	sessionMgr    *session.Manager
 	codexMgr      *codex.Manager
+	geminiMgr     *gemini.Manager
 	allowedUserID int64
 	unsubSession  func()
 }
@@ -40,7 +42,7 @@ func (n *nopBot) Start()               {}
 func (n *nopBot) Stop()                {}
 func (n *nopBot) SendMessage(_ string) {}
 
-func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMgr *codex.Manager) (*Bot, error) {
+func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMgr *codex.Manager, geminiMgr *gemini.Manager) (*Bot, error) {
 	tb, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -53,6 +55,7 @@ func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMg
 		tb:            tb,
 		sessionMgr:    sessionMgr,
 		codexMgr:      codexMgr,
+		geminiMgr:     geminiMgr,
 		allowedUserID: allowedUserID,
 	}
 	b.registerHandlers()
@@ -127,9 +130,9 @@ func (b *Bot) sendWelcome() {
 	sb.WriteString("<b>RCOD bot is online</b>\n\n")
 	sb.WriteString("<b>Claude remote control</b>\n")
 	sb.WriteString("Use <code>/start</code>, <code>/list</code>, <code>/status</code>, <code>/logs</code>, <code>/restart</code>, <code>/kill</code>, or <code>/folders</code>.\n\n")
-	sb.WriteString("<b>Codex chat</b>\n")
-	sb.WriteString("Use <code>/new repo</code> to create a Codex session, then send plain text to chat with Codex in that repo.\n")
-	sb.WriteString("Use <code>/sessions</code>, <code>/use</code>, <code>/current</code>, and <code>/close</code> to manage Codex chats.\n")
+	sb.WriteString("<b>Codex & Gemini chat</b>\n")
+	sb.WriteString("Use <code>/new repo</code> to create a session, then send plain text to chat with the agent in that repo.\n")
+	sb.WriteString("Use <code>/sessions</code>, <code>/use</code>, <code>/current</code>, and <code>/close</code> to manage chats.\n")
 
 	folders := b.listGitFolders()
 	if len(folders) > 0 {
@@ -137,6 +140,9 @@ func (b *Bot) sendWelcome() {
 	}
 	if active, ok := b.codexMgr.Active(); ok {
 		sb.WriteString(fmt.Sprintf("\nCurrent Codex session: <code>%s</code> in <code>%s</code>", html.EscapeString(active.ID), html.EscapeString(active.RelName)))
+	}
+	if active, ok := b.geminiMgr.Active(); ok {
+		sb.WriteString(fmt.Sprintf("\nCurrent Gemini session: <code>%s</code> in <code>%s</code>", html.EscapeString(active.ID), html.EscapeString(active.RelName)))
 	}
 	b.SendMessage(sb.String())
 }
@@ -553,6 +559,9 @@ func (b *Bot) listGitFolders() []string {
 func (b *Bot) baseFolder() string {
 	if b.codexMgr != nil {
 		return b.codexMgr.BaseFolder()
+	}
+	if b.geminiMgr != nil {
+		return b.geminiMgr.BaseFolder()
 	}
 	if b.sessionMgr != nil {
 		return b.sessionMgr.BaseFolder()
