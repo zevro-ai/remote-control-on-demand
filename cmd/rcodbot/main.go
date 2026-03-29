@@ -188,10 +188,13 @@ func main() {
 		}
 		claudeMgr.Shutdown()
 		codexMgr.Shutdown()
-		geminiMgr.Shutdown()
+		if geminiMgr != nil {
+			geminiMgr.Shutdown()
+		}
 		stopped := sessionMgr.StopAll()
 		notifier.SendMessage(fmt.Sprintf("<b>RCOD bot stopped.</b>\nClosed Claude sessions: <code>%d</code>", stopped))
 		notifier.Stop()
+		os.Exit(0)
 	}()
 
 	printBanner()

@@ -355,62 +355,64 @@ type StreamCallback struct {
 }
 
 func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb StreamCallback) {
-	reader := bufio.NewReader(r)
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
 	var partial strings.Builder
 	var nextToolIndex int
 	toolMap := make(map[string]int)
 
-	for {
-		line, err := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			raw.Write(line)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		raw.Write(line)
+		raw.WriteByte('\n')
 
-			var event streamEnvelope
-			if err := json.Unmarshal(line, &event); err == nil {
-				switch event.Type {
-				case "init":
-					if event.SessionID != "" {
-						result.SessionID = event.SessionID
-					}
-				case "message":
-					if event.Role == "assistant" && event.Content != "" {
-						if event.Delta {
+		var event streamEnvelope
+		if err := json.Unmarshal(line, &event); err == nil {
+			switch event.Type {
+			case "init":
+				if event.SessionID != "" {
+					result.SessionID = event.SessionID
+				}
+			case "message":
+				if event.Role == "assistant" && event.Content != "" {
+					if event.Delta {
+						partial.WriteString(event.Content)
+						if cb.OnTextDelta != nil {
+							cb.OnTextDelta(event.Content)
+						}
+					} else {
+						if partial.Len() == 0 {
 							partial.WriteString(event.Content)
 							if cb.OnTextDelta != nil {
 								cb.OnTextDelta(event.Content)
 							}
-						} else {
-							if partial.Len() == 0 {
-								partial.WriteString(event.Content)
-								if cb.OnTextDelta != nil {
-									cb.OnTextDelta(event.Content)
-								}
-							}
 						}
 					}
-				case "tool_use":
-					idx := nextToolIndex
-					nextToolIndex++
-					if event.ToolID != "" {
-						toolMap[event.ToolID] = idx
+				}
+			case "tool_use":
+				idx := nextToolIndex
+				nextToolIndex++
+				if event.ToolID != "" {
+					toolMap[event.ToolID] = idx
+				}
+				if cb.OnToolStart != nil {
+					cb.OnToolStart(idx, event.ToolID, event.ToolName, event.Parameters)
+				}
+			case "tool_result":
+				if idx, ok := toolMap[event.ToolID]; ok {
+					if cb.OnToolFinish != nil {
+						cb.OnToolFinish(idx)
 					}
-					if cb.OnToolStart != nil {
-						cb.OnToolStart(idx, event.ToolID, event.ToolName, event.Parameters)
-					}
-				case "tool_result":
-					if idx, ok := toolMap[event.ToolID]; ok {
-						if cb.OnToolFinish != nil {
-							cb.OnToolFinish(idx)
-						}
-						delete(toolMap, event.ToolID)
-					}
+					delete(toolMap, event.ToolID)
 				}
 			}
 		}
-		if err != nil {
-			break
-		}
+	}
+
+	// Drain remaining output if scanner failed (e.g. line too long)
+	if err := scanner.Err(); err != nil {
+		_, _ = io.Copy(io.Discard, r)
 	}
 
 	result.Response = partial.String()
