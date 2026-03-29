@@ -2,13 +2,15 @@ package rcodbot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"encoding/json"
 	"github.com/zevro-ai/remote-control-on-demand/internal/botutil"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
@@ -16,7 +18,6 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
-	"os"
 )
 
 // Notifier abstracts the Telegram bot for HTTP-only mode.
@@ -27,14 +28,16 @@ type Notifier interface {
 }
 
 type Bot struct {
-	tb                *tele.Bot
-	sessionMgr        *session.Manager
-	codexMgr          *codex.Manager
-	geminiMgr         *gemini.Manager
-	allowedUserID     int64
-	unsubSession      func()
+	tb            *tele.Bot
+	sessionMgr    *session.Manager
+	codexMgr      *codex.Manager
+	geminiMgr     *gemini.Manager
+	allowedUserID int64
+	unsubSession  func()
+	statePath     string
+
+	mu                sync.RWMutex
 	currentProviderID string
-	statePath         string
 }
 
 // NopBot returns a no-op Notifier for HTTP-only mode.
@@ -75,7 +78,20 @@ type botState struct {
 	CurrentProviderID string `json:"current_provider_id"`
 }
 
-func (b *Bot) saveState() {
+func (b *Bot) setCurrentProviderID(id string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.currentProviderID = id
+	b.saveStateLocked()
+}
+
+func (b *Bot) getCurrentProviderID() string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.currentProviderID
+}
+
+func (b *Bot) saveStateLocked() {
 	if b.statePath == "" {
 		return
 	}
@@ -97,7 +113,9 @@ func (b *Bot) loadState() {
 	}
 	var state botState
 	if err := json.Unmarshal(data, &state); err == nil {
+		b.mu.Lock()
 		b.currentProviderID = state.CurrentProviderID
+		b.mu.Unlock()
 	}
 }
 
@@ -146,49 +164,40 @@ func (b *Bot) registerHandlers() {
 }
 
 func (b *Bot) registerCommands() {
-	b.tb.SetCommands([]tele.Command{
-		{Text: "start", Description: "Start a Claude session"},
+	_ = b.tb.SetCommands([]tele.Command{
+		{Text: "start", Description: "Start Claude for a repo"},
 		{Text: "list", Description: "List Claude sessions"},
-		{Text: "kill", Description: "Stop a Claude session"},
-		{Text: "status", Description: "Show Claude session details"},
-		{Text: "logs", Description: "Show Claude session logs"},
-		{Text: "restart", Description: "Restart a Claude session"},
 		{Text: "folders", Description: "Browse repos for Claude"},
-		{Text: "new", Description: "Create a Codex session"},
-		{Text: "sessions", Description: "List Codex sessions"},
-		{Text: "use", Description: "Switch active Codex session"},
-		{Text: "close", Description: "Close a Codex session"},
-		{Text: "current", Description: "Show active Codex session"},
-		{Text: "help", Description: "Show all commands"},
+		{Text: "new", Description: "Create Codex or Gemini session"},
+		{Text: "sessions", Description: "List chat sessions"},
+		{Text: "current", Description: "Show active chat session"},
+		{Text: "help", Description: "Show help"},
 	})
 }
 
 func (b *Bot) sendWelcome() {
-	var sb strings.Builder
-	sb.WriteString("<b>RCOD bot is online</b>\n\n")
-	sb.WriteString("<b>Claude remote control</b>\n")
-	sb.WriteString("Use <code>/start</code>, <code>/list</code>, <code>/status</code>, <code>/logs</code>, <code>/restart</code>, <code>/kill</code>, or <code>/folders</code>.\n\n")
-	sb.WriteString("<b>Codex & Gemini chat</b>\n")
-	sb.WriteString("Use <code>/new repo</code> to create a session, then send plain text to chat with the agent in that repo.\n")
-	sb.WriteString("Use <code>/sessions</code>, <code>/use</code>, <code>/current</code>, and <code>/close</code> to manage chats.\n")
+	msg := `<b>RCOD + Codex & Gemini</b>
 
-	folders := b.listGitFolders()
-	if len(folders) > 0 {
-		sb.WriteString(fmt.Sprintf("\n\nFound <b>%d</b> git repo(s) under <code>%s</code>.", len(folders), html.EscapeString(b.baseFolder())))
-	}
-	if active, ok := b.codexMgr.Active(); ok {
-		sb.WriteString(fmt.Sprintf("\nCurrent Codex session: <code>%s</code> in <code>%s</code>", html.EscapeString(active.ID), html.EscapeString(active.RelName)))
-	}
-	if active, ok := b.geminiMgr.Active(); ok {
-		sb.WriteString(fmt.Sprintf("\nCurrent Gemini session: <code>%s</code> in <code>%s</code>", html.EscapeString(active.ID), html.EscapeString(active.RelName)))
-	}
-	b.SendMessage(sb.String())
+Remote Control On Demand with AI agents.
+
+<b>Claude remote control</b>
+/start repo
+/list
+/folders
+
+<b>Codex & Gemini chat</b>
+/new repo
+/sessions
+/current
+
+Send text to chat with the active agent.`
+	b.SendMessage(msg)
 }
 
 func (b *Bot) handleStart(c tele.Context) error {
 	folder := strings.TrimSpace(c.Message().Payload)
 	if folder == "" {
-		return b.sendClaudeFolderPicker(c, "start", 0, "<b>Select a project to start in Claude</b>")
+		return b.sendClaudeFolderPicker(c, "start", 0, "<b>Select a repository to start Claude</b>")
 	}
 
 	resolved, matches := botutil.MatchFolderQuery(b.listGitFolders(), folder)
@@ -200,13 +209,17 @@ func (b *Bot) handleStart(c tele.Context) error {
 	default:
 		return c.Send(
 			fmt.Sprintf(
-				"Multiple projects matched <code>%s</code>:\n%s\n\nUse <code>/start exact-name</code> or browse with <code>/folders</code>.",
+				"Multiple projects matched <code>%s</code>:\n%s\n\nUse <code>/start exact-name</code> or run <code>/folders</code> to browse.",
 				html.EscapeString(folder),
 				botutil.FormatCodeList(matches, 8),
 			),
 			tele.ModeHTML,
 		)
 	}
+}
+
+func (b *Bot) handleFolders(c tele.Context) error {
+	return b.sendClaudeFolderPicker(c, "start", 0, "<b>Available projects</b>\nTap to start a Claude session.")
 }
 
 func (b *Bot) handleHelp(c tele.Context) error {
@@ -254,10 +267,6 @@ func (b *Bot) handleNew(c tele.Context) error {
 			tele.ModeHTML,
 		)
 	}
-}
-
-func (b *Bot) handleFolders(c tele.Context) error {
-	return b.sendClaudeFolderPicker(c, "start", 0, "<b>Available projects</b>\nTap to start a Claude session.")
 }
 
 func (b *Bot) handleSessions(c tele.Context) error {
@@ -321,8 +330,7 @@ func (b *Bot) handleUse(c tele.Context) error {
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
 
-	b.currentProviderID = providerID
-	b.saveState()
+	b.setCurrentProviderID(providerID)
 
 	return c.Send(
 		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)),
@@ -381,7 +389,8 @@ func (b *Bot) handleChat(c tele.Context) error {
 	}
 
 	var mgr chatProvider
-	switch b.currentProviderID {
+	currentID := b.getCurrentProviderID()
+	switch currentID {
 	case "gemini":
 		if _, ok := b.geminiMgr.Active(); ok {
 			mgr = b.geminiMgr
@@ -396,10 +405,10 @@ func (b *Bot) handleChat(c tele.Context) error {
 	if mgr == nil {
 		if _, ok := b.geminiMgr.Active(); ok {
 			mgr = b.geminiMgr
-			b.currentProviderID = "gemini"
+			b.setCurrentProviderID("gemini")
 		} else if _, ok = b.codexMgr.Active(); ok {
 			mgr = b.codexMgr
-			b.currentProviderID = "codex"
+			b.setCurrentProviderID("codex")
 		}
 	}
 
@@ -481,8 +490,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		if err != nil {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
-		b.currentProviderID = providerID
-		b.saveState()
+		b.setCurrentProviderID(providerID)
 		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.sessionActions(sess), tele.ModeHTML)
 	case "close":
 		if len(parts) != 2 {
@@ -580,8 +588,7 @@ func (b *Bot) handleProviderPick(c tele.Context, provider, folderOrIndex string)
 		return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 	}
 
-	b.currentProviderID = provider
-	b.saveState()
+	b.setCurrentProviderID(provider)
 
 	msg := fmt.Sprintf(
 		"<b>%s session created</b>\nID: <code>%s</code>\nProject: <code>%s</code>\n\nSend text to chat.",
