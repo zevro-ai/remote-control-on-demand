@@ -22,6 +22,8 @@ For repository changes that go through GitHub PRs, use the Zevro Review loop by 
 4. After each review-driven change, rerun the relevant tests locally and summarize verification in English on the PR.
 5. Repeat until the PR is approved or otherwise ready to merge.
 
+Before every push for an open PR, rerun the relevant local test/build commands and wait for them to finish successfully. Do not rely on CI to do the first validation pass.
+
 All public GitHub communication in this repository should be in English, including PR descriptions, issue comments, review replies, and code comments.
 
 ## Project Overview

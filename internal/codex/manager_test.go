@@ -128,8 +128,16 @@ func TestAdoptSessionCreatesThreadReadySession(t *testing.T) {
 	if sess.RelName != filepath.Join("demo", "nested") {
 		t.Fatalf("sess.RelName = %q, want %q", sess.RelName, filepath.Join("demo", "nested"))
 	}
-	if sess.Folder != nestedDir {
-		t.Fatalf("sess.Folder = %q, want %q", sess.Folder, nestedDir)
+	gotInfo, err := os.Stat(sess.Folder)
+	if err != nil {
+		t.Fatalf("Stat(sess.Folder): %v", err)
+	}
+	wantInfo, err := os.Stat(nestedDir)
+	if err != nil {
+		t.Fatalf("Stat(nestedDir): %v", err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("sess.Folder = %q, want same directory as %q", sess.Folder, nestedDir)
 	}
 }
 
