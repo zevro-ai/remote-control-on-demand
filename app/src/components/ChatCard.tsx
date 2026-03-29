@@ -25,6 +25,7 @@ export function ChatCard({
   const messages = session.messages || [];
   const visibleMessages = expanded ? messages : messages.slice(-2);
   const agentName = session.agent.charAt(0).toUpperCase() + session.agent.slice(1);
+  const supportsImages = session.provider_meta?.chat?.image_attachments ?? false;
 
   return (
     <div
@@ -82,7 +83,7 @@ export function ChatCard({
             disabled={busy}
             promptPlaceholder={busy ? `${agentName} is thinking...` : `Send a message to ${agentName}...`}
             commandPlaceholder={busy ? "Command is running..." : "Run a bash command..."}
-            supportsImages
+            supportsImages={supportsImages}
             supportsBash={Boolean(onRunCommand)}
           />
           <button
