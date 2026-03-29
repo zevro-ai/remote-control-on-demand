@@ -481,19 +481,17 @@ func (b *Bot) handleChat(c tele.Context) error {
 		}
 	}
 
-	// Fallback logic if currentProviderID is not set or session is gone
+	// Fallback logic if currentProviderID is not set or session is gone.
+	// We prefer Codex as it's typically more restricted/standard.
 	if mgr == nil {
-		if b.geminiMgr != nil {
-			if _, ok := b.geminiMgr.Active(); ok {
+		if sess, ok := b.codexMgr.Active(); ok {
+			mgr = b.codexMgr
+			b.setCurrentProviderID("codex")
+			_ = sess
+		} else if b.geminiMgr != nil {
+			if _, ok = b.geminiMgr.Active(); ok {
 				mgr = b.geminiMgr
 				b.setCurrentProviderID("gemini")
-			}
-		}
-		if mgr == nil {
-			if sess, ok := b.codexMgr.Active(); ok {
-				mgr = b.codexMgr
-				b.setCurrentProviderID("codex")
-				_ = sess
 			}
 		}
 	}

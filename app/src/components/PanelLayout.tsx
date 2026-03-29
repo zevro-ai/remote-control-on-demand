@@ -99,7 +99,7 @@ export function PanelLayout({
             providerID={providerID}
             providers={providers}
             session={focusedSession}
-            streamBlocks={state.streamBlocks[focusedSession.id] || []}
+            streamBlocks={state.streamBlocks[`${providerID}:${focusedSession.id}`] || []}
             onClose={onClearFocus}
             onSend={(id, msg, att) => actions.sendChatMessage(providerID, id, msg, att)}
             onRunCommand={(id, cmd) => actions.runChatCommand(providerID, id, cmd)}
@@ -171,7 +171,7 @@ export function PanelLayout({
                   slot.session
                     ? buildSessionPreview(
                         slot.session,
-                        state.streamBlocks[slot.session.id] || [],
+                        state.streamBlocks[`${getSessionProviderID(slot.session)}:${slot.session.id}`] || [],
                         getPreviewLineCount(density)
                       )
                     : []

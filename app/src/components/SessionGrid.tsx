@@ -10,8 +10,8 @@ interface Props {
   chatBusy: Record<string, boolean>;
   onKill: (id: string) => void;
   onRestart: (id: string) => void;
-  onChatSend: (id: string, message: string, attachments?: DraftAttachment[]) => void | Promise<void>;
-  onChatClose: (id: string) => void | Promise<void>;
+  onChatSend: (provider: string, id: string, message: string, attachments?: DraftAttachment[]) => void | Promise<void>;
+  onChatClose: (provider: string, id: string) => void | Promise<void>;
 }
 
 export function SessionGrid({
@@ -55,11 +55,11 @@ export function SessionGrid({
         <ChatCard
           key={`${s.agent}:${s.id}`}
           session={s}
-          busy={chatBusy[s.id] || false}
+          busy={chatBusy[`${s.agent}:${s.id}`] || false}
           expanded={expandedId === `${s.agent}:${s.id}`}
           onToggle={() => toggle(`${s.agent}:${s.id}`)}
-          onSend={onChatSend}
-          onClose={onChatClose}
+          onSend={(id, msg, att) => onChatSend(s.agent, id, msg, att)}
+          onClose={(id) => onChatClose(s.agent, id)}
         />
       ))}
     </div>

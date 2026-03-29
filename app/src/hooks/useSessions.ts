@@ -27,7 +27,7 @@ interface State {
   sessions: Session[];
   chatSessions: Record<string, ChatSession[]>; // provider -> sessions
   logs: Record<string, string[]>;
-  streamBlocks: Record<string, StreamBlock[]>;
+  streamBlocks: Record<string, StreamBlock[]>; // provider:id -> blocks
   loading: boolean;
   authRequired: boolean;
   loadError: string | null;
@@ -54,16 +54,16 @@ type Action =
   | { type: "REMOVE_CHAT_SESSION"; provider: string; sessionId: string }
   | { type: "ADD_CHAT_MESSAGE"; provider: string; sessionId: string; message: Message }
   | { type: "REMOVE_OPTIMISTIC_MESSAGE"; provider: string; sessionId: string; optimisticId: string }
-  | { type: "APPEND_STREAMING"; sessionId: string; delta: string }
-  | { type: "CLEAR_STREAMING"; sessionId: string }
+  | { type: "APPEND_STREAMING"; provider: string; sessionId: string; delta: string }
+  | { type: "CLEAR_STREAMING"; provider: string; sessionId: string }
   | { type: "SET_CHAT_BUSY"; provider: string; sessionId: string; busy: boolean }
   | { type: "SET_LOADING"; loading: boolean }
   | { type: "SET_AUTH_REQUIRED"; authRequired: boolean }
   | { type: "SET_LOAD_ERROR"; error: string | null }
   | { type: "RECONCILE_ON_RECONNECT" }
-  | { type: "TOOL_START"; sessionId: string; index: number; id: string; name: string }
-  | { type: "TOOL_DELTA"; sessionId: string; index: number; partialJSON: string }
-  | { type: "TOOL_FINISH"; sessionId: string; index: number };
+  | { type: "TOOL_START"; provider: string; sessionId: string; index: number; id: string; name: string }
+  | { type: "TOOL_DELTA"; provider: string; sessionId: string; index: number; partialJSON: string }
+  | { type: "TOOL_FINISH"; provider: string; sessionId: string; index: number };
 
 const MAX_LOG_LINES = 100;
 
@@ -117,14 +117,10 @@ export function reduceSessionsState(state: State, action: Action): State {
           ...state.chatSessions,
           [action.provider]: (state.chatSessions[action.provider] || []).filter((s) => s.id !== action.sessionId),
         },
-        streamBlocks: omitKey(state.streamBlocks, action.sessionId),
+        streamBlocks: omitKey(state.streamBlocks, `${action.provider}:${action.sessionId}`),
       };
     case "ADD_CHAT_MESSAGE": {
-      const currentBlocks = state.streamBlocks[action.sessionId] || [];
-      const enrichedMessage =
-        action.message.role === "assistant" && currentBlocks.length > 0
-          ? { ...action.message, blocks: [...currentBlocks] }
-          : action.message;
+      const enrichedMessage = { ...action.message, timestamp: action.message.timestamp || new Date().toISOString() };
       return {
         ...state,
         chatSessions: {
@@ -142,7 +138,7 @@ export function reduceSessionsState(state: State, action: Action): State {
               : s
           ),
         },
-        streamBlocks: omitKey(state.streamBlocks, action.sessionId),
+        streamBlocks: omitKey(state.streamBlocks, `${action.provider}:${action.sessionId}`),
       };
     }
     case "REMOVE_OPTIMISTIC_MESSAGE":
@@ -161,17 +157,18 @@ export function reduceSessionsState(state: State, action: Action): State {
         },
       };
     case "APPEND_STREAMING": {
-      const blocks = [...(state.streamBlocks[action.sessionId] || [])];
+      const key = `${action.provider}:${action.sessionId}`;
+      const blocks = [...(state.streamBlocks[key] || [])];
       const last = blocks[blocks.length - 1];
       if (last && last.type === "text") {
         blocks[blocks.length - 1] = { ...last, content: last.content + action.delta };
       } else {
         blocks.push({ type: "text", content: action.delta });
       }
-      return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };
+      return { ...state, streamBlocks: { ...state.streamBlocks, [key]: blocks } };
     }
     case "CLEAR_STREAMING":
-      return { ...state, streamBlocks: omitKey(state.streamBlocks, action.sessionId) };
+      return { ...state, streamBlocks: omitKey(state.streamBlocks, `${action.provider}:${action.sessionId}`) };
     case "SET_CHAT_BUSY":
       return {
         ...state,
@@ -181,7 +178,7 @@ export function reduceSessionsState(state: State, action: Action): State {
             s.id === action.sessionId ? { ...s, busy: action.busy } : s
           ),
         },
-        streamBlocks: action.busy ? state.streamBlocks : omitKey(state.streamBlocks, action.sessionId),
+        streamBlocks: action.busy ? state.streamBlocks : omitKey(state.streamBlocks, `${action.provider}:${action.sessionId}`),
       };
     case "SET_LOADING":
       return { ...state, loading: action.loading };
@@ -192,7 +189,8 @@ export function reduceSessionsState(state: State, action: Action): State {
     case "RECONCILE_ON_RECONNECT":
       return { ...state, streamBlocks: {} };
     case "TOOL_START": {
-      const blocks = [...(state.streamBlocks[action.sessionId] || [])];
+      const key = `${action.provider}:${action.sessionId}`;
+      const blocks = [...(state.streamBlocks[key] || [])];
       blocks.push({
         type: "tool_use",
         index: action.index,
@@ -201,21 +199,23 @@ export function reduceSessionsState(state: State, action: Action): State {
         inputJSON: "",
         done: false,
       });
-      return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };
+      return { ...state, streamBlocks: { ...state.streamBlocks, [key]: blocks } };
     }
     case "TOOL_DELTA": {
-      const blocks = (state.streamBlocks[action.sessionId] || []).map((b) =>
+      const key = `${action.provider}:${action.sessionId}`;
+      const blocks = (state.streamBlocks[key] || []).map((b) =>
         b.type === "tool_use" && b.index === action.index
           ? { ...b, inputJSON: b.inputJSON + action.partialJSON }
           : b
       );
-      return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };
+      return { ...state, streamBlocks: { ...state.streamBlocks, [key]: blocks } };
     }
     case "TOOL_FINISH": {
-      const blocks = (state.streamBlocks[action.sessionId] || []).map((b) =>
+      const key = `${action.provider}:${action.sessionId}`;
+      const blocks = (state.streamBlocks[key] || []).map((b) =>
         b.type === "tool_use" && b.index === action.index ? { ...b, done: true } : b
       );
-      return { ...state, streamBlocks: { ...state.streamBlocks, [action.sessionId]: blocks } };
+      return { ...state, streamBlocks: { ...state.streamBlocks, [key]: blocks } };
     }
     default:
       return state;
@@ -499,8 +499,8 @@ export function useSessionsReducer() {
     });
 
     const unsubChatDelta = onMessage("chat_message_delta", (msg: WsMessage) => {
-      if (msg.session_id && msg.delta) {
-        dispatch({ type: "APPEND_STREAMING", sessionId: msg.session_id, delta: msg.delta });
+      if (msg.session_id && msg.delta && msg.provider) {
+        dispatch({ type: "APPEND_STREAMING", provider: msg.provider, sessionId: msg.session_id, delta: msg.delta });
       }
     });
 
@@ -517,9 +517,10 @@ export function useSessionsReducer() {
     });
 
     const unsubToolStart = onMessage("chat_tool_start", (msg: WsMessage) => {
-      if (msg.session_id && msg.tool_call) {
+      if (msg.session_id && msg.provider && msg.tool_call) {
         dispatch({
           type: "TOOL_START",
+          provider: msg.provider,
           sessionId: msg.session_id,
           index: msg.tool_call.index,
           id: msg.tool_call.id || "",
@@ -529,20 +530,22 @@ export function useSessionsReducer() {
     });
 
     const unsubToolDelta = onMessage("chat_tool_delta", (msg: WsMessage) => {
-      if (msg.session_id && msg.tool_call) {
+      if (msg.session_id && msg.provider && msg.tool_call && msg.delta) {
         dispatch({
           type: "TOOL_DELTA",
+          provider: msg.provider,
           sessionId: msg.session_id,
           index: msg.tool_call.index,
-          partialJSON: msg.tool_call.partial_json || "",
+          partialJSON: msg.delta,
         });
       }
     });
 
     const unsubToolFinish = onMessage("chat_tool_finish", (msg: WsMessage) => {
-      if (msg.session_id && msg.tool_call) {
+      if (msg.session_id && msg.provider && msg.tool_call) {
         dispatch({
           type: "TOOL_FINISH",
+          provider: msg.provider,
           sessionId: msg.session_id,
           index: msg.tool_call.index,
         });
@@ -566,35 +569,30 @@ export function useSessionsReducer() {
 
   const actions: Actions = {
     startSession: async (folder: string) => {
-      const sess = await api.post<Session>("/api/sessions", { folder });
-      dispatch({ type: "ADD_SESSION", session: sess });
-      return sess;
+      const session = await api.post<Session>("/api/sessions", { folder });
+      dispatch({ type: "ADD_SESSION", session });
+      return session;
     },
     killSession: async (id: string) => {
-      await api.del(`/api/sessions/${id}`);
-      dispatch({
-        type: "UPDATE_STATUS",
-        sessionId: id,
-        status: "stopped",
-        restarts: 0,
-      });
+      await api.post(`/api/sessions/${id}/kill`);
+      dispatch({ type: "REMOVE_SESSION", sessionId: id });
     },
     restartSession: async (id: string) => {
-      const sess = await api.post<Session>(`/api/sessions/${id}/restart`);
-      dispatch({ type: "UPDATE_SESSION", session: sess });
+      await api.post(`/api/sessions/${id}/restart`);
     },
     createChatSession: async (provider: string, folder: string) => {
-      const sess = await api.post<ChatSession>(`/api/chat/${provider}/sessions`, { folder });
-      dispatch({ type: "ADD_CHAT_SESSION", provider, session: sess });
-      return sess;
+      const session = await api.post<ChatSession>(`/api/chat/${provider}/sessions`, { folder });
+      dispatch({ type: "ADD_CHAT_SESSION", provider, session });
+      return session;
     },
     loadAdoptableChatSessions: async (provider: string) => {
-      return api.get<AdoptableSession[]>(`/api/chat/${provider}/adoptable`);
+      const resp = await api.get<{ sessions: AdoptableSession[] }>(`/api/chat/${provider}/adoptable`);
+      return resp.sessions;
     },
     adoptChatSession: async (provider: string, threadID: string) => {
-      const sess = await api.post<ChatSession>(`/api/chat/${provider}/adopt`, { thread_id: threadID });
-      dispatch({ type: "ADD_CHAT_SESSION", provider, session: sess });
-      return sess;
+      const session = await api.post<ChatSession>(`/api/chat/${provider}/adopt`, { threadID });
+      dispatch({ type: "ADD_CHAT_SESSION", provider, session });
+      return session;
     },
     closeChatSession: async (provider: string, id: string) => {
       await api.del(`/api/chat/${provider}/sessions/${id}`);
@@ -604,7 +602,7 @@ export function useSessionsReducer() {
       const timestamp = new Date().toISOString();
       const optimisticId = createOptimisticMessageId();
       dispatch({ type: "SET_CHAT_BUSY", provider, sessionId: id, busy: true });
-      dispatch({ type: "CLEAR_STREAMING", sessionId: id });
+      dispatch({ type: "CLEAR_STREAMING", provider, sessionId: id });
       dispatch({
         type: "ADD_CHAT_MESSAGE",
         provider,
@@ -636,7 +634,7 @@ export function useSessionsReducer() {
       const timestamp = new Date().toISOString();
       const optimisticId = createOptimisticMessageId();
       dispatch({ type: "SET_CHAT_BUSY", provider, sessionId: id, busy: true });
-      dispatch({ type: "CLEAR_STREAMING", sessionId: id });
+      dispatch({ type: "CLEAR_STREAMING", provider, sessionId: id });
       dispatch({
         type: "ADD_CHAT_MESSAGE",
         provider,
