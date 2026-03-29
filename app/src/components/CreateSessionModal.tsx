@@ -36,6 +36,7 @@ export function CreateSessionModal({
   const [adoptableSessions, setAdoptableSessions] = useState<AdoptableSession[]>([]);
   const [adoptLoading, setAdoptLoading] = useState(false);
   const [adoptError, setAdoptError] = useState<string | null>(null);
+  const [adoptLoadedFor, setAdoptLoadedFor] = useState<string | null>(null);
 
   useEffect(() => {
     if (providerList.length > 0 && !providerID) {
@@ -50,13 +51,14 @@ export function CreateSessionModal({
   useEffect(() => {
     setMode("new");
     setAdoptFilter("");
+    setAdoptableSessions([]);
+    setAdoptError(null);
+    setAdoptLoading(false);
+    setAdoptLoadedFor(null);
   }, [providerID]);
 
   useEffect(() => {
-    if (!providerID || !canAdoptExistingSessions) {
-      setAdoptableSessions([]);
-      setAdoptError(null);
-      setAdoptLoading(false);
+    if (!providerID || !canAdoptExistingSessions || mode !== "adopt" || adoptLoadedFor === providerID) {
       return;
     }
 
@@ -68,6 +70,7 @@ export function CreateSessionModal({
       .then((sessions) => {
         if (!cancelled) {
           setAdoptableSessions(sessions);
+          setAdoptLoadedFor(providerID);
         }
       })
       .catch((error: unknown) => {
@@ -86,7 +89,7 @@ export function CreateSessionModal({
     return () => {
       cancelled = true;
     };
-  }, [providerID, canAdoptExistingSessions]);
+  }, [providerID, canAdoptExistingSessions, mode, adoptLoadedFor, onLoadAdoptableSessions]);
 
   const handleSelect = async (folder: string) => {
     if (!providerID) return;

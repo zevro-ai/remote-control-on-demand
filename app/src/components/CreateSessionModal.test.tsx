@@ -153,11 +153,12 @@ describe("CreateSessionModal", () => {
       />
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Adopt existing/i }));
+
     await waitFor(() => {
       expect(onLoadAdoptableSessions).toHaveBeenCalledWith("codex");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Adopt existing/i }));
     fireEvent.click(screen.getByRole("button", { name: /Existing Codex session/i }));
 
     await waitFor(() => {
