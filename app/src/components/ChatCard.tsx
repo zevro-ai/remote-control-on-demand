@@ -1,10 +1,10 @@
-import type { CodexSession, DraftAttachment } from "../api/types";
+import type { ChatSession, DraftAttachment } from "../api/types";
 import { StatusDot } from "./StatusDot";
 import { AgentBadge } from "./AgentBadge";
 import { MessageInput } from "./MessageInput";
 
 interface Props {
-  session: CodexSession;
+  session: ChatSession;
   busy: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -13,7 +13,7 @@ interface Props {
   onClose: (id: string) => void | Promise<void>;
 }
 
-export function CodexChatCard({
+export function ChatCard({
   session,
   busy,
   expanded,
@@ -24,6 +24,7 @@ export function CodexChatCard({
 }: Props) {
   const messages = session.messages || [];
   const visibleMessages = expanded ? messages : messages.slice(-2);
+  const agentName = session.agent.charAt(0).toUpperCase() + session.agent.slice(1);
 
   return (
     <div
@@ -40,7 +41,7 @@ export function CodexChatCard({
           <span className="font-medium text-sm truncate">{session.rel_name}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <AgentBadge agent="codex" />
+          <AgentBadge agent={session.agent as any} />
           <span className="text-xs text-text-muted">
             {messages.length} msg{messages.length !== 1 ? "s" : ""}
           </span>
@@ -79,7 +80,7 @@ export function CodexChatCard({
             onSendPrompt={(msg, attachments) => onSend(session.id, msg, attachments)}
             onSendCommand={onRunCommand ? (command) => onRunCommand(session.id, command) : undefined}
             disabled={busy}
-            promptPlaceholder={busy ? "Codex is thinking..." : "Send a message to Codex..."}
+            promptPlaceholder={busy ? `${agentName} is thinking...` : `Send a message to ${agentName}...`}
             commandPlaceholder={busy ? "Command is running..." : "Run a bash command..."}
             supportsImages
             supportsBash={Boolean(onRunCommand)}

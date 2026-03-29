@@ -1,28 +1,28 @@
 import { useState } from "react";
-import type { DraftAttachment, Session, CodexSession } from "../api/types";
+import type { DraftAttachment, Session, ChatSession } from "../api/types";
 import { SessionCard } from "./SessionCard";
-import { CodexChatCard } from "./CodexChatCard";
+import { ChatCard } from "./ChatCard";
 
 interface Props {
   sessions: Session[];
-  codexSessions: CodexSession[];
+  chatSessions: ChatSession[];
   logs: Record<string, string[]>;
-  codexBusy: Record<string, boolean>;
+  chatBusy: Record<string, boolean>;
   onKill: (id: string) => void;
   onRestart: (id: string) => void;
-  onCodexSend: (id: string, message: string, attachments?: DraftAttachment[]) => void | Promise<void>;
-  onCodexClose: (id: string) => void | Promise<void>;
+  onChatSend: (id: string, message: string, attachments?: DraftAttachment[]) => void | Promise<void>;
+  onChatClose: (id: string) => void | Promise<void>;
 }
 
 export function SessionGrid({
   sessions,
-  codexSessions,
+  chatSessions,
   logs,
-  codexBusy,
+  chatBusy,
   onKill,
   onRestart,
-  onCodexSend,
-  onCodexClose,
+  onChatSend,
+  onChatClose,
 }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -30,7 +30,7 @@ export function SessionGrid({
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  if (sessions.length === 0 && codexSessions.length === 0) {
+  if (sessions.length === 0 && chatSessions.length === 0) {
     return (
       <div className="flex items-center justify-center h-64 text-text-muted text-sm">
         No sessions yet. Create one to get started.
@@ -51,15 +51,15 @@ export function SessionGrid({
           onRestart={onRestart}
         />
       ))}
-      {codexSessions.map((s) => (
-        <CodexChatCard
+      {chatSessions.map((s) => (
+        <ChatCard
           key={s.id}
           session={s}
-          busy={codexBusy[s.id] || false}
+          busy={chatBusy[s.id] || false}
           expanded={expandedId === s.id}
           onToggle={() => toggle(s.id)}
-          onSend={onCodexSend}
-          onClose={onCodexClose}
+          onSend={onChatSend}
+          onClose={onChatClose}
         />
       ))}
     </div>
