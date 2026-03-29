@@ -535,13 +535,13 @@ export function useSessionsReducer() {
     });
 
     const unsubToolDelta = onMessage("chat_tool_delta", (msg: WsMessage) => {
-      if (msg.session_id && msg.provider && msg.tool_call && msg.delta) {
+      if (msg.session_id && msg.provider && msg.tool_call && msg.tool_call.partial_json) {
         dispatch({
           type: "TOOL_DELTA",
           provider: msg.provider,
           sessionId: msg.session_id,
           index: msg.tool_call.index,
-          partialJSON: msg.delta,
+          partialJSON: msg.tool_call.partial_json,
         });
       }
     });
@@ -583,7 +583,8 @@ export function useSessionsReducer() {
       dispatch({ type: "REMOVE_SESSION", sessionId: id });
     },
     restartSession: async (id: string) => {
-      await api.post(`/api/sessions/${id}/restart`);
+      const session = await api.post<Session>(`/api/sessions/${id}/restart`);
+      dispatch({ type: "UPDATE_SESSION", session });
     },
     createChatSession: async (provider: string, folder: string) => {
       const session = await api.post<ChatSession>(`/api/chat/${provider}/sessions`, { folder });
