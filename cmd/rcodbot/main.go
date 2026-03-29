@@ -194,7 +194,6 @@ func main() {
 		stopped := sessionMgr.StopAll()
 		notifier.SendMessage(fmt.Sprintf("<b>RCOD bot stopped.</b>\nClosed Claude sessions: <code>%d</code>", stopped))
 		notifier.Stop()
-		os.Exit(0)
 	}()
 
 	printBanner()

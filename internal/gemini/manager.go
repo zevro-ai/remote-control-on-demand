@@ -435,7 +435,13 @@ func resolveGeminiCommandEnv() (string, []string, error) {
 		geminiBinCache, geminiErrCache = resolveGeminiBinary()
 		if geminiErrCache == nil {
 			var cleanEnv []string
-			for _, key := range []string{"GEMINI_API_KEY", "USER", "LOGNAME", "HOME", "PATH"} {
+			allowedVars := []string{
+				"GEMINI_API_KEY", "USER", "LOGNAME", "HOME", "PATH",
+				"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+				"http_proxy", "https_proxy", "no_proxy",
+				"REQUESTS_CA_BUNDLE", "SSL_CERT_FILE",
+			}
+			for _, key := range allowedVars {
 				if val := os.Getenv(key); val != "" {
 					cleanEnv = append(cleanEnv, key+"="+val)
 				}
