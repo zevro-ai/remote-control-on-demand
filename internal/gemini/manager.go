@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -450,8 +451,51 @@ func resolveGeminiBinary() (string, error) {
 		return path, nil
 	}
 
-	// Add common locations if needed, similar to Claude
-	return "", fmt.Errorf("could not find gemini in PATH")
+	for _, candidate := range geminiCandidatePaths() {
+		if path, err := validateExecutable(candidate); err == nil {
+			return path, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not find gemini in PATH or common install locations")
+}
+
+func geminiCandidatePaths() []string {
+	var candidates []string
+	seen := make(map[string]bool)
+
+	addCandidate := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		candidates = append(candidates, path)
+	}
+
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		addCandidate(filepath.Join(dir, "gemini"))
+	}
+
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		for _, pattern := range []string{
+			filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "gemini"),
+			filepath.Join(home, ".volta", "bin", "gemini"),
+			filepath.Join(home, ".local", "bin", "gemini"),
+		} {
+			matches, _ := filepath.Glob(pattern)
+			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+			for _, match := range matches {
+				addCandidate(match)
+			}
+		}
+	}
+
+	for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"} {
+		addCandidate(filepath.Join(dir, "gemini"))
+	}
+
+	return candidates
 }
 
 func validateExecutable(path string) (string, error) {

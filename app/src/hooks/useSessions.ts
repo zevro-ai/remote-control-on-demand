@@ -579,7 +579,7 @@ export function useSessionsReducer() {
       return session;
     },
     killSession: async (id: string) => {
-      await api.post(`/api/sessions/${id}/kill`);
+      await api.del(`/api/sessions/${id}`);
       dispatch({ type: "REMOVE_SESSION", sessionId: id });
     },
     restartSession: async (id: string) => {
