@@ -125,7 +125,8 @@ func main() {
 
 	var notifier rcodbot.Notifier
 	if cfg.Telegram.Token != "" {
-		bt, err := rcodbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr, geminiMgr)
+		botStatePath := runtimepaths.ResolveStatePath(*configPath, *stateDir, "bot_state.json")
+		bt, err := rcodbot.New(cfg.Telegram.Token, cfg.Telegram.AllowedUserID, sessionMgr, codexMgr, geminiMgr, botStatePath)
 		if err != nil {
 			log.Fatalf("Creating bot: %v", err)
 		}

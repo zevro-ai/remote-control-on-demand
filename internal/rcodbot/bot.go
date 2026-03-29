@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
 	"github.com/zevro-ai/remote-control-on-demand/internal/botutil"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
@@ -15,6 +16,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
+	"os"
 )
 
 // Notifier abstracts the Telegram bot for HTTP-only mode.
@@ -32,6 +34,7 @@ type Bot struct {
 	allowedUserID     int64
 	unsubSession      func()
 	currentProviderID string
+	statePath         string
 }
 
 // NopBot returns a no-op Notifier for HTTP-only mode.
@@ -45,7 +48,7 @@ func (n *nopBot) Start()               {}
 func (n *nopBot) Stop()                {}
 func (n *nopBot) SendMessage(_ string) {}
 
-func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMgr *codex.Manager, geminiMgr *gemini.Manager) (*Bot, error) {
+func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMgr *codex.Manager, geminiMgr *gemini.Manager, statePath string) (*Bot, error) {
 	tb, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -60,10 +63,42 @@ func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMg
 		codexMgr:      codexMgr,
 		geminiMgr:     geminiMgr,
 		allowedUserID: allowedUserID,
+		statePath:     statePath,
 	}
+	b.loadState()
 	b.registerHandlers()
 	b.registerCommands()
 	return b, nil
+}
+
+type botState struct {
+	CurrentProviderID string `json:"current_provider_id"`
+}
+
+func (b *Bot) saveState() {
+	if b.statePath == "" {
+		return
+	}
+	state := botState{CurrentProviderID: b.currentProviderID}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(b.statePath, data, 0600)
+}
+
+func (b *Bot) loadState() {
+	if b.statePath == "" {
+		return
+	}
+	data, err := os.ReadFile(b.statePath)
+	if err != nil {
+		return
+	}
+	var state botState
+	if err := json.Unmarshal(data, &state); err == nil {
+		b.currentProviderID = state.CurrentProviderID
+	}
 }
 
 func (b *Bot) Start() {
@@ -287,6 +322,7 @@ func (b *Bot) handleUse(c tele.Context) error {
 	}
 
 	b.currentProviderID = providerID
+	b.saveState()
 
 	return c.Send(
 		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)),
@@ -446,6 +482,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			return c.Send(fmt.Sprintf("Error: <code>%s</code>", html.EscapeString(err.Error())), tele.ModeHTML)
 		}
 		b.currentProviderID = providerID
+		b.saveState()
 		return c.Send(fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)), b.sessionActions(sess), tele.ModeHTML)
 	case "close":
 		if len(parts) != 2 {
@@ -505,18 +542,31 @@ func (b *Bot) sendProviderPickerForFolder(c tele.Context, folder string, text st
 	return c.Send(text, markup, tele.ModeHTML)
 }
 
-func (b *Bot) handleProviderPick(c tele.Context, provider, folder string) error {
-	if folder == "browse" {
+func (b *Bot) handleProviderPick(c tele.Context, provider, folderOrIndex string) error {
+	if folderOrIndex == "browse" {
 		return b.sendChatFolderPicker(c, provider, 0, "<b>Select a repository for <code>"+provider+"</code></b>")
 	}
 
 	folders := b.listGitFolders()
-	index := 0
-	fmt.Sscanf(folder, "%d", &index)
-	if index < 0 || index >= len(folders) {
-		return c.Send("That repository is no longer available. Refresh with /new.")
+	var resolvedFolder string
+
+	// Try as index first
+	var index int
+	if _, err := fmt.Sscanf(folderOrIndex, "%d", &index); err == nil && index >= 0 && index < len(folders) {
+		resolvedFolder = folders[index]
+	} else {
+		// Try as literal folder name
+		for _, f := range folders {
+			if f == folderOrIndex {
+				resolvedFolder = f
+				break
+			}
+		}
 	}
-	resolvedFolder := folders[index]
+
+	if resolvedFolder == "" {
+		return c.Send("That repository is no longer available. Refresh with /new.", tele.ModeHTML)
+	}
 
 	var sess *chat.Session
 	var err error
@@ -531,6 +581,7 @@ func (b *Bot) handleProviderPick(c tele.Context, provider, folder string) error 
 	}
 
 	b.currentProviderID = provider
+	b.saveState()
 
 	msg := fmt.Sprintf(
 		"<b>%s session created</b>\nID: <code>%s</code>\nProject: <code>%s</code>\n\nSend text to chat.",
