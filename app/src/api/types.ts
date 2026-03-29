@@ -96,9 +96,7 @@ export type CodexSession = ChatSession;
 
 export interface AdoptableSession {
   thread_id: string;
-  folder: string;
   rel_name: string;
-  cwd: string;
   rel_cwd: string;
   title: string;
   model?: string;

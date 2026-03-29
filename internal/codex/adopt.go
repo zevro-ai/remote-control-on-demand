@@ -58,16 +58,14 @@ func listAdoptableSessions(baseFolder string, existing []*chat.Session) ([]provi
 			continue
 		}
 
-		repoPath, relName, relCWD, err := resolveRepoForThread(baseFolder, thread.CWD)
+		_, relName, relCWD, err := resolveRepoForThread(baseFolder, thread.CWD)
 		if err != nil {
 			continue
 		}
 
 		adoptable = append(adoptable, provider.AdoptableSession{
 			ThreadID:  thread.ID,
-			Folder:    repoPath,
 			RelName:   relName,
-			CWD:       thread.CWD,
 			RelCWD:    relCWD,
 			Title:     strings.TrimSpace(thread.Title),
 			Model:     strings.TrimSpace(thread.Model),

@@ -117,9 +117,7 @@ describe("CreateSessionModal", () => {
     const onLoadAdoptableSessions = vi.fn().mockResolvedValue([
       {
         thread_id: "thread-1",
-        folder: "/tmp/repo-a",
         rel_name: "repo-a",
-        cwd: "/tmp/repo-a/nested",
         rel_cwd: "nested",
         title: "Existing Codex session",
         model: "gpt-5.4",

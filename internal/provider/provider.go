@@ -29,9 +29,7 @@ type ChatCapabilities struct {
 
 type AdoptableSession struct {
 	ThreadID  string    `json:"thread_id"`
-	Folder    string    `json:"folder"`
 	RelName   string    `json:"rel_name"`
-	CWD       string    `json:"cwd"`
 	RelCWD    string    `json:"rel_cwd"`
 	Title     string    `json:"title"`
 	Model     string    `json:"model,omitempty"`

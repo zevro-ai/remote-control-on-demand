@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -570,9 +571,13 @@ func TestListAdoptableChatSessions_ReturnsCodexThreads(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
+	body := rr.Body.String()
+	if strings.Contains(body, "\"folder\"") || strings.Contains(body, "\"cwd\"") {
+		t.Fatalf("response leaked absolute paths: %s", body)
+	}
 
 	var sessions []provider.AdoptableSession
-	if err := json.NewDecoder(rr.Body).Decode(&sessions); err != nil {
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&sessions); err != nil {
 		t.Fatalf("Decode(): %v", err)
 	}
 	if len(sessions) != 1 {

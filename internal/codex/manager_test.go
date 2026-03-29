@@ -102,10 +102,14 @@ func TestAdoptSessionCreatesThreadReadySession(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
 		t.Fatalf("MkdirAll(.git): %v", err)
 	}
+	nestedDir := filepath.Join(repoDir, "nested")
+	if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(nested): %v", err)
+	}
 
 	dbPath := filepath.Join(codexHome, "state_9.sqlite")
 	if err := writeTestThreadsDB(dbPath, []storedThread{
-		{ID: "thread-demo", CWD: repoDir, Title: "Imported thread", UpdatedAt: time.Unix(300, 0).UTC()},
+		{ID: "thread-demo", CWD: nestedDir, Title: "Imported thread", UpdatedAt: time.Unix(300, 0).UTC()},
 	}); err != nil {
 		t.Fatalf("writeTestThreadsDB(): %v", err)
 	}
@@ -121,8 +125,11 @@ func TestAdoptSessionCreatesThreadReadySession(t *testing.T) {
 	if !sess.ThreadReady {
 		t.Fatal("sess.ThreadReady = false, want true")
 	}
-	if sess.RelName != "demo" {
-		t.Fatalf("sess.RelName = %q, want demo", sess.RelName)
+	if sess.RelName != filepath.Join("demo", "nested") {
+		t.Fatalf("sess.RelName = %q, want %q", sess.RelName, filepath.Join("demo", "nested"))
+	}
+	if sess.Folder != nestedDir {
+		t.Fatalf("sess.Folder = %q, want %q", sess.Folder, nestedDir)
 	}
 }
 

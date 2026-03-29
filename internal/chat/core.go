@@ -178,7 +178,7 @@ func (c *Core) createSession(folder, threadID string, threadReady bool) (*Sessio
 		return nil, fmt.Errorf("folder %q does not exist", relName)
 	}
 
-	if _, err := os.Stat(filepath.Join(fullPath, ".git")); err != nil {
+	if !pathIsWithinGitRepo(c.baseFolder, fullPath) {
 		return nil, fmt.Errorf("folder %q is not a git repository", relName)
 	}
 
@@ -214,6 +214,32 @@ func (c *Core) createSession(folder, threadID string, threadReady bool) (*Sessio
 
 	c.Emit(Event{Type: EventSessionCreated, SessionID: id, Session: clone})
 	return clone, nil
+}
+
+func pathIsWithinGitRepo(baseFolder, fullPath string) bool {
+	baseResolved, err := filepath.EvalSymlinks(baseFolder)
+	if err != nil {
+		return false
+	}
+
+	current, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		return false
+	}
+
+	for {
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			return true
+		}
+		if current == baseResolved {
+			return false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
 }
 
 func (c *Core) ListSessions() []*Session {

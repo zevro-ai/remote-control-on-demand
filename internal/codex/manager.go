@@ -149,7 +149,11 @@ func (m *Manager) AdoptSession(threadID string) (*chat.Session, error) {
 	}
 	for _, sess := range adoptable {
 		if sess.ThreadID == threadID {
-			return m.core.CreateSessionWithThread(sess.RelName, threadID, true)
+			folder := sess.RelName
+			if sess.RelCWD != "" {
+				folder = filepath.Join(folder, sess.RelCWD)
+			}
+			return m.core.CreateSessionWithThread(folder, threadID, true)
 		}
 	}
 
