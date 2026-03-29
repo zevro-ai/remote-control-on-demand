@@ -261,10 +261,11 @@ func runGemini(ctx context.Context, sess *chat.Session, prompt, permissionMode, 
 		return "", "", fmt.Errorf("starting gemini: %w", err)
 	}
 
-	args := buildGeminiArgs(sess, prompt, permissionMode, model)
+	args := buildGeminiArgs(sess, permissionMode, model)
 	cmd := exec.CommandContext(ctx, geminiBin, args...)
 	cmd.Dir = sess.Folder
 	cmd.Env = cmdEnv
+	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -319,7 +320,7 @@ func runGemini(ctx context.Context, sess *chat.Session, prompt, permissionMode, 
 	return result.SessionID, reply, nil
 }
 
-func buildGeminiArgs(sess *chat.Session, prompt, permissionMode, model string) []string {
+func buildGeminiArgs(sess *chat.Session, permissionMode, model string) []string {
 	args := []string{
 		"--output-format", "stream-json",
 		"--approval-mode", permissionMode,
@@ -333,7 +334,6 @@ func buildGeminiArgs(sess *chat.Session, prompt, permissionMode, model string) [
 		args = append(args, "--resume", sess.ThreadID)
 	}
 
-	args = append(args, "-p", prompt)
 	return args
 }
 
@@ -423,15 +423,26 @@ func parseExecOutput(r io.Reader, result *execResult, raw *strings.Builder, cb S
 	result.Response = partial.String()
 }
 
-func resolveGeminiCommandEnv() (string, []string, error) {
-	geminiBin, err := resolveGeminiBinary()
-	if err != nil {
-		return "", nil, err
-	}
+var (
+	geminiBinCache string
+	geminiEnvCache []string
+	geminiErrCache error
+	geminiOnce     sync.Once
+)
 
-	env := withPATH(os.Environ(), filepath.Dir(geminiBin))
-	env = ensureHome(env)
-	return geminiBin, env, nil
+func resolveGeminiCommandEnv() (string, []string, error) {
+	geminiOnce.Do(func() {
+		geminiBinCache, geminiErrCache = resolveGeminiBinary()
+		if geminiErrCache == nil {
+			env := withPATH(os.Environ(), filepath.Dir(geminiBinCache))
+			geminiEnvCache = ensureHome(env)
+		}
+	})
+
+	if geminiErrCache != nil {
+		return "", nil, geminiErrCache
+	}
+	return geminiBinCache, geminiEnvCache, nil
 }
 
 func resolveGeminiBinary() (string, error) {
