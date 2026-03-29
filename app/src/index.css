@@ -74,6 +74,69 @@ button {
   display: flex;
 }
 
+.dashboard-main__stack {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dashboard-main__content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.deployment-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(108, 180, 255, 0.32);
+  background:
+    linear-gradient(135deg, rgba(108, 180, 255, 0.14), rgba(103, 232, 249, 0.08)),
+    var(--color-bg-card);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
+}
+
+.deployment-banner__copy {
+  min-width: 0;
+}
+
+.deployment-banner__copy strong {
+  display: block;
+  font-size: 0.98rem;
+}
+
+.deployment-banner__copy p {
+  margin: 0.2rem 0 0;
+  color: var(--color-text-secondary);
+}
+
+.deployment-banner__kicker {
+  margin-bottom: 0.25rem;
+  color: var(--color-accent-blue);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.deployment-banner button {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  padding: 0.75rem 1rem;
+  background: var(--color-accent-blue);
+  color: #08111a;
+  font-weight: 700;
+}
+
 /* ========== EMPTY STATE ========== */
 
 .dashboard-empty {

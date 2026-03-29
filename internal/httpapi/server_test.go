@@ -54,6 +54,7 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	mux.HandleFunc("GET /api/auth/login", srv.handleAuthLogin)
 	mux.HandleFunc("GET /api/auth/callback", srv.handleAuthCallback)
 	mux.HandleFunc("POST /api/auth/logout", srv.handleAuthLogout)
+	mux.HandleFunc("GET /api/meta", srv.handleDeploymentMeta)
 	mux.HandleFunc("GET /api/sessions", srv.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", srv.handleCreateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.handleDeleteSession)
@@ -82,6 +83,35 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	mux.HandleFunc("GET /api/uploads/{name}", srv.handleUpload)
 
 	return srv, mux
+}
+
+func TestDeploymentMeta_ReturnsBuildAndStartInfo(t *testing.T) {
+	_, mux := setupTestServer(t)
+
+	req := httptest.NewRequest("GET", "/api/meta", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp deploymentMetaResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if strings.TrimSpace(resp.Version) == "" {
+		t.Fatalf("version = %q, want non-empty", resp.Version)
+	}
+	if strings.TrimSpace(resp.BuildID) == "" {
+		t.Fatalf("build_id = %q, want non-empty", resp.BuildID)
+	}
+	if strings.TrimSpace(resp.StartedAt) == "" {
+		t.Fatalf("started_at = %q, want non-empty", resp.StartedAt)
+	}
+	if _, err := time.Parse(time.RFC3339, resp.StartedAt); err != nil {
+		t.Fatalf("started_at parse error: %v", err)
+	}
 }
 
 func testProviders(t *testing.T, sessionMgr *session.Manager, claudeMgr *claudechat.Manager, codexMgr *codex.Manager) (provider.RuntimeProvider, *provider.Registry) {

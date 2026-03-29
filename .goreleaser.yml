@@ -17,6 +17,12 @@ builds:
     binary: rcod
     tags:
       - release
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/zevro-ai/remote-control-on-demand/internal/buildinfo.Version={{ .Version }}
+        -X github.com/zevro-ai/remote-control-on-demand/internal/buildinfo.Commit={{ .FullCommit }}
+        -X github.com/zevro-ai/remote-control-on-demand/internal/buildinfo.BuildTime={{ .Date }}
     env:
       - CGO_ENABLED=0
     goos:

@@ -49,6 +49,13 @@ export interface ProviderMetadata {
   runtime?: RuntimeCapabilities;
 }
 
+export interface DeploymentInfo {
+  version: string;
+  commit?: string;
+  build_id: string;
+  started_at: string;
+}
+
 export interface AuthProvider {
   id: string;
   display_name: string;

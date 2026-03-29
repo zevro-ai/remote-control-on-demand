@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AuthPrompt, buildExternalLoginURL } from "./App";
+import {
+  AuthPrompt,
+  DeploymentRefreshBanner,
+  buildExternalLoginURL,
+  hasDeploymentUpdate,
+  shouldPollDeploymentMeta,
+} from "./App";
 
 afterEach(cleanup);
 
@@ -73,5 +79,59 @@ describe("AuthPrompt", () => {
     ).toBe(
       "https://rcod.example.com/api/auth/login?redirect=%2Fdashboard%3Fpanel%3Dcodex%23session-1",
     );
+  });
+});
+
+describe("hasDeploymentUpdate", () => {
+  it("returns true when the build ID changes", () => {
+    expect(
+      hasDeploymentUpdate(
+        { version: "v0.21.0", build_id: "v0.21.0+aaaa", started_at: "2026-03-29T17:00:00Z" },
+        { version: "v0.22.0", build_id: "v0.22.0+bbbb", started_at: "2026-03-29T17:05:00Z" },
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when the build ID stays the same", () => {
+    expect(
+      hasDeploymentUpdate(
+        { version: "v0.22.0", build_id: "v0.22.0+bbbb", started_at: "2026-03-29T17:00:00Z" },
+        { version: "v0.22.0", build_id: "v0.22.0+bbbb", started_at: "2026-03-29T17:05:00Z" },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("shouldPollDeploymentMeta", () => {
+  it("returns false while the dashboard is still loading", () => {
+    expect(shouldPollDeploymentMeta(true, false)).toBe(false);
+  });
+
+  it("returns false when authentication is required", () => {
+    expect(shouldPollDeploymentMeta(false, true)).toBe(false);
+  });
+
+  it("returns true once the dashboard is ready", () => {
+    expect(shouldPollDeploymentMeta(false, false)).toBe(true);
+  });
+});
+
+describe("DeploymentRefreshBanner", () => {
+  it("renders version-aware copy and triggers refresh", () => {
+    const onRefresh = vi.fn();
+
+    render(
+      <DeploymentRefreshBanner
+        initialDeployment={{ version: "v0.21.0", build_id: "v0.21.0+aaaa", started_at: "2026-03-29T17:00:00Z" }}
+        latestDeployment={{ version: "v0.22.0", build_id: "v0.22.0+bbbb", started_at: "2026-03-29T17:05:00Z" }}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    expect(screen.getByText("Refresh to load the latest dashboard deployment")).toBeTruthy();
+    expect(screen.getByText(/still running v0.21.0/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
