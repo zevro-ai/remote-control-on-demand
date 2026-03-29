@@ -121,10 +121,13 @@ export function reduceSessionsState(state: State, action: Action): State {
       };
     case "ADD_CHAT_MESSAGE": {
       const key = `${action.provider}:${action.sessionId}`;
+      const currentBlocks = state.streamBlocks[key] || [];
       const enrichedMessage = {
         ...action.message,
         timestamp: action.message.timestamp || new Date().toISOString(),
-        blocks: action.message.role === "assistant" ? state.streamBlocks[key] : undefined,
+        blocks: action.message.role === "assistant"
+          ? (currentBlocks.length > 0 ? currentBlocks : action.message.blocks)
+          : undefined,
       };
       return {
         ...state,
