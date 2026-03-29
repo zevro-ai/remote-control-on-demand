@@ -150,19 +150,28 @@ export function CreateSessionModal({
         </div>
 
         {canAdoptExistingSessions && (
-          <div className="flex gap-2 mb-4">
-            <button
-              className={mode === "new" ? "is-active" : ""}
-              onClick={() => setMode("new")}
-            >
-              New session
-            </button>
-            <button
-              className={mode === "adopt" ? "is-active" : ""}
-              onClick={() => setMode("adopt")}
-            >
-              Adopt existing
-            </button>
+          <div className="modal-mode-switch-shell">
+            <div className="modal-mode-switch__label">Session mode</div>
+            <div className="modal-mode-switch" role="group" aria-label="Session mode">
+              <button
+                type="button"
+                className={mode === "new" ? "is-active" : ""}
+                aria-pressed={mode === "new"}
+                onClick={() => setMode("new")}
+              >
+                <span className="modal-mode-switch__title">New session</span>
+                <span className="modal-mode-switch__hint">Start from a repository</span>
+              </button>
+              <button
+                type="button"
+                className={mode === "adopt" ? "is-active" : ""}
+                aria-pressed={mode === "adopt"}
+                onClick={() => setMode("adopt")}
+              >
+                <span className="modal-mode-switch__title">Adopt existing</span>
+                <span className="modal-mode-switch__hint">Attach a running thread</span>
+              </button>
+            </div>
           </div>
         )}
 
