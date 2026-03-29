@@ -32,6 +32,7 @@ export interface ChatCapabilities {
   image_attachments: boolean;
   shell_command_exec: boolean;
   thread_resume: boolean;
+  adopt_existing_sessions: boolean;
   external_url_detection: boolean;
 }
 
@@ -92,6 +93,17 @@ export interface ChatSession {
 // Deprecated aliases for backward compatibility during refactoring if needed
 export type ClaudeSession = ChatSession;
 export type CodexSession = ChatSession;
+
+export interface AdoptableSession {
+  thread_id: string;
+  folder: string;
+  rel_name: string;
+  cwd: string;
+  rel_cwd: string;
+  title: string;
+  model?: string;
+  updated_at: string;
+}
 
 export type StreamBlock =
   | { type: "text"; content: string }

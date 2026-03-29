@@ -67,6 +67,10 @@ type createSessionRequest struct {
 	Folder string `json:"folder"`
 }
 
+type adoptSessionRequest struct {
+	ThreadID string `json:"thread_id"`
+}
+
 type sendMessageRequest struct {
 	Message string `json:"message"`
 }

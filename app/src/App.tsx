@@ -35,6 +35,11 @@ export default function App() {
     focusPanel(session.id, provider);
   };
 
+  const onAdoptSession = async (provider: string, threadID: string) => {
+    const session = await actions.adoptChatSession(provider, threadID);
+    focusPanel(session.id, provider);
+  };
+
   return (
     <SessionsContext.Provider value={{ state, dispatch, actions }}>
       <div className="app-shell">
@@ -85,6 +90,8 @@ export default function App() {
             providers={state.providers}
             onClose={() => setShowModal(false)}
             onCreateSession={onCreateSession}
+            onLoadAdoptableSessions={actions.loadAdoptableChatSessions}
+            onAdoptSession={onAdoptSession}
           />
         )}
       </div>

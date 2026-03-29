@@ -153,9 +153,20 @@ func sessionHasAssistantTextReply(sess *Session) bool {
 }
 
 func (c *Core) CreateSession(folder string) (*Session, error) {
-	threadID, err := GenerateUUID()
-	if err != nil {
-		return nil, fmt.Errorf("generating thread ID: %w", err)
+	return c.createSession(folder, "", false)
+}
+
+func (c *Core) CreateSessionWithThread(folder, threadID string, threadReady bool) (*Session, error) {
+	return c.createSession(folder, threadID, threadReady)
+}
+
+func (c *Core) createSession(folder, threadID string, threadReady bool) (*Session, error) {
+	var err error
+	if threadID == "" {
+		threadID, err = GenerateUUID()
+		if err != nil {
+			return nil, fmt.Errorf("generating thread ID: %w", err)
+		}
 	}
 	fullPath, relName, err := ResolveProjectPath(c.baseFolder, folder)
 	if err != nil {
@@ -180,12 +191,13 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 
 	now := time.Now()
 	sess := &Session{
-		ID:        id,
-		Folder:    fullPath,
-		RelName:   relName,
-		ThreadID:  threadID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		Folder:      fullPath,
+		RelName:     relName,
+		ThreadID:    threadID,
+		ThreadReady: threadReady,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	previousActive := c.activeSessionID

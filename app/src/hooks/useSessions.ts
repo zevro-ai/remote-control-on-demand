@@ -9,6 +9,7 @@ import {
 import type {
   Session,
   ChatSession,
+  AdoptableSession,
   DraftAttachment,
   Message,
   MessageAttachment,
@@ -351,6 +352,8 @@ type Actions = {
   killSession: (id: string) => Promise<void>;
   restartSession: (id: string) => Promise<void>;
   createChatSession: (provider: string, folder: string) => Promise<ChatSession>;
+  loadAdoptableChatSessions: (provider: string) => Promise<AdoptableSession[]>;
+  adoptChatSession: (provider: string, threadID: string) => Promise<ChatSession>;
   closeChatSession: (provider: string, id: string) => Promise<void>;
   sendChatMessage: (provider: string, id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
   runChatCommand: (provider: string, id: string, command: string) => Promise<void>;
@@ -368,6 +371,8 @@ export const SessionsContext = createContext<{
     killSession: async () => {},
     restartSession: async () => {},
     createChatSession: async () => Promise.reject(new Error("not ready")),
+    loadAdoptableChatSessions: async () => Promise.reject(new Error("not ready")),
+    adoptChatSession: async () => Promise.reject(new Error("not ready")),
     closeChatSession: async () => {},
     sendChatMessage: async () => {},
     runChatCommand: async () => {},
@@ -580,6 +585,14 @@ export function useSessionsReducer() {
     },
     createChatSession: async (provider: string, folder: string) => {
       const sess = await api.post<ChatSession>(`/api/chat/${provider}/sessions`, { folder });
+      dispatch({ type: "ADD_CHAT_SESSION", provider, session: sess });
+      return sess;
+    },
+    loadAdoptableChatSessions: async (provider: string) => {
+      return api.get<AdoptableSession[]>(`/api/chat/${provider}/adoptable`);
+    },
+    adoptChatSession: async (provider: string, threadID: string) => {
+      const sess = await api.post<ChatSession>(`/api/chat/${provider}/adopt`, { thread_id: threadID });
       dispatch({ type: "ADD_CHAT_SESSION", provider, session: sess });
       return sess;
     },

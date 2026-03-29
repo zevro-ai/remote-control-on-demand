@@ -12,6 +12,18 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 **Branches:** `{type}/{issue-number}-short-description` when working on a GitHub issue, e.g. `feat/42-session-auto-cleanup`. Without an issue: `{type}/short-description`, e.g. `fix/crash-on-empty-config`.
 
+## Review Loop
+
+For repository changes that go through GitHub PRs, use the Zevro Review loop by default:
+
+1. Open a PR with a clear English title and description.
+2. Trigger review with `/review` when appropriate.
+3. Treat Zevro review findings as the primary feedback loop and address them in follow-up commits.
+4. After each review-driven change, rerun the relevant tests locally and summarize verification in English on the PR.
+5. Repeat until the PR is approved or otherwise ready to merge.
+
+All public GitHub communication in this repository should be in English, including PR descriptions, issue comments, review replies, and code comments.
+
 ## Project Overview
 
 Remote Control On Demand (RCOD) — a Go application that manages `Codex rc` sessions remotely via a Telegram bot. Users can start, stop, monitor, and restart Codex sessions across multiple git repositories from their phone.

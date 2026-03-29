@@ -9,6 +9,8 @@ afterEach(cleanup);
 describe("CreateSessionModal", () => {
   it("renders backend provider metadata without concatenating labels and creates a session for the selected provider", async () => {
     const onCreateSession = vi.fn().mockResolvedValue(undefined);
+    const onLoadAdoptableSessions = vi.fn().mockResolvedValue([]);
+    const onAdoptSession = vi.fn().mockResolvedValue(undefined);
     const onClose = vi.fn();
 
     render(
@@ -25,6 +27,7 @@ describe("CreateSessionModal", () => {
               image_attachments: true,
               shell_command_exec: true,
               thread_resume: true,
+              adopt_existing_sessions: true,
               external_url_detection: false,
             },
           },
@@ -37,12 +40,15 @@ describe("CreateSessionModal", () => {
               image_attachments: false,
               shell_command_exec: true,
               thread_resume: true,
+              adopt_existing_sessions: false,
               external_url_detection: false,
             },
           },
         }}
         onClose={onClose}
         onCreateSession={onCreateSession}
+        onLoadAdoptableSessions={onLoadAdoptableSessions}
+        onAdoptSession={onAdoptSession}
       />
     );
 
@@ -65,6 +71,8 @@ describe("CreateSessionModal", () => {
 
   it("falls back to known chat session providers when metadata is unavailable", async () => {
     const onCreateSession = vi.fn().mockResolvedValue(undefined);
+    const onLoadAdoptableSessions = vi.fn().mockResolvedValue([]);
+    const onAdoptSession = vi.fn().mockResolvedValue(undefined);
     const onClose = vi.fn();
 
     render(
@@ -88,6 +96,8 @@ describe("CreateSessionModal", () => {
         providers={{}}
         onClose={onClose}
         onCreateSession={onCreateSession}
+        onLoadAdoptableSessions={onLoadAdoptableSessions}
+        onAdoptSession={onAdoptSession}
       />
     );
 
@@ -98,6 +108,62 @@ describe("CreateSessionModal", () => {
 
     await waitFor(() => {
       expect(onCreateSession).toHaveBeenCalledWith("claude", "repo-b");
+    });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("loads and adopts existing sessions for providers that support adoption", async () => {
+    const onCreateSession = vi.fn().mockResolvedValue(undefined);
+    const onLoadAdoptableSessions = vi.fn().mockResolvedValue([
+      {
+        thread_id: "thread-1",
+        folder: "/tmp/repo-a",
+        rel_name: "repo-a",
+        cwd: "/tmp/repo-a/nested",
+        rel_cwd: "nested",
+        title: "Existing Codex session",
+        model: "gpt-5.4",
+        updated_at: "2026-03-29T16:00:00Z",
+      },
+    ]);
+    const onAdoptSession = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+
+    render(
+      <CreateSessionModal
+        folders={["repo-a"]}
+        chatSessions={{ codex: [] }}
+        providers={{
+          codex: {
+            id: "codex",
+            display_name: "Codex",
+            chat: {
+              streaming_deltas: true,
+              tool_call_streaming: true,
+              image_attachments: true,
+              shell_command_exec: true,
+              thread_resume: true,
+              adopt_existing_sessions: true,
+              external_url_detection: false,
+            },
+          },
+        }}
+        onClose={onClose}
+        onCreateSession={onCreateSession}
+        onLoadAdoptableSessions={onLoadAdoptableSessions}
+        onAdoptSession={onAdoptSession}
+      />
+    );
+
+    await waitFor(() => {
+      expect(onLoadAdoptableSessions).toHaveBeenCalledWith("codex");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Adopt existing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Existing Codex session/i }));
+
+    await waitFor(() => {
+      expect(onAdoptSession).toHaveBeenCalledWith("codex", "thread-1");
     });
     expect(onClose).toHaveBeenCalled();
   });
