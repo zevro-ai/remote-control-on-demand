@@ -62,7 +62,7 @@ func normalizePermissionMode(mode string) string {
 		return "yolo"
 	case config.PermissionModeReadOnly, config.PermissionModeGeminiPlan:
 		return "plan"
-	case config.PermissionModeGeminiAutoEdit:
+	case config.PermissionModeGeminiAutoEdit, config.PermissionModeWorkspace:
 		return "auto_edit"
 	default:
 		return defaultPermissionMode

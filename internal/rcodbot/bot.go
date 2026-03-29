@@ -418,10 +418,10 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		}
 		return b.handleChatFolderPickLegacy(c, parts[1])
 	case "cnav":
-		if len(parts) != 2 {
+		if len(parts) < 2 {
 			return nil
 		}
-		return b.handleChatNavigation(c, parts[1])
+		return b.handleChatNavigation(c, strings.Join(parts[1:], ":"))
 	case "p-pick":
 		if len(parts) != 3 {
 			return nil
@@ -510,12 +510,20 @@ func (b *Bot) handleProviderPick(c tele.Context, provider, folder string) error 
 		return b.sendChatFolderPicker(c, provider, 0, "<b>Select a repository for <code>"+provider+"</code></b>")
 	}
 
+	folders := b.listGitFolders()
+	index := 0
+	fmt.Sscanf(folder, "%d", &index)
+	if index < 0 || index >= len(folders) {
+		return c.Send("That repository is no longer available. Refresh with /new.")
+	}
+	resolvedFolder := folders[index]
+
 	var sess *chat.Session
 	var err error
 	if provider == "codex" {
-		sess, err = b.codexMgr.CreateSession(folder)
+		sess, err = b.codexMgr.CreateSession(resolvedFolder)
 	} else {
-		sess, err = b.geminiMgr.CreateSession(folder)
+		sess, err = b.geminiMgr.CreateSession(resolvedFolder)
 	}
 
 	if err != nil {
@@ -542,7 +550,7 @@ func (b *Bot) sendChatFolderPicker(c tele.Context, provider string, page int, te
 	markup := botutil.FolderPickerMarkup(botutil.FolderPickerConfig{
 		Folders:  folders,
 		Page:     page,
-		PickData: func(index int) string { return fmt.Sprintf("p-pick:%s:%s", provider, folders[index]) },
+		PickData: func(index int) string { return fmt.Sprintf("p-pick:%s:%d", provider, index) },
 		NavData:  func(p int) string { return fmt.Sprintf("cnav:%s:%d", provider, p) },
 		Label:    func(folder string) string { return "Repo " + folder },
 	})
