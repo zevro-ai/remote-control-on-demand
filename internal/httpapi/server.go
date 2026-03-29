@@ -55,6 +55,7 @@ func (s *Server) Start() {
 	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("GET /api/auth/callback", s.handleAuthCallback)
 	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("GET /api/meta", s.handleDeploymentMeta)
 
 	// Remote Control sessions (legacy/generic)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)

@@ -32,6 +32,13 @@ type providerMetadataResponse struct {
 	Runtime     *provider.RuntimeCapabilities `json:"runtime,omitempty"`
 }
 
+type deploymentMetaResponse struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit,omitempty"`
+	BuildID   string `json:"build_id"`
+	StartedAt string `json:"started_at"`
+}
+
 type sessionResponse struct {
 	ID           string                   `json:"id"`
 	Folder       string                   `json:"folder"`

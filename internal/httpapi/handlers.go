@@ -11,9 +11,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zevro-ai/remote-control-on-demand/internal/buildinfo"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 )
+
+func (s *Server) handleDeploymentMeta(w http.ResponseWriter, r *http.Request) {
+	info := buildinfo.Current()
+	writeJSON(w, http.StatusOK, deploymentMetaResponse{
+		Version:   info.Version,
+		Commit:    info.Commit,
+		BuildID:   info.BuildID,
+		StartedAt: formatTime(info.StartedAt),
+	})
+}
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	runtimeProvider, ok := s.defaultRuntimeProvider()
