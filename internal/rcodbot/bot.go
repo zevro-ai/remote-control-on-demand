@@ -288,7 +288,6 @@ func (b *Bot) handleUse(c tele.Context) error {
 
 	b.currentProviderID = providerID
 
-
 	return c.Send(
 		fmt.Sprintf("Active session: <code>%s</code> in <code>%s</code>", html.EscapeString(sess.ID), html.EscapeString(sess.RelName)),
 		b.sessionActions(sess),
