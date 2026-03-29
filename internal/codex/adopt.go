@@ -1,10 +1,10 @@
 package codex
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -145,13 +145,23 @@ func stateDBVersion(path string) int {
 }
 
 func listStoredThreads(dbPath string) ([]storedThread, error) {
-	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(dbPath))
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening Codex state DB: %w", err)
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("opening Codex state DB connection: %w", err)
+	}
+	defer conn.Close()
+
+	if err := configureSQLiteReadOnly(context.Background(), conn); err != nil {
+		return nil, err
+	}
+
+	rows, err := conn.QueryContext(context.Background(), `
 		SELECT id, cwd, title, COALESCE(model, ''), updated_at
 		FROM threads
 		WHERE archived = 0
@@ -189,16 +199,14 @@ func listStoredThreads(dbPath string) ([]storedThread, error) {
 	return threads, nil
 }
 
-func sqliteReadOnlyDSN(dbPath string) string {
-	query := url.Values{}
-	query.Set("mode", "ro")
-	query.Add("_pragma", "busy_timeout(5000)")
-
-	return (&url.URL{
-		Scheme:   "file",
-		Path:     filepath.ToSlash(dbPath),
-		RawQuery: query.Encode(),
-	}).String()
+func configureSQLiteReadOnly(ctx context.Context, conn *sql.Conn) error {
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
+		return fmt.Errorf("configuring Codex state DB busy_timeout: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA query_only = 1"); err != nil {
+		return fmt.Errorf("configuring Codex state DB query_only: %w", err)
+	}
+	return nil
 }
 
 func resolveRepoForThread(baseFolder, cwd string) (string, string, string, error) {

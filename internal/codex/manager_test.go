@@ -3,11 +3,9 @@ package codex
 import (
 	"context"
 	"database/sql"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -204,20 +202,42 @@ func TestAdoptSessionRejectsConcurrentDuplicateThreadID(t *testing.T) {
 	}
 }
 
-func TestSQLiteReadOnlyDSNUsesReadOnlyBusyTimeout(t *testing.T) {
-	dsn := sqliteReadOnlyDSN(filepath.Join("tmp", "state_7.sqlite"))
-	parsed, err := url.Parse(dsn)
+func TestConfigureSQLiteReadOnlyEnablesQueryOnlyAndBusyTimeout(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state_7.sqlite")
+	if err := writeTestThreadsDB(dbPath, nil); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("url.Parse(): %v", err)
+		t.Fatalf("sql.Open(): %v", err)
 	}
-	if parsed.Scheme != "file" {
-		t.Fatalf("parsed.Scheme = %q, want file", parsed.Scheme)
+	defer db.Close()
+
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("db.Conn(): %v", err)
 	}
-	if parsed.Query().Get("mode") != "ro" {
-		t.Fatalf("mode = %q, want ro", parsed.Query().Get("mode"))
+	defer conn.Close()
+
+	if err := configureSQLiteReadOnly(context.Background(), conn); err != nil {
+		t.Fatalf("configureSQLiteReadOnly(): %v", err)
 	}
-	if !slices.Contains(parsed.Query()["_pragma"], "busy_timeout(5000)") {
-		t.Fatalf("_pragma = %#v, want busy_timeout(5000)", parsed.Query()["_pragma"])
+
+	var queryOnly int
+	if err := conn.QueryRowContext(context.Background(), "PRAGMA query_only").Scan(&queryOnly); err != nil {
+		t.Fatalf("QueryRowContext(query_only): %v", err)
+	}
+	if queryOnly != 1 {
+		t.Fatalf("query_only = %d, want 1", queryOnly)
+	}
+
+	var busyTimeout int
+	if err := conn.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("QueryRowContext(busy_timeout): %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy_timeout = %d, want 5000", busyTimeout)
 	}
 }
 
