@@ -3,7 +3,13 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AuthPrompt, DeploymentRefreshBanner, buildExternalLoginURL, hasDeploymentUpdate } from "./App";
+import {
+  AuthPrompt,
+  DeploymentRefreshBanner,
+  buildExternalLoginURL,
+  hasDeploymentUpdate,
+  shouldPollDeploymentMeta,
+} from "./App";
 
 afterEach(cleanup);
 
@@ -93,6 +99,20 @@ describe("hasDeploymentUpdate", () => {
         { version: "v0.22.0", build_id: "v0.22.0+bbbb", started_at: "2026-03-29T17:05:00Z" },
       ),
     ).toBe(false);
+  });
+});
+
+describe("shouldPollDeploymentMeta", () => {
+  it("returns false while the dashboard is still loading", () => {
+    expect(shouldPollDeploymentMeta(true, false)).toBe(false);
+  });
+
+  it("returns false when authentication is required", () => {
+    expect(shouldPollDeploymentMeta(false, true)).toBe(false);
+  });
+
+  it("returns true once the dashboard is ready", () => {
+    expect(shouldPollDeploymentMeta(false, false)).toBe(true);
   });
 });
 

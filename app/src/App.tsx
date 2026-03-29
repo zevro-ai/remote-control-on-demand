@@ -33,6 +33,7 @@ export default function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [initialDeployment, setInitialDeployment] = useState<DeploymentInfo | null>(null);
   const [latestDeployment, setLatestDeployment] = useState<DeploymentInfo | null>(null);
+  const shouldPollDeployment = shouldPollDeploymentMeta(state.loading, state.authRequired);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +56,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!shouldPollDeployment) {
+      return;
+    }
+
     let cancelled = false;
 
     const loadDeploymentInfo = async () => {
@@ -80,7 +85,7 @@ export default function App() {
       cancelled = true;
       window.clearInterval(intervalID);
     };
-  }, []);
+  }, [shouldPollDeployment]);
 
   useEffect(() => {
     if (!focusedPanel) {
@@ -197,6 +202,10 @@ export function hasDeploymentUpdate(
     latestDeployment.build_id.trim() !== "" &&
     initialDeployment.build_id !== latestDeployment.build_id
   );
+}
+
+export function shouldPollDeploymentMeta(loading: boolean, authRequired: boolean) {
+  return !loading && !authRequired;
 }
 
 export function DeploymentRefreshBanner({

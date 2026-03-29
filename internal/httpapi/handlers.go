@@ -17,13 +17,17 @@ import (
 )
 
 func (s *Server) handleDeploymentMeta(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.deploymentMeta)
+}
+
+func buildDeploymentMetaResponse() deploymentMetaResponse {
 	info := buildinfo.Current()
-	writeJSON(w, http.StatusOK, deploymentMetaResponse{
+	return deploymentMetaResponse{
 		Version:   info.Version,
 		Commit:    info.Commit,
 		BuildID:   info.BuildID,
 		StartedAt: formatTime(info.StartedAt),
-	})
+	}
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

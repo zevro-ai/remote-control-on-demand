@@ -26,6 +26,7 @@ type Server struct {
 	auth                     *httpauth.Service
 	hub                      *Hub
 	httpServer               *http.Server
+	deploymentMeta           deploymentMetaResponse
 	uploadDir                string
 	spaFS                    fs.FS
 }
@@ -42,6 +43,7 @@ func NewServer(cfg config.APIConfig, defaultRuntimeProviderID string, registry *
 		registry:                 registry,
 		auth:                     httpauth.NewService(cfg),
 		hub:                      newHub(),
+		deploymentMeta:           buildDeploymentMetaResponse(),
 		uploadDir:                filepath.Join(".rcodbot", "uploads"),
 		spaFS:                    spaFS,
 	}
