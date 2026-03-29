@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -144,7 +145,7 @@ func stateDBVersion(path string) int {
 }
 
 func listStoredThreads(dbPath string) ([]storedThread, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("opening Codex state DB: %w", err)
 	}
@@ -186,6 +187,18 @@ func listStoredThreads(dbPath string) ([]storedThread, error) {
 	}
 
 	return threads, nil
+}
+
+func sqliteReadOnlyDSN(dbPath string) string {
+	query := url.Values{}
+	query.Set("mode", "ro")
+	query.Add("_pragma", "busy_timeout(5000)")
+
+	return (&url.URL{
+		Scheme:   "file",
+		Path:     filepath.ToSlash(dbPath),
+		RawQuery: query.Encode(),
+	}).String()
 }
 
 func resolveRepoForThread(baseFolder, cwd string) (string, string, string, error) {

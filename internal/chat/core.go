@@ -183,6 +183,12 @@ func (c *Core) createSession(folder, threadID string, threadReady bool) (*Sessio
 	}
 
 	c.mu.Lock()
+	for _, existing := range c.sessions {
+		if existing != nil && existing.ThreadID == threadID {
+			c.mu.Unlock()
+			return nil, fmt.Errorf("thread %q is already in use by session %q", threadID, existing.ID)
+		}
+	}
 	id, err := generateUniqueSessionID(c.sessions)
 	if err != nil {
 		c.mu.Unlock()

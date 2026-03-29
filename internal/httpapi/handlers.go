@@ -381,6 +381,7 @@ func statusCodeForManagerError(err error) int {
 		return http.StatusNotFound
 	case strings.Contains(message, "already processing"),
 		strings.Contains(message, "already adopted"),
+		strings.Contains(message, "already in use"),
 		strings.Contains(message, "already running"),
 		strings.Contains(message, "not running"):
 		return http.StatusConflict

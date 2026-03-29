@@ -3,10 +3,13 @@ package codex
 import (
 	"context"
 	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -138,6 +141,83 @@ func TestAdoptSessionCreatesThreadReadySession(t *testing.T) {
 	}
 	if !os.SameFile(gotInfo, wantInfo) {
 		t.Fatalf("sess.Folder = %q, want same directory as %q", sess.Folder, nestedDir)
+	}
+}
+
+func TestAdoptSessionRejectsConcurrentDuplicateThreadID(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	dbPath := filepath.Join(codexHome, "state_10.sqlite")
+	if err := writeTestThreadsDB(dbPath, []storedThread{
+		{ID: "thread-demo", CWD: repoDir, Title: "Imported thread", UpdatedAt: time.Unix(400, 0).UTC()},
+	}); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	sessions := make(chan *chat.Session, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			sess, err := mgr.AdoptSession("thread-demo")
+			if err != nil {
+				errs <- err
+				return
+			}
+			sessions <- sess
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(sessions)
+
+	if len(sessions) != 1 {
+		t.Fatalf("len(sessions) = %d, want 1", len(sessions))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("len(errs) = %d, want 1", len(errs))
+	}
+
+	err := <-errs
+	if err == nil || (!strings.Contains(err.Error(), "already adopted") && !strings.Contains(err.Error(), "already in use")) {
+		t.Fatalf("err = %v, want duplicate-adoption error", err)
+	}
+
+	adopted := mgr.ListSessions()
+	if len(adopted) != 1 {
+		t.Fatalf("len(adopted) = %d, want 1", len(adopted))
+	}
+}
+
+func TestSQLiteReadOnlyDSNUsesReadOnlyBusyTimeout(t *testing.T) {
+	dsn := sqliteReadOnlyDSN(filepath.Join("tmp", "state_7.sqlite"))
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("url.Parse(): %v", err)
+	}
+	if parsed.Scheme != "file" {
+		t.Fatalf("parsed.Scheme = %q, want file", parsed.Scheme)
+	}
+	if parsed.Query().Get("mode") != "ro" {
+		t.Fatalf("mode = %q, want ro", parsed.Query().Get("mode"))
+	}
+	if !slices.Contains(parsed.Query()["_pragma"], "busy_timeout(5000)") {
+		t.Fatalf("_pragma = %#v, want busy_timeout(5000)", parsed.Query()["_pragma"])
 	}
 }
 
