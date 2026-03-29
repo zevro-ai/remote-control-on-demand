@@ -18,12 +18,22 @@ type Metadata struct {
 }
 
 type ChatCapabilities struct {
-	StreamingDeltas      bool `json:"streaming_deltas"`
-	ToolCallStreaming    bool `json:"tool_call_streaming"`
-	ImageAttachments     bool `json:"image_attachments"`
-	ShellCommandExec     bool `json:"shell_command_exec"`
-	ThreadResume         bool `json:"thread_resume"`
-	ExternalURLDetection bool `json:"external_url_detection"`
+	StreamingDeltas       bool `json:"streaming_deltas"`
+	ToolCallStreaming     bool `json:"tool_call_streaming"`
+	ImageAttachments      bool `json:"image_attachments"`
+	ShellCommandExec      bool `json:"shell_command_exec"`
+	ThreadResume          bool `json:"thread_resume"`
+	AdoptExistingSessions bool `json:"adopt_existing_sessions"`
+	ExternalURLDetection  bool `json:"external_url_detection"`
+}
+
+type AdoptableSession struct {
+	ThreadID  string    `json:"thread_id"`
+	RelName   string    `json:"rel_name"`
+	RelCWD    string    `json:"rel_cwd"`
+	Title     string    `json:"title"`
+	Model     string    `json:"model,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type RuntimeCapabilities struct {
@@ -42,6 +52,13 @@ type ChatProvider interface {
 	SendMessage(ctx context.Context, sessionID, message string, attachments []chat.Attachment) error
 	RunCommand(ctx context.Context, sessionID, command string) error
 	Subscribe(fn func(chat.Event)) func()
+}
+
+// SessionAdopter is an optional chat-provider capability for discovering and
+// adopting sessions created outside RCOD.
+type SessionAdopter interface {
+	ListAdoptableSessions() ([]AdoptableSession, error)
+	AdoptSession(threadID string) (*chat.Session, error)
 }
 
 type RuntimeNotification struct {

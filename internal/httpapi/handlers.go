@@ -249,6 +249,27 @@ func (s *Server) handleListChatSessions(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleListAdoptableChatSessions(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+
+	adopter, ok := p.(provider.SessionAdopter)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q does not support session adoption", p.Metadata().ID)})
+		return
+	}
+
+	sessions, err := adopter.ListAdoptableSessions()
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sessions)
+}
+
 func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.getProvider(w, r)
 	if !ok {
@@ -266,6 +287,33 @@ func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request)
 		writeManagerError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, p.Metadata()))
+}
+
+func (s *Server) handleAdoptChatSession(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+
+	adopter, ok := p.(provider.SessionAdopter)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q does not support session adoption", p.Metadata().ID)})
+		return
+	}
+
+	var req adoptSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		return
+	}
+
+	sess, err := adopter.AdoptSession(req.ThreadID)
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+
 	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, p.Metadata()))
 }
 
@@ -512,6 +560,8 @@ func statusCodeForManagerError(err error) int {
 	case strings.Contains(message, "not found"):
 		return http.StatusNotFound
 	case strings.Contains(message, "already processing"),
+		strings.Contains(message, "already adopted"),
+		strings.Contains(message, "already in use"),
 		strings.Contains(message, "already running"),
 		strings.Contains(message, "not running"):
 		return http.StatusConflict

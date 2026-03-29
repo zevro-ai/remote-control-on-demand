@@ -153,9 +153,20 @@ func sessionHasAssistantTextReply(sess *Session) bool {
 }
 
 func (c *Core) CreateSession(folder string) (*Session, error) {
-	threadID, err := GenerateUUID()
-	if err != nil {
-		return nil, fmt.Errorf("generating thread ID: %w", err)
+	return c.createSession(folder, "", false)
+}
+
+func (c *Core) CreateSessionWithThread(folder, threadID string, threadReady bool) (*Session, error) {
+	return c.createSession(folder, threadID, threadReady)
+}
+
+func (c *Core) createSession(folder, threadID string, threadReady bool) (*Session, error) {
+	var err error
+	if threadID == "" {
+		threadID, err = GenerateUUID()
+		if err != nil {
+			return nil, fmt.Errorf("generating thread ID: %w", err)
+		}
 	}
 	fullPath, relName, err := ResolveProjectPath(c.baseFolder, folder)
 	if err != nil {
@@ -167,11 +178,17 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 		return nil, fmt.Errorf("folder %q does not exist", relName)
 	}
 
-	if _, err := os.Stat(filepath.Join(fullPath, ".git")); err != nil {
+	if !pathIsWithinGitRepo(c.baseFolder, fullPath) {
 		return nil, fmt.Errorf("folder %q is not a git repository", relName)
 	}
 
 	c.mu.Lock()
+	for _, existing := range c.sessions {
+		if existing != nil && existing.ThreadID == threadID {
+			c.mu.Unlock()
+			return nil, fmt.Errorf("thread %q is already in use by session %q", threadID, existing.ID)
+		}
+	}
 	id, err := generateUniqueSessionID(c.sessions)
 	if err != nil {
 		c.mu.Unlock()
@@ -180,12 +197,13 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 
 	now := time.Now()
 	sess := &Session{
-		ID:        id,
-		Folder:    fullPath,
-		RelName:   relName,
-		ThreadID:  threadID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		Folder:      fullPath,
+		RelName:     relName,
+		ThreadID:    threadID,
+		ThreadReady: threadReady,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	previousActive := c.activeSessionID
@@ -202,6 +220,32 @@ func (c *Core) CreateSession(folder string) (*Session, error) {
 
 	c.Emit(Event{Type: EventSessionCreated, SessionID: id, Session: clone})
 	return clone, nil
+}
+
+func pathIsWithinGitRepo(baseFolder, fullPath string) bool {
+	baseResolved, err := filepath.EvalSymlinks(baseFolder)
+	if err != nil {
+		return false
+	}
+
+	current, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		return false
+	}
+
+	for {
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			return true
+		}
+		if current == baseResolved {
+			return false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
 }
 
 func (c *Core) ListSessions() []*Session {

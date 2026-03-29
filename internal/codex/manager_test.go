@@ -2,10 +2,12 @@ package codex
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,15 +31,279 @@ func TestManagerMetadata(t *testing.T) {
 		t.Fatal("metadata.Chat = nil, want chat capabilities")
 	}
 	want := provider.ChatCapabilities{
-		StreamingDeltas:   true,
-		ToolCallStreaming: true,
-		ShellCommandExec:  true,
-		ThreadResume:      true,
-		ImageAttachments:  true,
+		StreamingDeltas:       true,
+		ToolCallStreaming:     true,
+		ShellCommandExec:      true,
+		ThreadResume:          true,
+		AdoptExistingSessions: true,
+		ImageAttachments:      true,
 	}
 	if *metadata.Chat != want {
 		t.Fatalf("metadata.Chat = %#v, want %#v", *metadata.Chat, want)
 	}
+}
+
+func TestListAdoptableSessionsFiltersToReposInsideBaseFolder(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	subDir := filepath.Join(repoDir, "nested")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(nested): %v", err)
+	}
+	outsideDir := t.TempDir()
+
+	dbPath := filepath.Join(codexHome, "state_7.sqlite")
+	rows := []storedThread{
+		{ID: "thread-demo", CWD: subDir, Title: "Demo thread", Model: "gpt-5.4", UpdatedAt: time.Unix(200, 0).UTC()},
+		{ID: "thread-outside", CWD: outsideDir, Title: "Outside thread", UpdatedAt: time.Unix(100, 0).UTC()},
+	}
+	if err := writeTestThreadsDB(dbPath, rows); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	adopted, err := mgr.core.CreateSessionWithThread("demo", "thread-existing", true)
+	if err != nil {
+		t.Fatalf("CreateSessionWithThread(): %v", err)
+	}
+	if adopted.ThreadID != "thread-existing" {
+		t.Fatalf("adopted.ThreadID = %q", adopted.ThreadID)
+	}
+
+	sessions, err := mgr.ListAdoptableSessions()
+	if err != nil {
+		t.Fatalf("ListAdoptableSessions(): %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("len(sessions) = %d, want 1", len(sessions))
+	}
+	if sessions[0].ThreadID != "thread-demo" {
+		t.Fatalf("sessions[0].ThreadID = %q", sessions[0].ThreadID)
+	}
+	if sessions[0].RelName != "demo" {
+		t.Fatalf("sessions[0].RelName = %q, want demo", sessions[0].RelName)
+	}
+	if sessions[0].RelCWD != "nested" {
+		t.Fatalf("sessions[0].RelCWD = %q, want nested", sessions[0].RelCWD)
+	}
+}
+
+func TestAdoptSessionCreatesThreadReadySession(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	nestedDir := filepath.Join(repoDir, "nested")
+	if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(nested): %v", err)
+	}
+
+	dbPath := filepath.Join(codexHome, "state_9.sqlite")
+	if err := writeTestThreadsDB(dbPath, []storedThread{
+		{ID: "thread-demo", CWD: nestedDir, Title: "Imported thread", UpdatedAt: time.Unix(300, 0).UTC()},
+	}); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	sess, err := mgr.AdoptSession("thread-demo")
+	if err != nil {
+		t.Fatalf("AdoptSession(): %v", err)
+	}
+	if sess.ThreadID != "thread-demo" {
+		t.Fatalf("sess.ThreadID = %q, want thread-demo", sess.ThreadID)
+	}
+	if !sess.ThreadReady {
+		t.Fatal("sess.ThreadReady = false, want true")
+	}
+	if sess.RelName != filepath.Join("demo", "nested") {
+		t.Fatalf("sess.RelName = %q, want %q", sess.RelName, filepath.Join("demo", "nested"))
+	}
+	gotInfo, err := os.Stat(sess.Folder)
+	if err != nil {
+		t.Fatalf("Stat(sess.Folder): %v", err)
+	}
+	wantInfo, err := os.Stat(nestedDir)
+	if err != nil {
+		t.Fatalf("Stat(nestedDir): %v", err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("sess.Folder = %q, want same directory as %q", sess.Folder, nestedDir)
+	}
+}
+
+func TestAdoptSessionRejectsConcurrentDuplicateThreadID(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	dbPath := filepath.Join(codexHome, "state_10.sqlite")
+	if err := writeTestThreadsDB(dbPath, []storedThread{
+		{ID: "thread-demo", CWD: repoDir, Title: "Imported thread", UpdatedAt: time.Unix(400, 0).UTC()},
+	}); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	sessions := make(chan *chat.Session, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			sess, err := mgr.AdoptSession("thread-demo")
+			if err != nil {
+				errs <- err
+				return
+			}
+			sessions <- sess
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(sessions)
+
+	if len(sessions) != 1 {
+		t.Fatalf("len(sessions) = %d, want 1", len(sessions))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("len(errs) = %d, want 1", len(errs))
+	}
+
+	err := <-errs
+	if err == nil || (!strings.Contains(err.Error(), "already adopted") && !strings.Contains(err.Error(), "already in use")) {
+		t.Fatalf("err = %v, want duplicate-adoption error", err)
+	}
+
+	adopted := mgr.ListSessions()
+	if len(adopted) != 1 {
+		t.Fatalf("len(adopted) = %d, want 1", len(adopted))
+	}
+}
+
+func TestConfigureSQLiteReadOnlyEnablesQueryOnlyAndBusyTimeout(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state_7.sqlite")
+	if err := writeTestThreadsDB(dbPath, nil); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open(): %v", err)
+	}
+	defer db.Close()
+
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("db.Conn(): %v", err)
+	}
+	defer conn.Close()
+
+	if err := configureSQLiteReadOnly(context.Background(), conn); err != nil {
+		t.Fatalf("configureSQLiteReadOnly(): %v", err)
+	}
+
+	var queryOnly int
+	if err := conn.QueryRowContext(context.Background(), "PRAGMA query_only").Scan(&queryOnly); err != nil {
+		t.Fatalf("QueryRowContext(query_only): %v", err)
+	}
+	if queryOnly != 1 {
+		t.Fatalf("query_only = %d, want 1", queryOnly)
+	}
+
+	var busyTimeout int
+	if err := conn.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("QueryRowContext(busy_timeout): %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy_timeout = %d, want 5000", busyTimeout)
+	}
+}
+
+func writeTestThreadsDB(path string, rows []storedThread) error {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`
+		CREATE TABLE threads (
+			id TEXT PRIMARY KEY,
+			rollout_path TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			source TEXT NOT NULL,
+			model_provider TEXT NOT NULL,
+			cwd TEXT NOT NULL,
+			title TEXT NOT NULL,
+			sandbox_policy TEXT NOT NULL,
+			approval_mode TEXT NOT NULL,
+			tokens_used INTEGER NOT NULL DEFAULT 0,
+			has_user_event INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
+			archived_at INTEGER,
+			git_sha TEXT,
+			git_branch TEXT,
+			git_origin_url TEXT,
+			cli_version TEXT NOT NULL DEFAULT '',
+			first_user_message TEXT NOT NULL DEFAULT '',
+			agent_nickname TEXT,
+			agent_role TEXT,
+			memory_mode TEXT NOT NULL DEFAULT 'enabled',
+			model TEXT,
+			reasoning_effort TEXT,
+			agent_path TEXT
+		)
+	`); err != nil {
+		return err
+	}
+
+	for _, row := range rows {
+		if _, err := db.Exec(`
+			INSERT INTO threads (
+				id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+				sandbox_policy, approval_mode, archived, model
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+		`,
+			row.ID,
+			filepath.Join("/tmp", row.ID),
+			row.UpdatedAt.Unix(),
+			row.UpdatedAt.Unix(),
+			"local",
+			"openai",
+			row.CWD,
+			row.Title,
+			`{"type":"workspace-write"}`,
+			"never",
+			row.Model,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func TestBuildCodexArgsNewSessionDangerousBypass(t *testing.T) {

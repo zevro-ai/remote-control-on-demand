@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpauth"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
+	_ "modernc.org/sqlite"
 )
 
 func setupTestServer(t *testing.T) (*Server, *http.ServeMux) {
@@ -69,7 +71,9 @@ func setupTestServerWithManagers(t *testing.T, sessionMgr *session.Manager, clau
 	mux.HandleFunc("GET /api/providers", srv.handleListProviderMetadata)
 	mux.HandleFunc("GET /api/chat/providers", srv.handleListProviders)
 	mux.HandleFunc("GET /api/chat/{provider}/sessions", srv.handleListChatSessions)
+	mux.HandleFunc("GET /api/chat/{provider}/adoptable", srv.handleListAdoptableChatSessions)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions", srv.handleCreateChatSession)
+	mux.HandleFunc("POST /api/chat/{provider}/adopt", srv.handleAdoptChatSession)
 	mux.HandleFunc("GET /api/chat/{provider}/sessions/{id}/messages", srv.handleGetChatMessages)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions/{id}/send", srv.handleSendChatMessage)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions/{id}/command", srv.handleRunChatCommand)
@@ -215,6 +219,77 @@ func waitForRuntimeSessionStopped(t *testing.T, runtimeProvider provider.Runtime
 	}
 
 	t.Fatalf("runtime session %s did not stop before cleanup", sessionID)
+}
+
+func writeTestCodexThreadsDB(path string, rows []struct {
+	ID        string
+	CWD       string
+	Title     string
+	Model     string
+	UpdatedAt time.Time
+}) error {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`
+		CREATE TABLE threads (
+			id TEXT PRIMARY KEY,
+			rollout_path TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			source TEXT NOT NULL,
+			model_provider TEXT NOT NULL,
+			cwd TEXT NOT NULL,
+			title TEXT NOT NULL,
+			sandbox_policy TEXT NOT NULL,
+			approval_mode TEXT NOT NULL,
+			tokens_used INTEGER NOT NULL DEFAULT 0,
+			has_user_event INTEGER NOT NULL DEFAULT 0,
+			archived INTEGER NOT NULL DEFAULT 0,
+			archived_at INTEGER,
+			git_sha TEXT,
+			git_branch TEXT,
+			git_origin_url TEXT,
+			cli_version TEXT NOT NULL DEFAULT '',
+			first_user_message TEXT NOT NULL DEFAULT '',
+			agent_nickname TEXT,
+			agent_role TEXT,
+			memory_mode TEXT NOT NULL DEFAULT 'enabled',
+			model TEXT,
+			reasoning_effort TEXT,
+			agent_path TEXT
+		)
+	`); err != nil {
+		return err
+	}
+
+	for _, row := range rows {
+		if _, err := db.Exec(`
+			INSERT INTO threads (
+				id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
+				sandbox_policy, approval_mode, archived, model
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+		`,
+			row.ID,
+			filepath.Join("/tmp", row.ID),
+			row.UpdatedAt.Unix(),
+			row.UpdatedAt.Unix(),
+			"local",
+			"openai",
+			row.CWD,
+			row.Title,
+			`{"type":"workspace-write"}`,
+			"never",
+			row.Model,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func TestAuthMiddleware_NoToken(t *testing.T) {
@@ -633,6 +708,110 @@ func TestCreateChatSession_ResponseIncludesProvider(t *testing.T) {
 	}
 	if resp.ProviderMeta.ID != "codex" || resp.ProviderMeta.Chat == nil {
 		t.Fatalf("chat provider metadata = %#v", resp.ProviderMeta)
+	}
+}
+
+func TestListAdoptableChatSessions_ReturnsCodexThreads(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	projectDir := filepath.Join(baseDir, "demo")
+	subDir := filepath.Join(projectDir, "nested")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(nested): %v", err)
+	}
+
+	if err := writeTestCodexThreadsDB(filepath.Join(codexHome, "state_5.sqlite"), []struct {
+		ID        string
+		CWD       string
+		Title     string
+		Model     string
+		UpdatedAt time.Time
+	}{
+		{ID: "thread-demo", CWD: subDir, Title: "Imported thread", Model: "gpt-5.4", UpdatedAt: time.Unix(300, 0).UTC()},
+	}); err != nil {
+		t.Fatalf("writeTestCodexThreadsDB(): %v", err)
+	}
+
+	runner := &testRunner{}
+	sessionMgr := session.NewManager(runner, baseDir, "", false, 0, 0, nil)
+	_, mux := setupTestServerWithManagers(t, sessionMgr, claudechat.NewManager(baseDir, ""), codex.NewManager(baseDir, ""))
+
+	req := httptest.NewRequest("GET", "/api/chat/codex/adoptable", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "\"folder\"") || strings.Contains(body, "\"cwd\"") {
+		t.Fatalf("response leaked absolute paths: %s", body)
+	}
+
+	var sessions []provider.AdoptableSession
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&sessions); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("len(sessions) = %d, want 1", len(sessions))
+	}
+	if sessions[0].ThreadID != "thread-demo" {
+		t.Fatalf("sessions[0].ThreadID = %q, want thread-demo", sessions[0].ThreadID)
+	}
+	if sessions[0].RelName != "demo" || sessions[0].RelCWD != "nested" {
+		t.Fatalf("sessions[0] = %#v", sessions[0])
+	}
+}
+
+func TestAdoptChatSession_ResponseIncludesProvider(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	projectDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	if err := writeTestCodexThreadsDB(filepath.Join(codexHome, "state_5.sqlite"), []struct {
+		ID        string
+		CWD       string
+		Title     string
+		Model     string
+		UpdatedAt time.Time
+	}{
+		{ID: "thread-demo", CWD: projectDir, Title: "Imported thread", UpdatedAt: time.Unix(300, 0).UTC()},
+	}); err != nil {
+		t.Fatalf("writeTestCodexThreadsDB(): %v", err)
+	}
+
+	runner := &testRunner{}
+	sessionMgr := session.NewManager(runner, baseDir, "", false, 0, 0, nil)
+	_, mux := setupTestServerWithManagers(t, sessionMgr, claudechat.NewManager(baseDir, ""), codex.NewManager(baseDir, ""))
+
+	req := httptest.NewRequest("POST", "/api/chat/codex/adopt", bytes.NewBufferString(`{"thread_id":"thread-demo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
+	}
+
+	var resp chatSessionResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("Decode(): %v", err)
+	}
+	if resp.Provider != "codex" || resp.Agent != "codex" {
+		t.Fatalf("chat session provider = %q agent = %q, want codex/codex", resp.Provider, resp.Agent)
+	}
+	if resp.ThreadID != "thread-demo" {
+		t.Fatalf("resp.ThreadID = %q, want thread-demo", resp.ThreadID)
 	}
 }
 

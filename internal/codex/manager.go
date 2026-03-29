@@ -49,11 +49,12 @@ func (m *Manager) Metadata() provider.Metadata {
 		ID:          "codex",
 		DisplayName: "Codex",
 		Chat: &provider.ChatCapabilities{
-			StreamingDeltas:   true,
-			ToolCallStreaming: true,
-			ShellCommandExec:  true,
-			ThreadResume:      true,
-			ImageAttachments:  true,
+			StreamingDeltas:       true,
+			ToolCallStreaming:     true,
+			ShellCommandExec:      true,
+			ThreadResume:          true,
+			AdoptExistingSessions: true,
+			ImageAttachments:      true,
 		},
 	}
 }
@@ -123,6 +124,40 @@ func (m *Manager) Shutdown() {
 
 func (m *Manager) CreateSession(folder string) (*chat.Session, error) {
 	return m.core.CreateSession(folder)
+}
+
+func (m *Manager) ListAdoptableSessions() ([]provider.AdoptableSession, error) {
+	return listAdoptableSessions(m.core.BaseFolder(), m.core.ListSessions())
+}
+
+func (m *Manager) AdoptSession(threadID string) (*chat.Session, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, fmt.Errorf("thread ID is required")
+	}
+
+	existing := m.core.ListSessions()
+	for _, sess := range existing {
+		if sess.ThreadID == threadID {
+			return nil, fmt.Errorf("thread %q is already adopted by session %q", threadID, sess.ID)
+		}
+	}
+
+	adoptable, err := listAdoptableSessions(m.core.BaseFolder(), existing)
+	if err != nil {
+		return nil, err
+	}
+	for _, sess := range adoptable {
+		if sess.ThreadID == threadID {
+			folder := sess.RelName
+			if sess.RelCWD != "" {
+				folder = filepath.Join(folder, sess.RelCWD)
+			}
+			return m.core.CreateSessionWithThread(folder, threadID, true)
+		}
+	}
+
+	return nil, fmt.Errorf("adoptable Codex session %q not found", threadID)
 }
 
 func (m *Manager) ListSessions() []*chat.Session {

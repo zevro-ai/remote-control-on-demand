@@ -21,6 +21,7 @@ const codexMetadata: ProviderMetadata = {
     image_attachments: true,
     shell_command_exec: true,
     thread_resume: true,
+    adopt_existing_sessions: true,
     external_url_detection: false,
   },
 };
