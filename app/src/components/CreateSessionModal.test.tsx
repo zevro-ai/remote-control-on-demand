@@ -153,7 +153,17 @@ describe("CreateSessionModal", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Adopt existing/i }));
+    const newSessionButton = screen.getByRole("button", { name: /New session.*Start from a repository/i });
+    const adoptExistingButton = screen.getByRole("button", { name: /Adopt existing.*Attach a running thread/i });
+
+    expect(screen.getByText("Session mode")).toBeTruthy();
+    expect(newSessionButton.getAttribute("aria-pressed")).toBe("true");
+    expect(adoptExistingButton.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(adoptExistingButton);
+
+    expect(newSessionButton.getAttribute("aria-pressed")).toBe("false");
+    expect(adoptExistingButton.getAttribute("aria-pressed")).toBe("true");
 
     await waitFor(() => {
       expect(onLoadAdoptableSessions).toHaveBeenCalledWith("codex");
