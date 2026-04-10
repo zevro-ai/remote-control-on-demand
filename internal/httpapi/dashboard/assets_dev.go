@@ -7,10 +7,9 @@ import (
 	"os"
 )
 
-// FS returns an empty file system for local development
-// to avoid errors when dist folder is missing.
+// FS returns dashboard assets for non-release builds.
 func FS() fs.FS {
-	// You could also use os.DirFS("app/dist") here if you want
-	// to serve assets from disk during dev without embedding.
-	return os.DirFS(".")
+	// Limit static serving to dashboard build artifacts only.
+	// If app/dist is absent, the server will return 404 for SPA routes.
+	return os.DirFS("app/dist")
 }
