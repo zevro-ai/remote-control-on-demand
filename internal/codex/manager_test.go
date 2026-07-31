@@ -103,10 +103,18 @@ func TestListAdoptableSessionsIncludesWorkspacesOutsideBaseFolder(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListAdoptableSessions(): %v", err)
 	}
+	resolvedSubDir, err := filepath.EvalSymlinks(subDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(subDir): %v", err)
+	}
+	resolvedOutsideDir, err := filepath.EvalSymlinks(outsideDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(outsideDir): %v", err)
+	}
 	if len(sessions) != 2 {
 		t.Fatalf("len(sessions) = %d, want 2", len(sessions))
 	}
-	if sessions[0].ThreadID != "thread-demo" || sessions[0].Folder != subDir {
+	if sessions[0].ThreadID != "thread-demo" || sessions[0].Folder != resolvedSubDir {
 		t.Fatalf("sessions[0] = %#v", sessions[0])
 	}
 	if sessions[0].RelName != "demo" {
@@ -115,14 +123,14 @@ func TestListAdoptableSessionsIncludesWorkspacesOutsideBaseFolder(t *testing.T) 
 	if sessions[0].RelCWD != "nested" {
 		t.Fatalf("sessions[0].RelCWD = %q, want nested", sessions[0].RelCWD)
 	}
-	if sessions[1].ThreadID != "thread-outside" || sessions[1].Folder != outsideDir {
+	if sessions[1].ThreadID != "thread-outside" || sessions[1].Folder != resolvedOutsideDir {
 		t.Fatalf("sessions[1] = %#v", sessions[1])
 	}
 	adoptedOutside, err := mgr.AdoptSession("thread-outside")
 	if err != nil {
 		t.Fatalf("AdoptSession(outside): %v", err)
 	}
-	if adoptedOutside.Folder != outsideDir || adoptedOutside.RelName == "" {
+	if adoptedOutside.Folder != resolvedOutsideDir || adoptedOutside.RelName == "" {
 		t.Fatalf("adopted outside session = %#v", adoptedOutside)
 	}
 }
@@ -154,7 +162,11 @@ func TestListHistoryDiscoversRolloutNotIndexedByStateDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListHistory(): %v", err)
 	}
-	if len(history) != 1 || history[0].ThreadID != "thread-rollout" || history[0].Folder != workspaceDir {
+	resolvedWorkspaceDir, err := filepath.EvalSymlinks(workspaceDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workspace): %v", err)
+	}
+	if len(history) != 1 || history[0].ThreadID != "thread-rollout" || history[0].Folder != resolvedWorkspaceDir {
 		t.Fatalf("history = %#v", history)
 	}
 	if history[0].Preview != "find the missing session" || history[0].MessageCount != 2 {

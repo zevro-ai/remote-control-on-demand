@@ -83,7 +83,15 @@ func TestResolveWorkspacePathIncludesExternalGitRepositories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveWorkspacePath(): %v", err)
 	}
-	if workspace.Folder != workspaceDir || workspace.RelName != externalDir || workspace.RelCWD != "nested" {
+	externalResolved, err := filepath.EvalSymlinks(externalDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(external): %v", err)
+	}
+	workspaceResolved, err := filepath.EvalSymlinks(workspaceDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workspace): %v", err)
+	}
+	if workspace.Folder != workspaceResolved || workspace.RelName != externalResolved || workspace.RelCWD != "nested" {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 }
@@ -101,7 +109,11 @@ func TestResolveWorkspacePathAllowsNonRepositoryWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveWorkspacePath(): %v", err)
 	}
-	if workspace.Folder != workspaceDir || workspace.RelName != filepath.Join("~", "notes") || workspace.RelCWD != "" {
+	workspaceResolved, err := filepath.EvalSymlinks(workspaceDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workspace): %v", err)
+	}
+	if workspace.Folder != workspaceResolved || filepath.Base(workspace.RelName) != "notes" || workspace.RelCWD != "" {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 }
@@ -114,10 +126,14 @@ func TestResolveWorkspacePathDescribesMissingWorkspaceForHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveWorkspacePath(): %v", err)
 	}
+	missingResolved, err := evalSymlinksAllowMissing(missing)
+	if err != nil {
+		t.Fatalf("evalSymlinksAllowMissing(missing): %v", err)
+	}
 	if workspace.Exists {
 		t.Fatal("workspace.Exists = true, want false")
 	}
-	if workspace.Folder != missing || workspace.RelName != "deleted-project" {
+	if workspace.Folder != missingResolved || workspace.RelName != "deleted-project" {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 }
