@@ -62,6 +62,8 @@ type chatSessionResponse struct {
 	ProviderMeta providerMetadataResponse `json:"provider_meta"`
 	Agent        string                   `json:"agent"` // Provider ID
 	ThreadID     string                   `json:"thread_id,omitempty"`
+	Model        string                   `json:"model,omitempty"`
+	Reasoning    string                   `json:"reasoning_effort,omitempty"`
 	Busy         bool                     `json:"busy"`
 	CreatedAt    string                   `json:"created_at"`
 	UpdatedAt    string                   `json:"updated_at"`
@@ -94,7 +96,14 @@ type commandPayload struct {
 }
 
 type createSessionRequest struct {
-	Folder string `json:"folder"`
+	Folder    string `json:"folder"`
+	Model     string `json:"model,omitempty"`
+	Reasoning string `json:"reasoning_effort,omitempty"`
+}
+
+type updateSessionRequest struct {
+	Model     string `json:"model,omitempty"`
+	Reasoning string `json:"reasoning_effort,omitempty"`
 }
 
 type adoptSessionRequest struct {

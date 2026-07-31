@@ -99,8 +99,12 @@ export default function App() {
     }
   }, [clearFocus, focusedPanel, state.chatSessions]);
 
-  const onCreateSession = async (provider: string, folder: string) => {
-    const session = await actions.createChatSession(provider, folder);
+  const onCreateSession = async (
+    provider: string,
+    folder: string,
+    options?: { model?: string; reasoning_effort?: string },
+  ) => {
+    const session = await actions.createChatSession(provider, folder, options);
     focusPanel(session.id, provider);
   };
 
@@ -127,6 +131,9 @@ export default function App() {
           }}
           onNewSession={() => setShowModal(true)}
           onSelectSession={focusPanel}
+          sshHosts={state.sshHosts}
+          onAddSSHHost={actions.addSSHHost}
+          onRemoveSSHHost={actions.removeSSHHost}
         />
 
         <main className="dashboard-main">
@@ -180,7 +187,10 @@ export default function App() {
             providers={state.providers}
             onClose={() => setShowModal(false)}
             onCreateSession={onCreateSession}
+            onLoadModels={actions.loadChatModels}
+            onLoadFolders={actions.loadChatFolders}
             onLoadAdoptableSessions={actions.loadAdoptableChatSessions}
+            onLoadHistory={actions.loadChatHistory}
             onAdoptSession={onAdoptSession}
           />
         )}

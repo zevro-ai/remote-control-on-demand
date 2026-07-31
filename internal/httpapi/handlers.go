@@ -14,10 +14,54 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/buildinfo"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
+	"github.com/zevro-ai/remote-control-on-demand/internal/remote"
 )
 
 func (s *Server) handleDeploymentMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.deploymentMeta)
+}
+
+func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
+	if s.sshManager == nil {
+		writeJSON(w, http.StatusOK, []remote.HostRuntime{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.sshManager.List())
+}
+
+func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
+	if s.sshManager == nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "SSH host management is not configured"})
+		return
+	}
+	var host remote.HostConfig
+	if err := json.NewDecoder(r.Body).Decode(&host); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid SSH host body"})
+		return
+	}
+	if err := s.sshManager.Add(host, s.registry); err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	for _, runtime := range s.sshManager.List() {
+		if runtime.Identity.ID == host.ID {
+			writeJSON(w, http.StatusCreated, runtime)
+			return
+		}
+	}
+	writeJSON(w, http.StatusCreated, host.Identity())
+}
+
+func (s *Server) handleDeleteHost(w http.ResponseWriter, r *http.Request) {
+	if s.sshManager == nil {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: "SSH host management is not configured"})
+		return
+	}
+	if err := s.sshManager.Remove(r.PathValue("id"), s.registry); err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func buildDeploymentMetaResponse() deploymentMetaResponse {
@@ -264,6 +308,82 @@ func (s *Server) handleListChatSessions(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleListChatModels(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+	lister, ok := p.(provider.ModelLister)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q does not expose models", p.Metadata().ID)})
+		return
+	}
+	models, err := lister.ListModels()
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, models)
+}
+
+func (s *Server) handleListChatFolders(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+	lister, ok := p.(provider.FolderLister)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q does not expose folders", p.Metadata().ID)})
+		return
+	}
+	folders, err := lister.ListFolders()
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, folders)
+}
+
+func (s *Server) handleListChatHistory(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+	historian, ok := p.(provider.SessionHistorian)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q does not expose history", p.Metadata().ID)})
+		return
+	}
+	history, err := historian.ListHistory()
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, history)
+}
+
+func (s *Server) handleGetChatHistory(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+	historian, ok := p.(provider.SessionHistorian)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q does not expose history", p.Metadata().ID)})
+		return
+	}
+	messages, err := historian.GetHistory(r.PathValue("thread_id"))
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	resp := make([]messagePayload, 0, len(messages))
+	for _, message := range messages {
+		resp = append(resp, toMessagePayload(message))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleListAdoptableChatSessions(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.getProvider(w, r)
 	if !ok {
@@ -297,12 +417,41 @@ func (s *Server) handleCreateChatSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	sess, err := p.CreateSession(req.Folder)
+	var sess *chat.Session
+	var err error
+	if creator, ok := p.(provider.SessionOptionCreator); ok {
+		sess, err = creator.CreateSessionWithOptions(req.Folder, chat.SessionOptions{Model: strings.TrimSpace(req.Model), Reasoning: strings.TrimSpace(req.Reasoning)})
+	} else {
+		sess, err = p.CreateSession(req.Folder)
+	}
 	if err != nil {
 		writeManagerError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, toChatSessionResponse(sess, p.Metadata()))
+}
+
+func (s *Server) handleUpdateChatSession(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.getProvider(w, r)
+	if !ok {
+		return
+	}
+	configurator, ok := p.(provider.SessionConfigurator)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorResponse{Error: fmt.Sprintf("provider %q does not support session options", p.Metadata().ID)})
+		return
+	}
+	var req updateSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		return
+	}
+	sess, err := configurator.SetSessionOptions(r.PathValue("id"), chat.SessionOptions{Model: strings.TrimSpace(req.Model), Reasoning: strings.TrimSpace(req.Reasoning)})
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toChatSessionResponse(sess, p.Metadata()))
 }
 
 func (s *Server) handleAdoptChatSession(w http.ResponseWriter, r *http.Request) {
@@ -643,6 +792,8 @@ func toChatSessionResponse(sess *chat.Session, metadata provider.Metadata) chatS
 		ProviderMeta: toProviderMetadataResponse(metadata),
 		Agent:        metadata.ID,
 		ThreadID:     sess.ThreadID,
+		Model:        sess.Model,
+		Reasoning:    sess.Reasoning,
 		Busy:         sess.Busy,
 		CreatedAt:    formatTime(sess.CreatedAt),
 		UpdatedAt:    formatTime(sess.UpdatedAt),

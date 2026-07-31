@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zevro-ai/remote-control-on-demand/internal/antigravity"
 	"github.com/zevro-ai/remote-control-on-demand/internal/botutil"
 	"github.com/zevro-ai/remote-control-on-demand/internal/chat"
 	"github.com/zevro-ai/remote-control-on-demand/internal/codex"
-	"github.com/zevro-ai/remote-control-on-demand/internal/gemini"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
 	"github.com/zevro-ai/remote-control-on-demand/internal/session"
 	tele "gopkg.in/telebot.v4"
@@ -28,13 +28,13 @@ type Notifier interface {
 }
 
 type Bot struct {
-	tb            *tele.Bot
-	sessionMgr    *session.Manager
-	codexMgr      *codex.Manager
-	geminiMgr     *gemini.Manager
-	allowedUserID int64
-	unsubSession  func()
-	statePath     string
+	tb             *tele.Bot
+	sessionMgr     *session.Manager
+	codexMgr       *codex.Manager
+	antigravityMgr *antigravity.Manager
+	allowedUserID  int64
+	unsubSession   func()
+	statePath      string
 
 	mu                sync.RWMutex
 	currentProviderID string
@@ -51,7 +51,7 @@ func (n *nopBot) Start()               {}
 func (n *nopBot) Stop()                {}
 func (n *nopBot) SendMessage(_ string) {}
 
-func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMgr *codex.Manager, geminiMgr *gemini.Manager, statePath string) (*Bot, error) {
+func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMgr *codex.Manager, antigravityMgr *antigravity.Manager, statePath string) (*Bot, error) {
 	tb, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -61,12 +61,12 @@ func New(token string, allowedUserID int64, sessionMgr *session.Manager, codexMg
 	}
 
 	b := &Bot{
-		tb:            tb,
-		sessionMgr:    sessionMgr,
-		codexMgr:      codexMgr,
-		geminiMgr:     geminiMgr,
-		allowedUserID: allowedUserID,
-		statePath:     statePath,
+		tb:             tb,
+		sessionMgr:     sessionMgr,
+		codexMgr:       codexMgr,
+		antigravityMgr: antigravityMgr,
+		allowedUserID:  allowedUserID,
+		statePath:      statePath,
 	}
 	b.loadState()
 	b.registerHandlers()
@@ -168,7 +168,7 @@ func (b *Bot) registerCommands() {
 		{Text: "start", Description: "Start Claude for a repo"},
 		{Text: "list", Description: "List Claude sessions"},
 		{Text: "folders", Description: "Browse repos for Claude"},
-		{Text: "new", Description: "Create Codex or Gemini session"},
+		{Text: "new", Description: "Create Codex or Antigravity session"},
 		{Text: "sessions", Description: "List chat sessions"},
 		{Text: "current", Description: "Show active chat session"},
 		{Text: "help", Description: "Show help"},
@@ -177,8 +177,8 @@ func (b *Bot) registerCommands() {
 
 func (b *Bot) sendWelcome() {
 	title := "<b>RCOD + Codex</b>"
-	if b.geminiMgr != nil {
-		title = "<b>RCOD + Codex & Gemini</b>"
+	if b.antigravityMgr != nil {
+		title = "<b>RCOD + Codex & Antigravity</b>"
 	}
 
 	msg := title + `
@@ -229,8 +229,8 @@ func (b *Bot) handleFolders(c tele.Context) error {
 
 func (b *Bot) handleHelp(c tele.Context) error {
 	title := "<b>RCOD + Codex</b>"
-	if b.geminiMgr != nil {
-		title = "<b>RCOD + Codex & Gemini</b>"
+	if b.antigravityMgr != nil {
+		title = "<b>RCOD + Codex & Antigravity</b>"
 	}
 
 	msg := title + `
@@ -300,9 +300,9 @@ func (b *Bot) handleSessions(c tele.Context) error {
 	for _, s := range b.codexMgr.ListSessions() {
 		sessions = append(sessions, sessionWithProvider{s, "codex"})
 	}
-	if b.geminiMgr != nil {
-		for _, s := range b.geminiMgr.ListSessions() {
-			sessions = append(sessions, sessionWithProvider{s, "gemini"})
+	if b.antigravityMgr != nil {
+		for _, s := range b.antigravityMgr.ListSessions() {
+			sessions = append(sessions, sessionWithProvider{s, "antigravity"})
 		}
 	}
 
@@ -311,9 +311,9 @@ func (b *Bot) handleSessions(c tele.Context) error {
 	}
 
 	activeCodex, _ := b.codexMgr.Active()
-	var activeGemini *chat.Session
-	if b.geminiMgr != nil {
-		activeGemini, _ = b.geminiMgr.Active()
+	var activeAntigravity *chat.Session
+	if b.antigravityMgr != nil {
+		activeAntigravity, _ = b.antigravityMgr.Active()
 	}
 
 	var sb strings.Builder
@@ -323,7 +323,7 @@ func (b *Bot) handleSessions(c tele.Context) error {
 		if swp.providerID == "codex" {
 			isActive = activeCodex != nil && activeCodex.ID == swp.sess.ID
 		} else {
-			isActive = activeGemini != nil && activeGemini.ID == swp.sess.ID
+			isActive = activeAntigravity != nil && activeAntigravity.ID == swp.sess.ID
 		}
 
 		marker := " "
@@ -366,10 +366,10 @@ func (b *Bot) handleUse(c tele.Context) error {
 			providerID = "codex"
 		}
 	}
-	if sess == nil && (providerID == "gemini" || providerID == "") && b.geminiMgr != nil {
-		if _, ok := b.geminiMgr.GetSession(id); ok {
-			sess, err = b.geminiMgr.SetActive(id)
-			providerID = "gemini"
+	if sess == nil && (providerID == "antigravity" || providerID == "") && b.antigravityMgr != nil {
+		if _, ok := b.antigravityMgr.GetSession(id); ok {
+			sess, err = b.antigravityMgr.SetActive(id)
+			providerID = "antigravity"
 		}
 	}
 
@@ -412,9 +412,9 @@ func (b *Bot) handleClose(c tele.Context) error {
 			found = true
 		}
 	}
-	if !found && (providerID == "gemini" || providerID == "") && b.geminiMgr != nil {
-		if _, ok := b.geminiMgr.GetSession(id); ok {
-			err = b.geminiMgr.DeleteSession(id)
+	if !found && (providerID == "antigravity" || providerID == "") && b.antigravityMgr != nil {
+		if _, ok := b.antigravityMgr.GetSession(id); ok {
+			err = b.antigravityMgr.DeleteSession(id)
 			found = true
 		}
 	}
@@ -431,13 +431,13 @@ func (b *Bot) handleClose(c tele.Context) error {
 
 func (b *Bot) handleCurrent(c tele.Context) error {
 	activeCodex, hasCodex := b.codexMgr.Active()
-	var activeGemini *chat.Session
-	var hasGemini bool
-	if b.geminiMgr != nil {
-		activeGemini, hasGemini = b.geminiMgr.Active()
+	var activeAntigravity *chat.Session
+	var hasAntigravity bool
+	if b.antigravityMgr != nil {
+		activeAntigravity, hasAntigravity = b.antigravityMgr.Active()
 	}
 
-	if !hasCodex && !hasGemini {
+	if !hasCodex && !hasAntigravity {
 		return c.Send("No active session. Use /new or /use.")
 	}
 
@@ -445,8 +445,8 @@ func (b *Bot) handleCurrent(c tele.Context) error {
 	if hasCodex {
 		sb.WriteString(fmt.Sprintf("<b>Active Codex</b>: <code>%s</code> in <code>%s</code>\n", html.EscapeString(activeCodex.ID), html.EscapeString(activeCodex.RelName)))
 	}
-	if hasGemini {
-		sb.WriteString(fmt.Sprintf("<b>Active Gemini</b>: <code>%s</code> in <code>%s</code>\n", html.EscapeString(activeGemini.ID), html.EscapeString(activeGemini.RelName)))
+	if hasAntigravity {
+		sb.WriteString(fmt.Sprintf("<b>Active Antigravity</b>: <code>%s</code> in <code>%s</code>\n", html.EscapeString(activeAntigravity.ID), html.EscapeString(activeAntigravity.RelName)))
 	}
 
 	currentID := b.getCurrentProviderID()
@@ -469,10 +469,10 @@ func (b *Bot) handleChat(c tele.Context) error {
 	var mgr chatProvider
 	currentID := b.getCurrentProviderID()
 	switch currentID {
-	case "gemini":
-		if b.geminiMgr != nil {
-			if _, ok := b.geminiMgr.Active(); ok {
-				mgr = b.geminiMgr
+	case "antigravity":
+		if b.antigravityMgr != nil {
+			if _, ok := b.antigravityMgr.Active(); ok {
+				mgr = b.antigravityMgr
 			}
 		}
 	case "codex":
@@ -488,10 +488,10 @@ func (b *Bot) handleChat(c tele.Context) error {
 			mgr = b.codexMgr
 			b.setCurrentProviderID("codex")
 			_ = sess
-		} else if b.geminiMgr != nil {
-			if _, ok = b.geminiMgr.Active(); ok {
-				mgr = b.geminiMgr
-				b.setCurrentProviderID("gemini")
+		} else if b.antigravityMgr != nil {
+			if _, ok = b.antigravityMgr.Active(); ok {
+				mgr = b.antigravityMgr
+				b.setCurrentProviderID("antigravity")
 			}
 		}
 	}
@@ -565,8 +565,8 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		var err error
 		if providerID == "codex" {
 			sess, err = b.codexMgr.SetActive(id)
-		} else if providerID == "gemini" && b.geminiMgr != nil {
-			sess, err = b.geminiMgr.SetActive(id)
+		} else if providerID == "antigravity" && b.antigravityMgr != nil {
+			sess, err = b.antigravityMgr.SetActive(id)
 		}
 		if sess == nil {
 			return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
@@ -584,8 +584,8 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		var err error
 		if providerID == "codex" {
 			err = b.codexMgr.DeleteSession(id)
-		} else if providerID == "gemini" && b.geminiMgr != nil {
-			err = b.geminiMgr.DeleteSession(id)
+		} else if providerID == "antigravity" && b.antigravityMgr != nil {
+			err = b.antigravityMgr.DeleteSession(id)
 		} else {
 			return c.Send(fmt.Sprintf("Session <code>%s</code> not found.", html.EscapeString(id)), tele.ModeHTML)
 		}
@@ -618,8 +618,8 @@ func (b *Bot) sendProviderPicker(c tele.Context, page int, text string) error {
 	buttons := []tele.InlineButton{
 		{Text: "Codex", Data: "p-pick:codex:browse"},
 	}
-	if b.geminiMgr != nil {
-		buttons = append(buttons, tele.InlineButton{Text: "Gemini", Data: "p-pick:gemini:browse"})
+	if b.antigravityMgr != nil {
+		buttons = append(buttons, tele.InlineButton{Text: "Antigravity", Data: "p-pick:antigravity:browse"})
 	}
 
 	markup := &tele.ReplyMarkup{}
@@ -631,8 +631,8 @@ func (b *Bot) sendProviderPickerForFolder(c tele.Context, index int, text string
 	buttons := []tele.InlineButton{
 		{Text: "Codex", Data: fmt.Sprintf("p-pick:codex:%d", index)},
 	}
-	if b.geminiMgr != nil {
-		buttons = append(buttons, tele.InlineButton{Text: "Gemini", Data: fmt.Sprintf("p-pick:gemini:%d", index)})
+	if b.antigravityMgr != nil {
+		buttons = append(buttons, tele.InlineButton{Text: "Antigravity", Data: fmt.Sprintf("p-pick:antigravity:%d", index)})
 	}
 
 	markup := &tele.ReplyMarkup{}
@@ -659,8 +659,8 @@ func (b *Bot) handleProviderPick(c tele.Context, provider, indexStr string) erro
 	var sess *chat.Session
 	if provider == "codex" {
 		sess, err = b.codexMgr.CreateSession(resolvedFolder)
-	} else if b.geminiMgr != nil && provider == "gemini" {
-		sess, err = b.geminiMgr.CreateSession(resolvedFolder)
+	} else if b.antigravityMgr != nil && provider == "antigravity" {
+		sess, err = b.antigravityMgr.CreateSession(resolvedFolder)
 	} else {
 		return c.Send("Provider not available.", tele.ModeHTML)
 	}
@@ -716,9 +716,9 @@ func (b *Bot) sendSessionPicker(c tele.Context, action, text string) error {
 	for _, s := range b.codexMgr.ListSessions() {
 		sessions = append(sessions, sessionWithProvider{s, "codex"})
 	}
-	if b.geminiMgr != nil {
-		for _, s := range b.geminiMgr.ListSessions() {
-			sessions = append(sessions, sessionWithProvider{s, "gemini"})
+	if b.antigravityMgr != nil {
+		for _, s := range b.antigravityMgr.ListSessions() {
+			sessions = append(sessions, sessionWithProvider{s, "antigravity"})
 		}
 	}
 
@@ -839,8 +839,8 @@ func (b *Bot) baseFolder() string {
 	if b.codexMgr != nil {
 		return b.codexMgr.BaseFolder()
 	}
-	if b.geminiMgr != nil {
-		return b.geminiMgr.BaseFolder()
+	if b.antigravityMgr != nil {
+		return b.antigravityMgr.BaseFolder()
 	}
 	if b.sessionMgr != nil {
 		return b.sessionMgr.BaseFolder()

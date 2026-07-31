@@ -44,6 +44,20 @@ builds:
     goarch:
       - amd64
       - arm64
+  - id: rcod-agent
+    main: ./cmd/rcod-agent
+    binary: rcod-agent
+    tags:
+      - release
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
 
 archives:
   - name_template: >-
@@ -65,6 +79,7 @@ nfpms:
     package_name: rcod
     ids:
       - rcod
+      - rcod-agent
     formats:
       - deb
     bindir: /usr/bin

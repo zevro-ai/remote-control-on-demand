@@ -17,12 +17,14 @@ import (
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpapi/dashboard"
 	"github.com/zevro-ai/remote-control-on-demand/internal/httpauth"
 	"github.com/zevro-ai/remote-control-on-demand/internal/provider"
+	"github.com/zevro-ai/remote-control-on-demand/internal/remote"
 )
 
 type Server struct {
 	cfg                      config.APIConfig
 	defaultRuntimeProviderID string
 	registry                 *provider.Registry
+	sshManager               *remote.HostManager
 	auth                     *httpauth.Service
 	hub                      *Hub
 	httpServer               *http.Server
@@ -31,16 +33,21 @@ type Server struct {
 	spaFS                    fs.FS
 }
 
-func NewServer(cfg config.APIConfig, defaultRuntimeProviderID string, registry *provider.Registry) *Server {
+func NewServer(cfg config.APIConfig, defaultRuntimeProviderID string, registry *provider.Registry, sshManagers ...*remote.HostManager) *Server {
 	spaFS := dashboard.FS()
 	if registry == nil {
 		registry = provider.NewRegistry()
 	}
 
+	var sshManager *remote.HostManager
+	if len(sshManagers) > 0 {
+		sshManager = sshManagers[0]
+	}
 	return &Server{
 		cfg:                      cfg,
 		defaultRuntimeProviderID: strings.TrimSpace(defaultRuntimeProviderID),
 		registry:                 registry,
+		sshManager:               sshManager,
 		auth:                     httpauth.NewService(cfg),
 		hub:                      newHub(),
 		deploymentMeta:           buildDeploymentMetaResponse(),
@@ -58,6 +65,9 @@ func (s *Server) Start() {
 	mux.HandleFunc("GET /api/auth/callback", s.handleAuthCallback)
 	mux.HandleFunc("POST /api/auth/logout", s.handleAuthLogout)
 	mux.HandleFunc("GET /api/meta", s.handleDeploymentMeta)
+	mux.HandleFunc("GET /api/hosts", s.handleListHosts)
+	mux.HandleFunc("POST /api/hosts", s.handleCreateHost)
+	mux.HandleFunc("DELETE /api/hosts/{id}", s.handleDeleteHost)
 
 	// Remote Control sessions (legacy/generic)
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
@@ -77,8 +87,13 @@ func (s *Server) Start() {
 	mux.HandleFunc("GET /api/providers", s.handleListProviderMetadata)
 	mux.HandleFunc("GET /api/chat/providers", s.handleListProviders)
 	mux.HandleFunc("GET /api/chat/{provider}/sessions", s.handleListChatSessions)
+	mux.HandleFunc("GET /api/chat/{provider}/models", s.handleListChatModels)
+	mux.HandleFunc("GET /api/chat/{provider}/folders", s.handleListChatFolders)
+	mux.HandleFunc("GET /api/chat/{provider}/history", s.handleListChatHistory)
+	mux.HandleFunc("GET /api/chat/{provider}/history/{thread_id}", s.handleGetChatHistory)
 	mux.HandleFunc("GET /api/chat/{provider}/adoptable", s.handleListAdoptableChatSessions)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions", s.handleCreateChatSession)
+	mux.HandleFunc("PATCH /api/chat/{provider}/sessions/{id}", s.handleUpdateChatSession)
 	mux.HandleFunc("POST /api/chat/{provider}/adopt", s.handleAdoptChatSession)
 	mux.HandleFunc("GET /api/chat/{provider}/sessions/{id}/messages", s.handleGetChatMessages)
 	mux.HandleFunc("POST /api/chat/{provider}/sessions/{id}/send", s.handleSendChatMessage)

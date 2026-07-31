@@ -32,6 +32,7 @@ type Manager struct {
 	core                     *chat.Core
 	mu                       sync.Mutex
 	model                    string
+	reasoningEffort          string
 	sandbox                  string
 	dangerouslyBypassSandbox bool
 }
@@ -55,6 +56,7 @@ func (m *Manager) Metadata() provider.Metadata {
 			ThreadResume:          true,
 			AdoptExistingSessions: true,
 			ImageAttachments:      true,
+			History:               true,
 		},
 	}
 }
@@ -71,6 +73,16 @@ func (m *Manager) SetModel(model string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.model = strings.TrimSpace(model)
+}
+
+func (m *Manager) SetDefaultModel(model string) {
+	m.SetModel(model)
+}
+
+func (m *Manager) SetReasoningEffort(effort string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reasoningEffort = strings.TrimSpace(effort)
 }
 
 func (m *Manager) SetSandbox(sandbox string) {
@@ -123,7 +135,29 @@ func (m *Manager) Shutdown() {
 }
 
 func (m *Manager) CreateSession(folder string) (*chat.Session, error) {
-	return m.core.CreateSession(folder)
+	m.mu.Lock()
+	options := chat.SessionOptions{Model: m.model, Reasoning: m.reasoningEffort}
+	m.mu.Unlock()
+	return m.core.CreateSessionWithOptions(folder, "", false, options)
+}
+
+func (m *Manager) CreateSessionWithOptions(folder string, options chat.SessionOptions) (*chat.Session, error) {
+	options.Model = strings.TrimSpace(options.Model)
+	options.Reasoning = strings.TrimSpace(options.Reasoning)
+	return m.core.CreateSessionWithOptions(folder, "", false, options)
+}
+
+func (m *Manager) SetSessionOptions(id string, options chat.SessionOptions) (*chat.Session, error) {
+	options.Model = strings.TrimSpace(options.Model)
+	options.Reasoning = strings.TrimSpace(options.Reasoning)
+	return m.core.SetSessionOptions(id, options)
+}
+
+func (m *Manager) ListModels() ([]provider.Model, error) {
+	m.mu.Lock()
+	defaultModel := m.model
+	m.mu.Unlock()
+	return listModels(defaultModel)
 }
 
 func (m *Manager) ListAdoptableSessions() ([]provider.AdoptableSession, error) {
@@ -153,8 +187,25 @@ func (m *Manager) AdoptSession(threadID string) (*chat.Session, error) {
 			if sess.RelCWD != "" {
 				folder = filepath.Join(folder, sess.RelCWD)
 			}
-			return m.core.CreateSessionWithThread(folder, threadID, true)
+			return m.core.CreateSessionWithOptions(folder, threadID, true, chat.SessionOptions{Model: sess.Model})
 		}
+	}
+
+	// Archived threads are intentionally hidden from the live adoptable list,
+	// but history entries remain resumable when the user explicitly selects one.
+	history, err := m.ListHistory()
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range history {
+		if item.ThreadID != threadID {
+			continue
+		}
+		folder := item.RelName
+		if item.RelCWD != "" {
+			folder = filepath.Join(folder, item.RelCWD)
+		}
+		return m.core.CreateSessionWithOptions(folder, threadID, true, chat.SessionOptions{Model: item.Model})
 	}
 
 	return nil, fmt.Errorf("adoptable Codex session %q not found", threadID)
@@ -217,7 +268,15 @@ func (m *Manager) Send(ctx context.Context, id, prompt string, attachments []cha
 	sandbox := m.sandbox
 	dangerouslyBypassSandbox := m.dangerouslyBypassSandbox
 	model := m.model
+	reasoningEffort := m.reasoningEffort
 	m.mu.Unlock()
+	if strings.TrimSpace(snapshot.Model) != "" {
+		model = snapshot.Model
+	}
+	if strings.TrimSpace(snapshot.Reasoning) != "" {
+		reasoningEffort = snapshot.Reasoning
+	}
+	snapshot.Reasoning = reasoningEffort
 
 	threadID, reply, err := runCodexFn(ctx, snapshot, prompt, attachments, sandbox, model, dangerouslyBypassSandbox, StreamCallback{
 		OnTextDelta: func(delta string) {
@@ -413,6 +472,7 @@ func buildCodexArgs(
 		if model != "" {
 			args = append(args, "--model", model)
 		}
+		args = appendReasoningArgs(args, sess.Reasoning)
 		// For `codex exec`, `--image` is variadic, so the prompt must come first.
 		args = append(args, initialPrompt(sess, prompt))
 		args = appendImageArgs(args, attachments)
@@ -423,9 +483,18 @@ func buildCodexArgs(
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+	args = appendReasoningArgs(args, sess.Reasoning)
 	args = append(args, sess.ThreadID, prompt)
 	args = appendImageArgs(args, attachments)
 	return args
+}
+
+func appendReasoningArgs(args []string, effort string) []string {
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return args
+	}
+	return append(args, "--config", fmt.Sprintf("model_reasoning_effort=%q", effort))
 }
 
 func appendImageArgs(args []string, attachments []chat.Attachment) []string {

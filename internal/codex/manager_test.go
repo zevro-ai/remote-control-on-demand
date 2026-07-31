@@ -37,9 +37,32 @@ func TestManagerMetadata(t *testing.T) {
 		ThreadResume:          true,
 		AdoptExistingSessions: true,
 		ImageAttachments:      true,
+		History:               true,
 	}
 	if *metadata.Chat != want {
 		t.Fatalf("metadata.Chat = %#v, want %#v", *metadata.Chat, want)
+	}
+}
+
+func TestSessionOptionsPersistModelAndReasoning(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(baseDir, "demo", ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	mgr := NewManager(baseDir, filepath.Join(t.TempDir(), "sessions.json"))
+	sess, err := mgr.CreateSessionWithOptions("demo", chat.SessionOptions{Model: "gpt-5.6-sol", Reasoning: "high"})
+	if err != nil {
+		t.Fatalf("CreateSessionWithOptions(): %v", err)
+	}
+	if sess.Model != "gpt-5.6-sol" || sess.Reasoning != "high" {
+		t.Fatalf("created session options = %#v", sess)
+	}
+	updated, err := mgr.SetSessionOptions(sess.ID, chat.SessionOptions{Model: "gpt-5.6-luna", Reasoning: "low"})
+	if err != nil {
+		t.Fatalf("SetSessionOptions(): %v", err)
+	}
+	if updated.Model != "gpt-5.6-luna" || updated.Reasoning != "low" {
+		t.Fatalf("updated session options = %#v", updated)
 	}
 }
 
@@ -91,6 +114,76 @@ func TestListAdoptableSessionsFiltersToReposInsideBaseFolder(t *testing.T) {
 	}
 	if sessions[0].RelCWD != "nested" {
 		t.Fatalf("sessions[0].RelCWD = %q, want nested", sessions[0].RelCWD)
+	}
+}
+
+func TestListHistoryReadsArchivedThreadsAndRolloutMessages(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	rolloutPath := filepath.Join(codexHome, "rollout.jsonl")
+	if err := os.WriteFile(rolloutPath, []byte(strings.Join([]string{
+		`{"type":"user_message","content":"inspect the VM"}`,
+		`{"type":"agent_message","content":"I am checking it now."}`,
+		"",
+	}, "\n")), 0o600); err != nil {
+		t.Fatalf("WriteFile(rollout): %v", err)
+	}
+	dbPath := filepath.Join(codexHome, "state_11.sqlite")
+	if err := writeTestThreadsDB(dbPath, []storedThread{{ID: "thread-history", CWD: repoDir, Title: "VM check", Model: "gpt-5.6-sol", UpdatedAt: time.Unix(500, 0).UTC()}}); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open(): %v", err)
+	}
+	_, err = db.Exec("UPDATE threads SET rollout_path = ?, first_user_message = ?, has_user_event = 2, archived = 1 WHERE id = ?", rolloutPath, "inspect the VM", "thread-history")
+	_ = db.Close()
+	if err != nil {
+		t.Fatalf("UPDATE threads: %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	history, err := mgr.ListHistory()
+	if err != nil {
+		t.Fatalf("ListHistory(): %v", err)
+	}
+	if len(history) != 1 || history[0].ThreadID != "thread-history" || !history[0].Archived || history[0].MessageCount != 2 {
+		t.Fatalf("history = %#v", history)
+	}
+	if history[0].Preview != "inspect the VM" {
+		t.Fatalf("history preview = %q", history[0].Preview)
+	}
+	messages, err := mgr.GetHistory("thread-history")
+	if err != nil {
+		t.Fatalf("GetHistory(): %v", err)
+	}
+	if len(messages) != 2 || messages[0].Role != "user" || messages[1].Role != "assistant" {
+		t.Fatalf("messages = %#v", messages)
+	}
+}
+
+func TestListModelsUsesCacheAndConfiguredDefault(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	data := []byte(`{"models":[{"slug":"gpt-hidden","display_name":"Hidden","visibility":"hide"},{"slug":"gpt-visible","display_name":"Visible","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}`)
+	if err := os.WriteFile(filepath.Join(codexHome, "models_cache.json"), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(models_cache): %v", err)
+	}
+	models, err := listModels("gpt-default")
+	if err != nil {
+		t.Fatalf("listModels(): %v", err)
+	}
+	if len(models) != 2 || models[0].Slug != "gpt-default" || models[1].Slug != "gpt-visible" {
+		t.Fatalf("models = %#v", models)
+	}
+	if models[1].DefaultReasoning != "high" || !reflect.DeepEqual(models[1].ReasoningLevels, []string{"low", "high"}) {
+		t.Fatalf("visible model metadata = %#v", models[1])
 	}
 }
 

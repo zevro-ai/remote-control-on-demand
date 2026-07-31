@@ -25,6 +25,7 @@ type ChatCapabilities struct {
 	ThreadResume          bool `json:"thread_resume"`
 	AdoptExistingSessions bool `json:"adopt_existing_sessions"`
 	ExternalURLDetection  bool `json:"external_url_detection"`
+	History               bool `json:"history"`
 }
 
 type AdoptableSession struct {
@@ -34,6 +35,47 @@ type AdoptableSession struct {
 	Title     string    `json:"title"`
 	Model     string    `json:"model,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type Model struct {
+	Slug             string   `json:"slug"`
+	DisplayName      string   `json:"display_name"`
+	Description      string   `json:"description,omitempty"`
+	ReasoningLevels  []string `json:"reasoning_levels,omitempty"`
+	DefaultReasoning string   `json:"default_reasoning,omitempty"`
+}
+
+type ModelLister interface {
+	ListModels() ([]Model, error)
+}
+
+type SessionOptionCreator interface {
+	CreateSessionWithOptions(folder string, options chat.SessionOptions) (*chat.Session, error)
+}
+
+type SessionConfigurator interface {
+	SetSessionOptions(id string, options chat.SessionOptions) (*chat.Session, error)
+}
+
+type HistorySession struct {
+	ThreadID     string    `json:"thread_id"`
+	RelName      string    `json:"rel_name"`
+	RelCWD       string    `json:"rel_cwd,omitempty"`
+	Title        string    `json:"title,omitempty"`
+	Model        string    `json:"model,omitempty"`
+	Preview      string    `json:"preview,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Archived     bool      `json:"archived,omitempty"`
+	MessageCount int       `json:"message_count,omitempty"`
+}
+
+type SessionHistorian interface {
+	ListHistory() ([]HistorySession, error)
+	GetHistory(threadID string) ([]chat.Message, error)
+}
+
+type FolderLister interface {
+	ListFolders() ([]string, error)
 }
 
 type RuntimeCapabilities struct {
