@@ -3,6 +3,7 @@ package antigravity
 import (
 	"database/sql"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,7 +177,8 @@ func TestListAndAdoptSessionsFromConversationMetadata(t *testing.T) {
 	}
 	_, err = db.Exec(`CREATE TABLE trajectory_metadata_blob (data BLOB);`)
 	if err == nil {
-		blob := appendProtoString(1, "file://"+repo)
+		workspaceURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(repo)}).String()
+		blob := appendProtoString(1, workspaceURL)
 		blob = append(blob, appendProtoString(2, "gemini-3.6-flash-high")...)
 		_, err = db.Exec(`INSERT INTO trajectory_metadata_blob(data) VALUES (?)`, blob)
 	}

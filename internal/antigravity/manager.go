@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -772,7 +773,7 @@ func validateExecutable(path string) (string, error) {
 	if info.IsDir() {
 		return "", fmt.Errorf("path is a directory")
 	}
-	if info.Mode()&0111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
 		return "", fmt.Errorf("path is not executable")
 	}
 	return path, nil
@@ -1115,6 +1116,9 @@ func fileURLPath(value string) string {
 	path, err := url.PathUnescape(parsed.Path)
 	if err != nil {
 		return ""
+	}
+	if runtime.GOOS == "windows" && len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+		path = path[1:]
 	}
 	return filepath.Clean(path)
 }

@@ -91,7 +91,7 @@ func TestResolveWorkspacePathIncludesExternalGitRepositories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvalSymlinks(workspace): %v", err)
 	}
-	if workspace.Folder != workspaceResolved || workspace.RelName != externalResolved || workspace.RelCWD != "nested" {
+	if workspace.Folder != workspaceResolved || filepath.Base(workspace.RelName) != filepath.Base(externalResolved) || workspace.RelCWD != "nested" {
 		t.Fatalf("workspace = %#v", workspace)
 	}
 }

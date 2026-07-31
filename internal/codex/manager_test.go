@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -148,8 +149,19 @@ func TestListHistoryDiscoversRolloutNotIndexedByStateDatabase(t *testing.T) {
 		t.Fatalf("MkdirAll(rollouts): %v", err)
 	}
 	rolloutPath := filepath.Join(rolloutDir, "rollout.jsonl")
+	meta, err := json.Marshal(map[string]interface{}{
+		"type": "session_meta",
+		"payload": map[string]interface{}{
+			"id":        "thread-rollout",
+			"cwd":       workspaceDir,
+			"timestamp": "2026-07-31T12:00:00Z",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal(session_meta): %v", err)
+	}
 	data := strings.Join([]string{
-		`{"type":"session_meta","payload":{"id":"thread-rollout","cwd":"` + workspaceDir + `","timestamp":"2026-07-31T12:00:00Z"}}`,
+		string(meta),
 		`{"type":"response_item","payload":{"type":"message","role":"user","content":"find the missing session"}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":"I found it."}}`,
 		"",
