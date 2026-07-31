@@ -1117,8 +1117,12 @@ func fileURLPath(value string) string {
 	if err != nil {
 		return ""
 	}
-	if runtime.GOOS == "windows" && len(path) >= 3 && path[0] == '/' && path[2] == ':' {
-		path = path[1:]
+	if runtime.GOOS == "windows" {
+		if len(parsed.Host) == 2 && parsed.Host[1] == ':' {
+			path = parsed.Host + path
+		} else if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+			path = path[1:]
+		}
 	}
 	return filepath.Clean(path)
 }
