@@ -57,8 +57,25 @@ providers:
   codex:
     chat:
       permission_mode: "workspace-write"  # use bypassPermissions only for full local access
+      model: "gpt-5.6-sol"
+      reasoning_effort: "high"
 
-  gemini:
+  antigravity:
     enabled: true
     chat:
-      permission_mode: "auto_edit" # Options: auto_edit, plan, yolo, read-only, workspace-write
+      permission_mode: "accept-edits" # Also: plan or bypassPermissions
+      model: "gemini-3.6-flash-high"
+
+# Optional remote machines/VMs. Build and install cmd/rcod-agent on each host.
+# The dashboard adds each host as two providers: host / Codex and host / Antigravity.
+# ssh:
+#   hosts:
+#     - id: vm-dev
+#       name: Development VM
+#       address: 192.0.2.20
+#       port: 22
+#       user: tomasz
+#       identity_file: /home/tomasz/.ssh/id_ed25519
+#       known_hosts_file: /home/tomasz/.ssh/known_hosts
+#       base_folder: /home/tomasz/projects
+#       agent_command: rcod-agent

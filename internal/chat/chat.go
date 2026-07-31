@@ -52,10 +52,17 @@ type Session struct {
 	RelName     string    `json:"rel_name"`
 	ThreadID    string    `json:"thread_id,omitempty"`
 	ThreadReady bool      `json:"thread_ready,omitempty"`
+	Model       string    `json:"model,omitempty"`
+	Reasoning   string    `json:"reasoning_effort,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Busy        bool      `json:"busy"`
 	Messages    []Message `json:"messages,omitempty"`
+}
+
+type SessionOptions struct {
+	Model     string
+	Reasoning string
 }
 
 type ToolCallEvent struct {

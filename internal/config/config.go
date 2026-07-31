@@ -47,11 +47,30 @@ type Config struct {
 	RC        RCConfig        `yaml:"rc"`
 	Providers ProvidersConfig `yaml:"providers,omitempty"`
 	API       APIConfig       `yaml:"api,omitempty"`
+	SSH       SSHConfig       `yaml:"ssh,omitempty"`
 }
 
 type TelegramConfig struct {
 	Token         string `yaml:"token"`
 	AllowedUserID int64  `yaml:"allowed_user_id"`
+}
+
+type SSHConfig struct {
+	Hosts []SSHHostConfig `yaml:"hosts,omitempty"`
+}
+
+type SSHHostConfig struct {
+	ID                    string `yaml:"id"`
+	Name                  string `yaml:"name,omitempty"`
+	Address               string `yaml:"address"`
+	Port                  int    `yaml:"port,omitempty"`
+	User                  string `yaml:"user,omitempty"`
+	IdentityFile          string `yaml:"identity_file,omitempty"`
+	KnownHostsFile        string `yaml:"known_hosts_file,omitempty"`
+	ConnectTimeoutSeconds int    `yaml:"connect_timeout_seconds,omitempty"`
+	BaseFolder            string `yaml:"base_folder"`
+	AgentCommand          string `yaml:"agent_command,omitempty"`
+	AgentWorkDir          string `yaml:"agent_work_dir,omitempty"`
 }
 
 type RCConfig struct {
@@ -64,9 +83,10 @@ type RCConfig struct {
 }
 
 type ProvidersConfig struct {
-	Claude ClaudeProviderConfig `yaml:"claude,omitempty"`
-	Codex  CodexProviderConfig  `yaml:"codex,omitempty"`
-	Gemini GeminiProviderConfig `yaml:"gemini,omitempty"`
+	Claude      ClaudeProviderConfig      `yaml:"claude,omitempty"`
+	Codex       CodexProviderConfig       `yaml:"codex,omitempty"`
+	Antigravity AntigravityProviderConfig `yaml:"antigravity,omitempty"`
+	Gemini      GeminiProviderConfig      `yaml:"gemini,omitempty"` // Deprecated legacy alias.
 }
 
 type ClaudeProviderConfig struct {
@@ -83,8 +103,15 @@ type GeminiProviderConfig struct {
 	Chat    ProviderChatConfig `yaml:"chat,omitempty"`
 }
 
+type AntigravityProviderConfig struct {
+	Enabled bool               `yaml:"enabled,omitempty"`
+	Chat    ProviderChatConfig `yaml:"chat,omitempty"`
+}
+
 type ProviderChatConfig struct {
-	PermissionMode string `yaml:"permission_mode,omitempty"`
+	PermissionMode  string `yaml:"permission_mode,omitempty"`
+	Model           string `yaml:"model,omitempty"`
+	ReasoningEffort string `yaml:"reasoning_effort,omitempty"`
 }
 
 type ProviderRuntimeConfig struct {
@@ -103,13 +130,14 @@ type RuntimeSettings struct {
 }
 
 const (
-	DefaultCodexPermissionMode = "workspace-write"
-	PermissionModeBypass       = "bypassPermissions"
-	PermissionModeReadOnly     = "read-only"
-	PermissionModeWorkspace    = "workspace-write"
-	PermissionModeDangerFull   = "danger-full-access"
+	DefaultCodexPermissionMode           = "workspace-write"
+	PermissionModeBypass                 = "bypassPermissions"
+	PermissionModeReadOnly               = "read-only"
+	PermissionModeWorkspace              = "workspace-write"
+	PermissionModeDangerFull             = "danger-full-access"
+	PermissionModeAntigravityAcceptEdits = "accept-edits"
 
-	// Gemini CLI specific modes
+	// Legacy Gemini aliases accepted while migrating old configuration files.
 	PermissionModeGeminiAutoEdit = "auto_edit"
 	PermissionModeGeminiPlan     = "plan"
 	PermissionModeGeminiYolo     = "yolo"
@@ -182,12 +210,27 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+	migrateLegacyGemini(&cfg)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	return &cfg, nil
+}
+
+func migrateLegacyGemini(c *Config) {
+	if c == nil || !c.Providers.Gemini.Enabled || c.Providers.Antigravity.Enabled {
+		return
+	}
+	c.Providers.Antigravity.Enabled = true
+	c.Providers.Antigravity.Chat = c.Providers.Gemini.Chat
+	switch strings.TrimSpace(c.Providers.Antigravity.Chat.PermissionMode) {
+	case PermissionModeGeminiAutoEdit:
+		c.Providers.Antigravity.Chat.PermissionMode = PermissionModeAntigravityAcceptEdits
+	case PermissionModeGeminiYolo:
+		c.Providers.Antigravity.Chat.PermissionMode = PermissionModeBypass
+	}
 }
 
 func (c *Config) Validate() error {
@@ -224,6 +267,9 @@ func (c *Config) Validate() error {
 	if err := ValidateCodexPermissionMode(c.RC.PermissionMode); err != nil {
 		return fmt.Errorf("rc.permission_mode: %w", err)
 	}
+	if err := c.SSH.Validate(); err != nil {
+		return fmt.Errorf("ssh: %w", err)
+	}
 
 	if c.RC.Notifications != nil {
 		if err := c.RC.Notifications.Validate(); err != nil {
@@ -239,6 +285,32 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("providers: %w", err)
 	}
 
+	return nil
+}
+
+func (c SSHConfig) Validate() error {
+	seen := make(map[string]struct{}, len(c.Hosts))
+	for i, host := range c.Hosts {
+		if strings.TrimSpace(host.ID) == "" {
+			return fmt.Errorf("hosts[%d].id is required", i)
+		}
+		if _, ok := seen[host.ID]; ok {
+			return fmt.Errorf("hosts[%d].id %q is duplicated", i, host.ID)
+		}
+		seen[host.ID] = struct{}{}
+		if strings.TrimSpace(host.Address) == "" {
+			return fmt.Errorf("hosts[%d].address is required", i)
+		}
+		if strings.TrimSpace(host.BaseFolder) == "" {
+			return fmt.Errorf("hosts[%d].base_folder is required", i)
+		}
+		if host.Port < 0 || host.Port > 65535 {
+			return fmt.Errorf("hosts[%d].port must be between 0 and 65535", i)
+		}
+		if host.ConnectTimeoutSeconds < 0 || host.ConnectTimeoutSeconds > 3600 {
+			return fmt.Errorf("hosts[%d].connect_timeout_seconds must be between 0 and 3600", i)
+		}
+	}
 	return nil
 }
 
@@ -268,6 +340,18 @@ func ValidateGeminiPermissionMode(permissionMode string) error {
 		return fmt.Errorf("must be one of %q, %q, %q, %q, %q, %q, or %q",
 			PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull,
 			PermissionModeGeminiAutoEdit, PermissionModeGeminiPlan, PermissionModeGeminiYolo)
+	}
+}
+
+func ValidateAntigravityPermissionMode(permissionMode string) error {
+	switch NormalizeCodexPermissionMode(permissionMode) {
+	case PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull,
+		PermissionModeAntigravityAcceptEdits, PermissionModeGeminiPlan:
+		return nil
+	default:
+		return fmt.Errorf("must be one of %q, %q, %q, %q, %q, or %q",
+			PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace, PermissionModeDangerFull,
+			PermissionModeAntigravityAcceptEdits, PermissionModeGeminiPlan)
 	}
 }
 
@@ -347,6 +431,9 @@ func (p ProvidersConfig) Validate() error {
 	if err := p.Codex.Validate(); err != nil {
 		return fmt.Errorf("codex: %w", err)
 	}
+	if err := p.Antigravity.Validate(); err != nil {
+		return fmt.Errorf("antigravity: %w", err)
+	}
 	if err := p.Gemini.Validate(); err != nil {
 		return fmt.Errorf("gemini: %w", err)
 	}
@@ -372,6 +459,13 @@ func (p CodexProviderConfig) Validate() error {
 
 func (p GeminiProviderConfig) Validate() error {
 	if err := p.Chat.validateWith(ValidateGeminiPermissionMode); err != nil {
+		return fmt.Errorf("chat: %w", err)
+	}
+	return nil
+}
+
+func (p AntigravityProviderConfig) Validate() error {
+	if err := p.Chat.validateWith(ValidateAntigravityPermissionMode); err != nil {
 		return fmt.Errorf("chat: %w", err)
 	}
 	return nil
@@ -443,6 +537,29 @@ func (c *Config) CodexChatPermissionMode() string {
 		return NormalizeCodexPermissionMode(mode)
 	}
 	return NormalizeCodexPermissionMode(c.RC.PermissionMode)
+}
+
+func (c *Config) CodexChatModel() string {
+	return strings.TrimSpace(c.Providers.Codex.Chat.Model)
+}
+
+func (c *Config) CodexChatReasoningEffort() string {
+	return strings.TrimSpace(c.Providers.Codex.Chat.ReasoningEffort)
+}
+
+func (c *Config) AntigravityChatPermissionMode() string {
+	if mode := strings.TrimSpace(c.Providers.Antigravity.Chat.PermissionMode); mode != "" {
+		return NormalizeCodexPermissionMode(mode)
+	}
+	return NormalizeCodexPermissionMode(c.RC.PermissionMode)
+}
+
+func (c *Config) AntigravityChatModel() string {
+	return strings.TrimSpace(c.Providers.Antigravity.Chat.Model)
+}
+
+func (c *Config) AntigravityChatReasoningEffort() string {
+	return strings.TrimSpace(c.Providers.Antigravity.Chat.ReasoningEffort)
 }
 
 func (c *Config) GeminiChatPermissionMode() string {

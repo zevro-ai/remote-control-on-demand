@@ -77,6 +77,22 @@ func (r *Registry) RegisterRuntime(provider RuntimeProvider) error {
 	return nil
 }
 
+// UnregisterChat removes a chat provider while leaving a runtime provider
+// with the same tool ID intact. It is used when a runtime SSH host is removed
+// from the dashboard.
+func (r *Registry) UnregisterChat(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tool, ok := r.tools[id]
+	if !ok {
+		return
+	}
+	tool.Chat = nil
+	if tool.Runtime == nil {
+		delete(r.tools, id)
+	}
+}
+
 func (r *Registry) ChatProvider(id string) (ChatProvider, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

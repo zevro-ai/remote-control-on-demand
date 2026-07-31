@@ -7,7 +7,7 @@
 RCOD is an operator console for AI coding sessions. It runs on your machine or server, discovers git repositories under one base folder, and gives you two control surfaces:
 
 - a web dashboard with a live session wall, focused agent view, prompt and bash composer, telemetry, and provider-aware session management
-- a Telegram bot for starting Claude remote-control sessions, checking logs/status, and chatting with Codex or Gemini from your phone
+- a Telegram bot for starting Claude remote-control sessions, checking logs/status, and chatting with Codex or Antigravity from your phone
 
 Built by [zevro.ai](https://zevro.ai).
 
@@ -29,7 +29,10 @@ The dashboard is served by the `cmd/rcodbot` binary when `api.port` is enabled.
 - Runs bash commands in the selected repository from the focused dashboard session
 - Supports image attachments for providers that expose image support
 - Creates new chat sessions by provider and repository
-- Adopts existing Codex sessions from local Codex state
+- Lets you choose current Codex and Antigravity models and reasoning effort per session
+- Browses saved Codex and Antigravity conversation history and adopts sessions opened outside RCOD
+- Connects to other computers and VMs over SSH, exposing their Codex and Antigravity sessions in the same dashboard
+- Sends prompts to those remote sessions through a JSON-lines `rcod-agent` launched over SSH
 - Streams updates through WebSocket so the dashboard stays live
 - Starts, stops, restarts, and monitors long-running `claude rc` remote-control sessions
 - Sends Claude URLs, status, logs, crash notifications, and progress heartbeats to Telegram
@@ -42,7 +45,7 @@ The dashboard is served by the `cmd/rcodbot` binary when `api.port` is enabled.
 | Claude runtime | Telegram + API | Long-running `claude rc` process control with URL detection, logs, auto-restart, and per-project `.rcod.yaml` overrides |
 | Claude chat | Dashboard | Repository-scoped chat sessions backed by the Claude CLI |
 | Codex chat | Dashboard + Telegram | Repository-scoped chat sessions, streaming output, tool calls, bash command execution, image attachments, and adoption of existing Codex threads |
-| Gemini chat | Dashboard + Telegram | Optional provider for Gemini CLI sessions; enable it with `providers.gemini.enabled: true` |
+| Antigravity chat | Dashboard + Telegram | Optional headless `agy` provider with model selection, history, adoption, and resume |
 
 `cmd/rcodbot` is the current main entrypoint. The older `cmd/bot` entrypoint is a narrower Telegram-only Claude runtime bot.
 
@@ -54,7 +57,7 @@ The dashboard is served by the `cmd/rcodbot` binary when `api.port` is enabled.
 | Node.js + npm | Needed to build the React dashboard assets |
 | Claude Code CLI | Required for Claude runtime and Claude chat flows |
 | Codex CLI | Required for Codex chat flows |
-| Gemini CLI | Optional; only needed when Gemini is enabled |
+| Antigravity CLI (`agy`) | Optional; only needed when Antigravity is enabled |
 | Telegram bot token | Create one via [@BotFather](https://t.me/BotFather) |
 | Telegram user ID | Get it from [@userinfobot](https://t.me/userinfobot) |
 
@@ -116,10 +119,24 @@ providers:
   codex:
     chat:
       permission_mode: "workspace-write"
-  gemini:
+      model: "gpt-5.6-sol"
+      reasoning_effort: "high"
+  antigravity:
     enabled: false
     chat:
-      permission_mode: "auto_edit"
+      permission_mode: "accept-edits"
+      model: "gemini-3.6-flash-high"
+
+# Optional remote computers or VMs. Install rcod-agent on each target first.
+# ssh:
+#   hosts:
+#     - id: vm-dev
+#       name: Development VM
+#       address: 192.0.2.20
+#       user: tomasz
+#       identity_file: /home/tomasz/.ssh/id_ed25519
+#       base_folder: /home/tomasz/projects
+#       agent_command: rcod-agent
 ```
 
 See [config.example.yaml](./config.example.yaml) for a fuller example with notification patterns and external dashboard auth.
@@ -191,8 +208,14 @@ api:
 | `providers.claude.runtime.*` | Claude runtime restart and notification settings |
 | `providers.claude.chat.permission_mode` | Claude chat permission mode |
 | `providers.codex.chat.permission_mode` | Codex chat access mode: `workspace-write`, `read-only`, `danger-full-access`, or `bypassPermissions` |
-| `providers.gemini.enabled` | Enables the Gemini chat provider |
-| `providers.gemini.chat.permission_mode` | Gemini permission mode: `auto_edit`, `plan`, `yolo`, `read-only`, `workspace-write`, `danger-full-access`, or `bypassPermissions` |
+| `providers.codex.chat.model` | Default Codex model; the dashboard can override it per session |
+| `providers.codex.chat.reasoning_effort` | Default Codex reasoning effort |
+| `providers.antigravity.enabled` | Enables the Antigravity (`agy`) chat provider |
+| `providers.antigravity.chat.permission_mode` | Antigravity mode: `accept-edits`, `plan`, or `bypassPermissions` |
+| `providers.antigravity.chat.model` | Default Antigravity model |
+| `ssh.hosts[]` | SSH computers/VMs shown as remote Codex and Antigravity providers |
+| `ssh.hosts[].base_folder` | Remote root containing git repositories |
+| `ssh.hosts[].agent_command` | Remote `rcod-agent` command; defaults to `rcod-agent` |
 
 RCOD intentionally starts Claude runtime sessions with `claude rc --permission-mode bypassPermissions`. This is not configurable for the runtime process.
 
@@ -236,7 +259,7 @@ Chat control:
 
 | Command | Description |
 | --- | --- |
-| `/new [repo]` | Create a Codex or Gemini chat session |
+| `/new [repo]` | Create a Codex or Antigravity chat session |
 | `/sessions` | List chat sessions |
 | `/use [provider:id]` | Switch the active chat session |
 | `/current` | Show active chat sessions |
@@ -259,8 +282,23 @@ Common state files:
 - `sessions.json` for Claude runtime sessions
 - `claude_sessions.json` for Claude chat sessions
 - `codex_sessions.json` for Codex chat sessions
-- `gemini_sessions.json` for Gemini chat sessions
+- `antigravity_sessions.json` for Antigravity chat sessions
+- `ssh_hosts.json` for dashboard-added SSH host definitions
 - `bot_state.json` for Telegram bot selection state
+
+### Remote SSH agent
+
+Build the small stdio agent and copy it to every target machine:
+
+```bash
+go build -o rcod-agent ./cmd/rcod-agent
+scp rcod-agent user@host:~/.local/bin/rcod-agent
+```
+
+Add the host from the dashboard's **SSH hosts** section, or configure it under
+`ssh.hosts` in YAML. RCOD starts `rcod-agent --stdio --base-folder <path>` via
+non-interactive SSH. No remote HTTP port is required; the host's sessions are
+shown as `host / Codex` and `host / Antigravity` providers.
 
 ## Deployment
 

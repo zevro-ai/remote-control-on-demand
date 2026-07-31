@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,13 +38,36 @@ func TestManagerMetadata(t *testing.T) {
 		ThreadResume:          true,
 		AdoptExistingSessions: true,
 		ImageAttachments:      true,
+		History:               true,
 	}
 	if *metadata.Chat != want {
 		t.Fatalf("metadata.Chat = %#v, want %#v", *metadata.Chat, want)
 	}
 }
 
-func TestListAdoptableSessionsFiltersToReposInsideBaseFolder(t *testing.T) {
+func TestSessionOptionsPersistModelAndReasoning(t *testing.T) {
+	baseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(baseDir, "demo", ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	mgr := NewManager(baseDir, filepath.Join(t.TempDir(), "sessions.json"))
+	sess, err := mgr.CreateSessionWithOptions("demo", chat.SessionOptions{Model: "gpt-5.6-sol", Reasoning: "high"})
+	if err != nil {
+		t.Fatalf("CreateSessionWithOptions(): %v", err)
+	}
+	if sess.Model != "gpt-5.6-sol" || sess.Reasoning != "high" {
+		t.Fatalf("created session options = %#v", sess)
+	}
+	updated, err := mgr.SetSessionOptions(sess.ID, chat.SessionOptions{Model: "gpt-5.6-luna", Reasoning: "low"})
+	if err != nil {
+		t.Fatalf("SetSessionOptions(): %v", err)
+	}
+	if updated.Model != "gpt-5.6-luna" || updated.Reasoning != "low" {
+		t.Fatalf("updated session options = %#v", updated)
+	}
+}
+
+func TestListAdoptableSessionsIncludesWorkspacesOutsideBaseFolder(t *testing.T) {
 	baseDir := t.TempDir()
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
@@ -80,17 +104,155 @@ func TestListAdoptableSessionsFiltersToReposInsideBaseFolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAdoptableSessions(): %v", err)
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("len(sessions) = %d, want 1", len(sessions))
+	resolvedSubDir, err := filepath.EvalSymlinks(subDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(subDir): %v", err)
 	}
-	if sessions[0].ThreadID != "thread-demo" {
-		t.Fatalf("sessions[0].ThreadID = %q", sessions[0].ThreadID)
+	resolvedOutsideDir, err := filepath.EvalSymlinks(outsideDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(outsideDir): %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("len(sessions) = %d, want 2", len(sessions))
+	}
+	if sessions[0].ThreadID != "thread-demo" || sessions[0].Folder != resolvedSubDir {
+		t.Fatalf("sessions[0] = %#v", sessions[0])
 	}
 	if sessions[0].RelName != "demo" {
 		t.Fatalf("sessions[0].RelName = %q, want demo", sessions[0].RelName)
 	}
 	if sessions[0].RelCWD != "nested" {
 		t.Fatalf("sessions[0].RelCWD = %q, want nested", sessions[0].RelCWD)
+	}
+	if sessions[1].ThreadID != "thread-outside" || sessions[1].Folder != resolvedOutsideDir {
+		t.Fatalf("sessions[1] = %#v", sessions[1])
+	}
+	adoptedOutside, err := mgr.AdoptSession("thread-outside")
+	if err != nil {
+		t.Fatalf("AdoptSession(outside): %v", err)
+	}
+	if adoptedOutside.Folder != resolvedOutsideDir || adoptedOutside.RelName == "" {
+		t.Fatalf("adopted outside session = %#v", adoptedOutside)
+	}
+}
+
+func TestListHistoryDiscoversRolloutNotIndexedByStateDatabase(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	workspaceDir := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(filepath.Join(workspaceDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	rolloutDir := filepath.Join(codexHome, "sessions", "2026", "07")
+	if err := os.MkdirAll(rolloutDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(rollouts): %v", err)
+	}
+	rolloutPath := filepath.Join(rolloutDir, "rollout.jsonl")
+	meta, err := json.Marshal(map[string]interface{}{
+		"type": "session_meta",
+		"payload": map[string]interface{}{
+			"id":        "thread-rollout",
+			"cwd":       workspaceDir,
+			"timestamp": "2026-07-31T12:00:00Z",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal(session_meta): %v", err)
+	}
+	data := strings.Join([]string{
+		string(meta),
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":"find the missing session"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":"I found it."}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(rolloutPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("WriteFile(rollout): %v", err)
+	}
+
+	history, err := NewManager(baseDir, "").ListHistory()
+	if err != nil {
+		t.Fatalf("ListHistory(): %v", err)
+	}
+	resolvedWorkspaceDir, err := filepath.EvalSymlinks(workspaceDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workspace): %v", err)
+	}
+	if len(history) != 1 || history[0].ThreadID != "thread-rollout" || history[0].Folder != resolvedWorkspaceDir {
+		t.Fatalf("history = %#v", history)
+	}
+	if history[0].Preview != "find the missing session" || history[0].MessageCount != 2 {
+		t.Fatalf("history metadata = %#v", history[0])
+	}
+}
+
+func TestListHistoryReadsArchivedThreadsAndRolloutMessages(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	repoDir := filepath.Join(baseDir, "demo")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+
+	rolloutPath := filepath.Join(codexHome, "rollout.jsonl")
+	if err := os.WriteFile(rolloutPath, []byte(strings.Join([]string{
+		`{"type":"user_message","content":"inspect the VM"}`,
+		`{"type":"agent_message","content":"I am checking it now."}`,
+		"",
+	}, "\n")), 0o600); err != nil {
+		t.Fatalf("WriteFile(rollout): %v", err)
+	}
+	dbPath := filepath.Join(codexHome, "state_11.sqlite")
+	if err := writeTestThreadsDB(dbPath, []storedThread{{ID: "thread-history", CWD: repoDir, Title: "VM check", Model: "gpt-5.6-sol", UpdatedAt: time.Unix(500, 0).UTC()}}); err != nil {
+		t.Fatalf("writeTestThreadsDB(): %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open(): %v", err)
+	}
+	_, err = db.Exec("UPDATE threads SET rollout_path = ?, first_user_message = ?, has_user_event = 2, archived = 1 WHERE id = ?", rolloutPath, "inspect the VM", "thread-history")
+	_ = db.Close()
+	if err != nil {
+		t.Fatalf("UPDATE threads: %v", err)
+	}
+
+	mgr := NewManager(baseDir, "")
+	history, err := mgr.ListHistory()
+	if err != nil {
+		t.Fatalf("ListHistory(): %v", err)
+	}
+	if len(history) != 1 || history[0].ThreadID != "thread-history" || !history[0].Archived || history[0].MessageCount != 2 {
+		t.Fatalf("history = %#v", history)
+	}
+	if history[0].Preview != "inspect the VM" {
+		t.Fatalf("history preview = %q", history[0].Preview)
+	}
+	messages, err := mgr.GetHistory("thread-history")
+	if err != nil {
+		t.Fatalf("GetHistory(): %v", err)
+	}
+	if len(messages) != 2 || messages[0].Role != "user" || messages[1].Role != "assistant" {
+		t.Fatalf("messages = %#v", messages)
+	}
+}
+
+func TestListModelsUsesCacheAndConfiguredDefault(t *testing.T) {
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	data := []byte(`{"models":[{"slug":"gpt-hidden","display_name":"Hidden","visibility":"hide"},{"slug":"gpt-visible","display_name":"Visible","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}`)
+	if err := os.WriteFile(filepath.Join(codexHome, "models_cache.json"), data, 0o600); err != nil {
+		t.Fatalf("WriteFile(models_cache): %v", err)
+	}
+	models, err := listModels("gpt-default")
+	if err != nil {
+		t.Fatalf("listModels(): %v", err)
+	}
+	if len(models) != 2 || models[0].Slug != "gpt-default" || models[1].Slug != "gpt-visible" {
+		t.Fatalf("models = %#v", models)
+	}
+	if models[1].DefaultReasoning != "high" || !reflect.DeepEqual(models[1].ReasoningLevels, []string{"low", "high"}) {
+		t.Fatalf("visible model metadata = %#v", models[1])
 	}
 }
 

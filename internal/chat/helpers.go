@@ -104,6 +104,106 @@ func ResolveProjectPath(baseFolder, folder string) (string, string, error) {
 	return targetResolved, relPath, nil
 }
 
+// WorkspacePath describes a workspace discovered from an existing agent
+// transcript. Existing sessions may live outside rc.base_folder, so their
+// absolute path is retained for adoption while RelName remains readable in
+// the dashboard.
+type WorkspacePath struct {
+	Folder  string
+	RelName string
+	RelCWD  string
+	Exists  bool
+}
+
+func ResolveWorkspacePath(baseFolder, workspace string) (WorkspacePath, error) {
+	if strings.TrimSpace(baseFolder) == "" {
+		return WorkspacePath{}, fmt.Errorf("base folder is required")
+	}
+	if strings.TrimSpace(workspace) == "" {
+		return WorkspacePath{}, fmt.Errorf("workspace path is required")
+	}
+
+	baseAbs, err := filepath.Abs(baseFolder)
+	if err != nil {
+		return WorkspacePath{}, fmt.Errorf("resolving base folder: %w", err)
+	}
+	baseResolved, err := filepath.EvalSymlinks(baseAbs)
+	if err != nil {
+		return WorkspacePath{}, fmt.Errorf("resolving base folder: %w", err)
+	}
+	workspaceAbs, err := filepath.Abs(workspace)
+	if err != nil {
+		return WorkspacePath{}, fmt.Errorf("resolving workspace %q: %w", workspace, err)
+	}
+	workspaceResolved, err := evalSymlinksAllowMissing(workspaceAbs)
+	if err != nil {
+		return WorkspacePath{}, fmt.Errorf("resolving workspace %q: %w", workspace, err)
+	}
+	info, err := os.Stat(workspaceResolved)
+	if err != nil && !os.IsNotExist(err) {
+		return WorkspacePath{}, fmt.Errorf("stat workspace %q: %w", workspace, err)
+	}
+	exists := err == nil && info.IsDir()
+	if err == nil && !info.IsDir() {
+		return WorkspacePath{}, fmt.Errorf("workspace %q is not a directory", workspace)
+	}
+
+	repoPath := findGitRoot(workspaceResolved)
+	if repoPath == "" {
+		return WorkspacePath{
+			Folder:  workspaceResolved,
+			RelName: displayWorkspacePath(baseResolved, workspaceResolved),
+			Exists:  exists,
+		}, nil
+	}
+
+	relCWD, err := filepath.Rel(repoPath, workspaceResolved)
+	if err != nil {
+		return WorkspacePath{}, fmt.Errorf("resolving workspace relative path %q: %w", workspace, err)
+	}
+	if relCWD == "." {
+		relCWD = ""
+	}
+	return WorkspacePath{
+		Folder:  workspaceResolved,
+		RelName: displayWorkspacePath(baseResolved, repoPath),
+		RelCWD:  relCWD,
+		Exists:  exists,
+	}, nil
+}
+
+func findGitRoot(path string) string {
+	current := filepath.Clean(path)
+	for {
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		current = parent
+	}
+}
+
+func displayWorkspacePath(baseFolder, workspace string) string {
+	if rel, err := filepath.Rel(baseFolder, workspace); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		if rel == "." {
+			return filepath.Base(workspace)
+		}
+		return rel
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, relErr := filepath.Rel(home, workspace); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			if rel == "." {
+				return "~"
+			}
+			return filepath.Join("~", rel)
+		}
+	}
+	return workspace
+}
+
 func evalSymlinksAllowMissing(path string) (string, error) {
 	current := filepath.Clean(path)
 	var missing []string

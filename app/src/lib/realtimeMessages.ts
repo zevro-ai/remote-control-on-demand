@@ -12,6 +12,14 @@ export function mergeIncomingMessage(messages: Message[], incoming: Message): Me
     ];
   }
 
+  if (messages.some((message) =>
+    message.role === normalizedIncoming.role &&
+    message.content === normalizedIncoming.content &&
+    message.timestamp === normalizedIncoming.timestamp
+  )) {
+    return messages;
+  }
+
   return [...messages, normalizedIncoming];
 }
 

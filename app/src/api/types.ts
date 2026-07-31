@@ -34,6 +34,7 @@ export interface ChatCapabilities {
   thread_resume: boolean;
   adopt_existing_sessions: boolean;
   external_url_detection: boolean;
+  history?: boolean;
 }
 
 export interface RuntimeCapabilities {
@@ -114,10 +115,20 @@ export interface ChatSession {
   provider_meta?: ProviderMetadata;
   agent: string; // Provider ID
   thread_id?: string;
+  model?: string;
+  reasoning_effort?: string;
   busy: boolean;
   created_at: string;
   updated_at: string;
   messages?: Message[];
+}
+
+export interface ProviderModel {
+  slug: string;
+  display_name: string;
+  description?: string;
+  reasoning_levels?: string[];
+  default_reasoning?: string;
 }
 
 // Deprecated aliases for backward compatibility during refactoring if needed
@@ -128,9 +139,39 @@ export interface AdoptableSession {
   thread_id: string;
   rel_name: string;
   rel_cwd: string;
+  folder?: string;
   title: string;
   model?: string;
   updated_at: string;
+}
+
+export interface HistorySession {
+  thread_id: string;
+  rel_name: string;
+  rel_cwd?: string;
+  folder?: string;
+  title?: string;
+  model?: string;
+  preview?: string;
+  updated_at: string;
+  archived?: boolean;
+  message_count?: number;
+}
+
+export type SSHHostStatus = "unknown" | "reachable" | "unreachable";
+
+export interface SSHHost {
+  identity: {
+    id: string;
+    name?: string;
+    address: string;
+    port: number;
+    user?: string;
+  };
+  status: SSHHostStatus;
+  last_checked_at?: string;
+  latency_ms?: number;
+  last_error?: string;
 }
 
 export type StreamBlock =

@@ -14,8 +14,11 @@ import type {
   Message,
   MessageAttachment,
   ProviderMetadata,
+  ProviderModel,
+  HistorySession,
   StreamBlock,
   WsMessage,
+  SSHHost,
 } from "../api/types";
 import { api } from "../api/client";
 import { useWs } from "./WebSocketContext";
@@ -28,6 +31,7 @@ interface State {
   chatSessions: Record<string, ChatSession[]>; // provider -> sessions
   logs: Record<string, string[]>;
   streamBlocks: Record<string, StreamBlock[]>; // provider:id -> blocks
+  sshHosts: SSHHost[];
   loading: boolean;
   authRequired: boolean;
   loadError: string | null;
@@ -51,6 +55,7 @@ type Action =
   | { type: "ADD_SESSION"; session: Session }
   | { type: "REMOVE_SESSION"; sessionId: string }
   | { type: "ADD_CHAT_SESSION"; provider: string; session: ChatSession }
+  | { type: "REPLACE_CHAT_SESSION"; provider: string; session: ChatSession }
   | { type: "REMOVE_CHAT_SESSION"; provider: string; sessionId: string }
   | { type: "ADD_CHAT_MESSAGE"; provider: string; sessionId: string; message: Message }
   | { type: "REMOVE_OPTIMISTIC_MESSAGE"; provider: string; sessionId: string; optimisticId: string }
@@ -60,6 +65,7 @@ type Action =
   | { type: "SET_LOADING"; loading: boolean }
   | { type: "SET_AUTH_REQUIRED"; authRequired: boolean }
   | { type: "SET_LOAD_ERROR"; error: string | null }
+  | { type: "SET_SSH_HOSTS"; hosts: SSHHost[] }
   | { type: "RECONCILE_ON_RECONNECT" }
   | { type: "TOOL_START"; provider: string; sessionId: string; index: number; id: string; name: string }
   | { type: "TOOL_DELTA"; provider: string; sessionId: string; index: number; partialJSON: string }
@@ -110,6 +116,16 @@ export function reduceSessionsState(state: State, action: Action): State {
         chatSessions: { ...state.chatSessions, [action.provider]: [action.session, ...current] },
       };
     }
+    case "REPLACE_CHAT_SESSION":
+      return {
+        ...state,
+        chatSessions: {
+          ...state.chatSessions,
+          [action.provider]: (state.chatSessions[action.provider] || []).map((session) =>
+            session.id === action.session.id ? action.session : session
+          ),
+        },
+      };
     case "REMOVE_CHAT_SESSION":
       return {
         ...state,
@@ -194,6 +210,8 @@ export function reduceSessionsState(state: State, action: Action): State {
       return { ...state, authRequired: action.authRequired };
     case "SET_LOAD_ERROR":
       return { ...state, loadError: action.error };
+    case "SET_SSH_HOSTS":
+      return { ...state, sshHosts: action.hosts };
     case "RECONCILE_ON_RECONNECT":
       return { ...state, streamBlocks: {} };
     case "TOOL_START": {
@@ -242,6 +260,7 @@ export const sessionsInitialState: State = {
   chatSessions: {},
   logs: {},
   streamBlocks: {},
+  sshHosts: [],
   loading: true,
   authRequired: false,
   loadError: null,
@@ -359,8 +378,15 @@ type Actions = {
   startSession: (folder: string) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
   restartSession: (id: string) => Promise<void>;
-  createChatSession: (provider: string, folder: string) => Promise<ChatSession>;
+  createChatSession: (provider: string, folder: string, options?: { model?: string; reasoning_effort?: string }) => Promise<ChatSession>;
+  loadChatModels: (provider: string) => Promise<ProviderModel[]>;
   loadAdoptableChatSessions: (provider: string) => Promise<AdoptableSession[]>;
+  loadChatHistory: (provider: string) => Promise<HistorySession[]>;
+  loadChatHistoryMessages: (provider: string, threadID: string) => Promise<Message[]>;
+  loadChatFolders: (provider: string) => Promise<string[]>;
+  loadSSHHosts: () => Promise<SSHHost[]>;
+  addSSHHost: (host: Record<string, unknown>) => Promise<SSHHost>;
+  removeSSHHost: (id: string) => Promise<void>;
   adoptChatSession: (provider: string, threadID: string) => Promise<ChatSession>;
   closeChatSession: (provider: string, id: string) => Promise<void>;
   sendChatMessage: (provider: string, id: string, message: string, attachments?: DraftAttachment[]) => Promise<void>;
@@ -379,11 +405,18 @@ export const SessionsContext = createContext<{
     killSession: async () => {},
     restartSession: async () => {},
     createChatSession: async () => Promise.reject(new Error("not ready")),
+    loadChatModels: async () => Promise.reject(new Error("not ready")),
     loadAdoptableChatSessions: async () => Promise.reject(new Error("not ready")),
+    loadChatHistory: async () => Promise.reject(new Error("not ready")),
+    loadChatHistoryMessages: async () => Promise.reject(new Error("not ready")),
     adoptChatSession: async () => Promise.reject(new Error("not ready")),
     closeChatSession: async () => {},
     sendChatMessage: async () => {},
     runChatCommand: async () => {},
+    loadChatFolders: async () => [],
+    loadSSHHosts: async () => [],
+    addSSHHost: async () => Promise.reject(new Error("not ready")),
+    removeSSHHost: async () => {},
   },
 });
 
@@ -400,24 +433,23 @@ function createOptimisticMessageId() {
   return `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function sendPrompt(
+async function sendPrompt<T = { session: ChatSession }>(
   path: string,
   message: string,
   attachments: DraftAttachment[] = []
-) {
+) : Promise<T> {
   if (attachments.length === 0) {
-    await api.post(path, { message });
-    return;
+    return await api.post<T>(path, { message });
   }
 
   const form = new FormData();
   form.append("message", message);
   attachments.forEach((attachment) => form.append("images", attachment.file, attachment.name));
-  await api.postForm(path, form);
+  return await api.postForm<T>(path, form);
 }
 
-async function runCommand(path: string, command: string) {
-  await api.post(path, { command });
+async function runCommand<T = { session: ChatSession }>(path: string, command: string): Promise<T> {
+  return await api.post<T>(path, { command });
 }
 
 export function useSessionsReducer() {
@@ -439,6 +471,13 @@ export function useSessionsReducer() {
     fetchBootstrapData()
       .then(applyBootstrapData)
       .finally(() => dispatch({ type: "SET_LOADING", loading: false }));
+
+    void api.get<SSHHost[]>("/api/hosts")
+      .then((hosts) => dispatch({ type: "SET_SSH_HOSTS", hosts }))
+      .catch(() => {
+        // SSH host management is optional; a missing endpoint must not stop
+        // the local dashboard from booting.
+      });
   }, []);
 
   useEffect(() => {
@@ -589,13 +628,39 @@ export function useSessionsReducer() {
       const session = await api.post<Session>(`/api/sessions/${id}/restart`);
       dispatch({ type: "UPDATE_SESSION", session });
     },
-    createChatSession: async (provider: string, folder: string) => {
-      const session = await api.post<ChatSession>(`/api/chat/${provider}/sessions`, { folder });
+    createChatSession: async (provider: string, folder: string, options = {}) => {
+      const session = await api.post<ChatSession>(`/api/chat/${provider}/sessions`, { folder, ...options });
       dispatch({ type: "ADD_CHAT_SESSION", provider, session });
       return session;
     },
+    loadChatModels: async (provider: string) => {
+      return await api.get<ProviderModel[]>(`/api/chat/${provider}/models`);
+    },
     loadAdoptableChatSessions: async (provider: string) => {
       return await api.get<AdoptableSession[]>(`/api/chat/${provider}/adoptable`);
+    },
+    loadChatHistory: async (provider: string) => {
+      return await api.get<HistorySession[]>(`/api/chat/${provider}/history`);
+    },
+    loadChatHistoryMessages: async (provider: string, threadID: string) => {
+      return await api.get<Message[]>(`/api/chat/${provider}/history/${encodeURIComponent(threadID)}`);
+    },
+    loadChatFolders: async (provider: string) => {
+      return await api.get<string[]>(`/api/chat/${provider}/folders`);
+    },
+    loadSSHHosts: async () => {
+      const hosts = await api.get<SSHHost[]>("/api/hosts");
+      dispatch({ type: "SET_SSH_HOSTS", hosts });
+      return hosts;
+    },
+    addSSHHost: async (host: Record<string, unknown>) => {
+      const created = await api.post<SSHHost>("/api/hosts", host);
+      await api.get<SSHHost[]>("/api/hosts").then((hosts) => dispatch({ type: "SET_SSH_HOSTS", hosts }));
+      return created;
+    },
+    removeSSHHost: async (id: string) => {
+      await api.del(`/api/hosts/${encodeURIComponent(id)}`);
+      dispatch({ type: "SET_SSH_HOSTS", hosts: state.sshHosts.filter((host) => host.identity.id !== id) });
     },
     adoptChatSession: async (provider: string, thread_id: string) => {
       const session = await api.post<ChatSession>(`/api/chat/${provider}/adopt`, { thread_id });
@@ -626,7 +691,10 @@ export function useSessionsReducer() {
         },
       });
       try {
-        await sendPrompt(`/api/chat/${provider}/sessions/${id}/send`, message, attachments);
+        const response = await sendPrompt<{ session: ChatSession }>(`/api/chat/${provider}/sessions/${id}/send`, message, attachments);
+        if (response?.session) {
+          dispatch({ type: "REPLACE_CHAT_SESSION", provider, session: response.session });
+        }
       } catch (error) {
         dispatch({
           type: "REMOVE_OPTIMISTIC_MESSAGE",
@@ -660,7 +728,10 @@ export function useSessionsReducer() {
         },
       });
       try {
-        await runCommand(`/api/chat/${provider}/sessions/${id}/command`, command);
+        const response = await runCommand<{ session: ChatSession }>(`/api/chat/${provider}/sessions/${id}/command`, command);
+        if (response?.session) {
+          dispatch({ type: "REPLACE_CHAT_SESSION", provider, session: response.session });
+        }
       } catch (error) {
         dispatch({
           type: "REMOVE_OPTIMISTIC_MESSAGE",

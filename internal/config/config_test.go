@@ -265,12 +265,53 @@ func TestValidateCodexPermissionMode(t *testing.T) {
 		})
 	}
 
+	for _, mode := range []string{"", PermissionModeAntigravityAcceptEdits, PermissionModeGeminiPlan, PermissionModeBypass, PermissionModeReadOnly, PermissionModeWorkspace} {
+		t.Run("valid antigravity "+mode, func(t *testing.T) {
+			if err := ValidateAntigravityPermissionMode(mode); err != nil {
+				t.Fatalf("expected mode %q to be valid for Antigravity, got %v", mode, err)
+			}
+		})
+	}
+
 	t.Run("invalid codex mode", func(t *testing.T) {
 		err := ValidateCodexPermissionMode("plan")
 		if err == nil {
 			t.Fatal("expected invalid mode error for Codex")
 		}
 	})
+}
+
+func TestSSHConfigValidation(t *testing.T) {
+	valid := SSHConfig{Hosts: []SSHHostConfig{{ID: "vm-dev", Address: "192.0.2.20", BaseFolder: "/home/user/projects"}}}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid SSH config rejected: %v", err)
+	}
+	for name, cfg := range map[string]SSHConfig{
+		"missing id":          {Hosts: []SSHHostConfig{{Address: "host", BaseFolder: "/projects"}}},
+		"missing address":     {Hosts: []SSHHostConfig{{ID: "host", BaseFolder: "/projects"}}},
+		"missing base folder": {Hosts: []SSHHostConfig{{ID: "host", Address: "host"}}},
+		"duplicate id":        {Hosts: []SSHHostConfig{{ID: "host", Address: "one", BaseFolder: "/one"}, {ID: "host", Address: "two", BaseFolder: "/two"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("expected SSH config validation error")
+			}
+		})
+	}
+}
+
+func TestMigrateLegacyGeminiConfigToAntigravity(t *testing.T) {
+	cfg := &Config{Providers: ProvidersConfig{Gemini: GeminiProviderConfig{
+		Enabled: true,
+		Chat:    ProviderChatConfig{PermissionMode: PermissionModeGeminiYolo, Model: "gemini-3.6-flash-high"},
+	}}}
+	migrateLegacyGemini(cfg)
+	if !cfg.Providers.Antigravity.Enabled {
+		t.Fatal("Antigravity was not enabled during migration")
+	}
+	if cfg.Providers.Antigravity.Chat.PermissionMode != PermissionModeBypass || cfg.Providers.Antigravity.Chat.Model != "gemini-3.6-flash-high" {
+		t.Fatalf("migrated config = %#v", cfg.Providers.Antigravity.Chat)
+	}
 }
 
 func TestConfigValidatePermissionMode(t *testing.T) {

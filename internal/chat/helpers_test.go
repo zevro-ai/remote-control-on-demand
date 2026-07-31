@@ -67,3 +67,73 @@ func TestResolveProjectPathAllowsMissingChildWithinResolvedBase(t *testing.T) {
 		t.Fatalf("relPath = %q, want %q", relPath, filepath.Join("nested", "project"))
 	}
 }
+
+func TestResolveWorkspacePathIncludesExternalGitRepositories(t *testing.T) {
+	baseDir := t.TempDir()
+	externalDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(externalDir, ".git", "objects"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	workspaceDir := filepath.Join(externalDir, "nested")
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(nested): %v", err)
+	}
+
+	workspace, err := ResolveWorkspacePath(baseDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspacePath(): %v", err)
+	}
+	externalResolved, err := filepath.EvalSymlinks(externalDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(external): %v", err)
+	}
+	workspaceResolved, err := filepath.EvalSymlinks(workspaceDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workspace): %v", err)
+	}
+	if workspace.Folder != workspaceResolved || filepath.Base(workspace.RelName) != filepath.Base(externalResolved) || workspace.RelCWD != "nested" {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+}
+
+func TestResolveWorkspacePathAllowsNonRepositoryWorkspace(t *testing.T) {
+	baseDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	workspaceDir := filepath.Join(homeDir, "notes")
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(notes): %v", err)
+	}
+
+	workspace, err := ResolveWorkspacePath(baseDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspacePath(): %v", err)
+	}
+	workspaceResolved, err := filepath.EvalSymlinks(workspaceDir)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(workspace): %v", err)
+	}
+	if workspace.Folder != workspaceResolved || filepath.Base(workspace.RelName) != "notes" || workspace.RelCWD != "" {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+}
+
+func TestResolveWorkspacePathDescribesMissingWorkspaceForHistory(t *testing.T) {
+	baseDir := t.TempDir()
+	missing := filepath.Join(baseDir, "deleted-project")
+
+	workspace, err := ResolveWorkspacePath(baseDir, missing)
+	if err != nil {
+		t.Fatalf("ResolveWorkspacePath(): %v", err)
+	}
+	missingResolved, err := evalSymlinksAllowMissing(missing)
+	if err != nil {
+		t.Fatalf("evalSymlinksAllowMissing(missing): %v", err)
+	}
+	if workspace.Exists {
+		t.Fatal("workspace.Exists = true, want false")
+	}
+	if workspace.Folder != missingResolved || workspace.RelName != "deleted-project" {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+}

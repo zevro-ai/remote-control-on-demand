@@ -176,4 +176,88 @@ describe("CreateSessionModal", () => {
     });
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("keeps the adopt view usable when the backend returns an empty null payload", async () => {
+    const onLoadAdoptableSessions = vi.fn().mockResolvedValue(null);
+
+    render(
+      <CreateSessionModal
+        folders={[]}
+        chatSessions={{ codex: [] }}
+        providers={{
+          codex: {
+            id: "codex",
+            display_name: "Codex",
+            chat: {
+              streaming_deltas: true,
+              tool_call_streaming: true,
+              image_attachments: true,
+              shell_command_exec: true,
+              thread_resume: true,
+              adopt_existing_sessions: true,
+              external_url_detection: false,
+            },
+          },
+        }}
+        onClose={vi.fn()}
+        onCreateSession={vi.fn()}
+        onLoadAdoptableSessions={onLoadAdoptableSessions}
+        onAdoptSession={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Adopt existing/i }));
+
+    await waitFor(() => {
+      expect(onLoadAdoptableSessions).toHaveBeenCalledWith("codex");
+      expect(screen.getByText("No adoptable sessions found")).toBeTruthy();
+    });
+  });
+
+  it("shows an adoption error without closing the modal", async () => {
+    const onAdoptSession = vi.fn().mockRejectedValue(new Error("conversation is already in use"));
+    const onClose = vi.fn();
+    const onLoadAdoptableSessions = vi.fn().mockResolvedValue([
+      {
+        thread_id: "thread-1",
+        rel_name: "repo-a",
+        rel_cwd: "",
+        title: "Existing Codex session",
+        updated_at: "2026-07-31T12:00:00Z",
+      },
+    ]);
+
+    render(
+      <CreateSessionModal
+        folders={[]}
+        chatSessions={{ codex: [] }}
+        providers={{
+          codex: {
+            id: "codex",
+            display_name: "Codex",
+            chat: {
+              streaming_deltas: true,
+              tool_call_streaming: true,
+              image_attachments: true,
+              shell_command_exec: true,
+              thread_resume: true,
+              adopt_existing_sessions: true,
+              external_url_detection: false,
+            },
+          },
+        }}
+        onClose={onClose}
+        onCreateSession={vi.fn()}
+        onLoadAdoptableSessions={onLoadAdoptableSessions}
+        onAdoptSession={onAdoptSession}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Adopt existing/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Existing Codex session/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: /Existing Codex session/i }));
+
+    await waitFor(() => expect(screen.getByText("conversation is already in use")).toBeTruthy());
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

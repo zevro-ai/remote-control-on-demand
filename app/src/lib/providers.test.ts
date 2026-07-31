@@ -78,7 +78,7 @@ describe("providers helpers", () => {
       claude: { id: "claude", display_name: "Claude" },
     };
 
-    expect(listProviderIDs(providers, { gemini: [] })).toEqual(["claude", "codex", "gemini"]);
+    expect(listProviderIDs(providers, { antigravity: [] })).toEqual(["antigravity", "claude", "codex"]);
   });
 
   it("summarizes visible chat capabilities", () => {

@@ -1,6 +1,7 @@
-import type { AuthStatus, ChatSession, ProviderMetadata } from "../api/types";
+import type { AuthStatus, ChatSession, ProviderMetadata, SSHHost } from "../api/types";
 import type { PanelState } from "../hooks/usePanelManager";
 import { getProviderDisplayName, getProviderSessions, listProviderIDs } from "../lib/providers";
+import { SSHHosts } from "./SSHHosts";
 
 interface Props {
   authStatus: AuthStatus | null;
@@ -11,6 +12,9 @@ interface Props {
   onLogout: () => Promise<void>;
   onNewSession: () => void;
   onSelectSession: (sessionId: string, type: string) => void;
+  sshHosts: SSHHost[];
+  onAddSSHHost: (host: Record<string, unknown>) => Promise<SSHHost>;
+  onRemoveSSHHost: (id: string) => Promise<void>;
 }
 
 export function Sidebar({
@@ -22,6 +26,9 @@ export function Sidebar({
   onLogout,
   onNewSession,
   onSelectSession,
+  sshHosts,
+  onAddSSHHost,
+  onRemoveSSHHost,
 }: Props) {
   const providerIDs = listProviderIDs(providers, chatSessions);
   const liveCount = providerIDs.reduce(
@@ -80,6 +87,8 @@ export function Sidebar({
           onSelectSession={onSelectSession}
         />
       ))}
+
+      <SSHHosts hosts={sshHosts} onAdd={onAddSSHHost} onRemove={onRemoveSSHHost} />
 
       <button onClick={onNewSession} className="sidebar-new-button">
         + New session
