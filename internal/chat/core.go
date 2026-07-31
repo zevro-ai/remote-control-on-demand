@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -164,7 +165,27 @@ func (c *Core) CreateSessionWithOptions(folder, threadID string, threadReady boo
 	return c.createSession(folder, threadID, threadReady, options)
 }
 
+// CreateSessionAtPath restores an existing conversation whose workspace was
+// discovered outside rc.base_folder. New sessions still go through the
+// stricter relative-path validation in CreateSessionWithOptions.
+func (c *Core) CreateSessionAtPath(folder, relName, threadID string, threadReady bool, options SessionOptions) (*Session, error) {
+	return c.createSessionAtPath(folder, relName, threadID, threadReady, options)
+}
+
 func (c *Core) createSession(folder, threadID string, threadReady bool, options SessionOptions) (*Session, error) {
+	fullPath, relName, err := ResolveProjectPath(c.baseFolder, folder)
+	if err != nil {
+		return nil, err
+	}
+
+	if !pathIsWithinGitRepo(c.baseFolder, fullPath) {
+		return nil, fmt.Errorf("folder %q is not a git repository", relName)
+	}
+
+	return c.createSessionAtPath(fullPath, relName, threadID, threadReady, options)
+}
+
+func (c *Core) createSessionAtPath(fullPath, relName, threadID string, threadReady bool, options SessionOptions) (*Session, error) {
 	var err error
 	if threadID == "" {
 		threadID, err = GenerateUUID()
@@ -172,18 +193,13 @@ func (c *Core) createSession(folder, threadID string, threadReady bool, options 
 			return nil, fmt.Errorf("generating thread ID: %w", err)
 		}
 	}
-	fullPath, relName, err := ResolveProjectPath(c.baseFolder, folder)
-	if err != nil {
-		return nil, err
-	}
-
+	fullPath = filepath.Clean(fullPath)
 	info, err := os.Stat(fullPath)
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("folder %q does not exist", relName)
 	}
-
-	if !pathIsWithinGitRepo(c.baseFolder, fullPath) {
-		return nil, fmt.Errorf("folder %q is not a git repository", relName)
+	if strings.TrimSpace(relName) == "" {
+		relName = fullPath
 	}
 
 	c.mu.Lock()

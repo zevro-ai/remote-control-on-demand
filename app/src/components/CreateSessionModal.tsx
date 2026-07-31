@@ -139,7 +139,7 @@ export function CreateSessionModal({
     void onLoadHistory(providerID)
       .then((history) => {
         if (!cancelled) {
-          setHistorySessions(history);
+          setHistorySessions(Array.isArray(history) ? history : []);
           setHistoryLoadedFor(providerID);
         }
       })
@@ -164,7 +164,7 @@ export function CreateSessionModal({
     void onLoadAdoptableSessions(providerID)
       .then((sessions) => {
         if (!cancelled) {
-          setAdoptableSessions(sessions);
+          setAdoptableSessions(Array.isArray(sessions) ? sessions : []);
           setAdoptLoadedFor(providerID);
         }
       })
@@ -202,8 +202,13 @@ export function CreateSessionModal({
 
   const handleAdopt = async (threadID: string) => {
     if (!providerID) return;
-    await onAdoptSession(providerID, threadID);
-    onClose();
+    setAdoptError(null);
+    try {
+      await onAdoptSession(providerID, threadID);
+      onClose();
+    } catch (error) {
+      setAdoptError(error instanceof Error ? error.message : "Could not adopt this conversation");
+    }
   };
 
   const filteredAdoptableSessions = adoptableSessions.filter((session) => {

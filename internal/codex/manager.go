@@ -183,11 +183,11 @@ func (m *Manager) AdoptSession(threadID string) (*chat.Session, error) {
 	}
 	for _, sess := range adoptable {
 		if sess.ThreadID == threadID {
-			folder := sess.RelName
-			if sess.RelCWD != "" {
-				folder = filepath.Join(folder, sess.RelCWD)
+			folder := sess.Folder
+			if folder == "" {
+				folder = filepath.Join(sess.RelName, sess.RelCWD)
 			}
-			return m.core.CreateSessionWithOptions(folder, threadID, true, chat.SessionOptions{Model: sess.Model})
+			return m.core.CreateSessionAtPath(folder, sessionDisplayName(sess.RelName, sess.RelCWD), threadID, true, chat.SessionOptions{Model: sess.Model})
 		}
 	}
 
@@ -201,14 +201,21 @@ func (m *Manager) AdoptSession(threadID string) (*chat.Session, error) {
 		if item.ThreadID != threadID {
 			continue
 		}
-		folder := item.RelName
-		if item.RelCWD != "" {
-			folder = filepath.Join(folder, item.RelCWD)
+		folder := item.Folder
+		if folder == "" {
+			folder = filepath.Join(item.RelName, item.RelCWD)
 		}
-		return m.core.CreateSessionWithOptions(folder, threadID, true, chat.SessionOptions{Model: item.Model})
+		return m.core.CreateSessionAtPath(folder, sessionDisplayName(item.RelName, item.RelCWD), threadID, true, chat.SessionOptions{Model: item.Model})
 	}
 
 	return nil, fmt.Errorf("adoptable Codex session %q not found", threadID)
+}
+
+func sessionDisplayName(relName, relCWD string) string {
+	if strings.TrimSpace(relCWD) == "" {
+		return relName
+	}
+	return filepath.Join(relName, relCWD)
 }
 
 func (m *Manager) ListSessions() []*chat.Session {

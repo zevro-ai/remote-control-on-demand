@@ -67,3 +67,57 @@ func TestResolveProjectPathAllowsMissingChildWithinResolvedBase(t *testing.T) {
 		t.Fatalf("relPath = %q, want %q", relPath, filepath.Join("nested", "project"))
 	}
 }
+
+func TestResolveWorkspacePathIncludesExternalGitRepositories(t *testing.T) {
+	baseDir := t.TempDir()
+	externalDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(externalDir, ".git", "objects"), 0755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	workspaceDir := filepath.Join(externalDir, "nested")
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(nested): %v", err)
+	}
+
+	workspace, err := ResolveWorkspacePath(baseDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspacePath(): %v", err)
+	}
+	if workspace.Folder != workspaceDir || workspace.RelName != externalDir || workspace.RelCWD != "nested" {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+}
+
+func TestResolveWorkspacePathAllowsNonRepositoryWorkspace(t *testing.T) {
+	baseDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	workspaceDir := filepath.Join(homeDir, "notes")
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(notes): %v", err)
+	}
+
+	workspace, err := ResolveWorkspacePath(baseDir, workspaceDir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspacePath(): %v", err)
+	}
+	if workspace.Folder != workspaceDir || workspace.RelName != filepath.Join("~", "notes") || workspace.RelCWD != "" {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+}
+
+func TestResolveWorkspacePathDescribesMissingWorkspaceForHistory(t *testing.T) {
+	baseDir := t.TempDir()
+	missing := filepath.Join(baseDir, "deleted-project")
+
+	workspace, err := ResolveWorkspacePath(baseDir, missing)
+	if err != nil {
+		t.Fatalf("ResolveWorkspacePath(): %v", err)
+	}
+	if workspace.Exists {
+		t.Fatal("workspace.Exists = true, want false")
+	}
+	if workspace.Folder != missing || workspace.RelName != "deleted-project" {
+		t.Fatalf("workspace = %#v", workspace)
+	}
+}

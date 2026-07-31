@@ -139,6 +139,7 @@ export interface AdoptableSession {
   thread_id: string;
   rel_name: string;
   rel_cwd: string;
+  folder?: string;
   title: string;
   model?: string;
   updated_at: string;
@@ -148,6 +149,7 @@ export interface HistorySession {
   thread_id: string;
   rel_name: string;
   rel_cwd?: string;
+  folder?: string;
   title?: string;
   model?: string;
   preview?: string;

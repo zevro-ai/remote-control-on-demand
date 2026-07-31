@@ -4,8 +4,8 @@ BINARY := rcod
 
 build:
 	cd app && npm ci && npm run build
-	go build -o $(BINARY) ./cmd/rcodbot
-	go build -o rcod-agent ./cmd/rcod-agent
+	go build -tags release -o $(BINARY) ./cmd/rcodbot
+	go build -tags release -o rcod-agent ./cmd/rcod-agent
 
 test:
 	cd app && npm ci && npm test

@@ -57,15 +57,16 @@ func listAdoptableSessions(baseFolder string, existing []*chat.Session) ([]provi
 			continue
 		}
 
-		_, relName, relCWD, err := resolveRepoForThread(baseFolder, thread.CWD)
-		if err != nil {
+		workspace, err := chat.ResolveWorkspacePath(baseFolder, thread.CWD)
+		if err != nil || !workspace.Exists {
 			continue
 		}
 
 		adoptable = append(adoptable, provider.AdoptableSession{
 			ThreadID:  thread.ID,
-			RelName:   relName,
-			RelCWD:    relCWD,
+			RelName:   workspace.RelName,
+			RelCWD:    workspace.RelCWD,
+			Folder:    workspace.Folder,
 			Title:     strings.TrimSpace(thread.Title),
 			Model:     strings.TrimSpace(thread.Model),
 			UpdatedAt: thread.UpdatedAt,
@@ -91,14 +92,15 @@ func (m *Manager) ListHistory() ([]provider.HistorySession, error) {
 
 	history := make([]provider.HistorySession, 0, len(threads))
 	for _, thread := range threads {
-		_, relName, relCWD, err := resolveRepoForThread(m.core.BaseFolder(), thread.CWD)
+		workspace, err := chat.ResolveWorkspacePath(m.core.BaseFolder(), thread.CWD)
 		if err != nil {
 			continue
 		}
 		history = append(history, provider.HistorySession{
 			ThreadID:     thread.ID,
-			RelName:      relName,
-			RelCWD:       relCWD,
+			RelName:      workspace.RelName,
+			RelCWD:       workspace.RelCWD,
+			Folder:       workspace.Folder,
 			Title:        strings.TrimSpace(thread.Title),
 			Model:        strings.TrimSpace(thread.Model),
 			Preview:      strings.TrimSpace(thread.Preview),
@@ -209,32 +211,149 @@ func stateDBVersion(path string) int {
 }
 
 func listStoredThreadsFromHome(codexHome string, includeArchived bool) ([]storedThread, error) {
-	dbPaths, err := locateStateDBs(codexHome)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []storedThread{}, nil
+	byID := make(map[string]storedThread)
+	if dbPaths, err := locateStateDBs(codexHome); err == nil {
+		for _, dbPath := range dbPaths {
+			// Read archived rows as well so the rollout fallback cannot
+			// accidentally reintroduce an archived thread into adoption.
+			threads, err := listStoredThreads(dbPath, true)
+			if err != nil {
+				continue
+			}
+			for _, thread := range threads {
+				current, ok := byID[thread.ID]
+				if !ok || thread.UpdatedAt.After(current.UpdatedAt) {
+					byID[thread.ID] = thread
+				}
+			}
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	byID := make(map[string]storedThread)
-	for _, dbPath := range dbPaths {
-		threads, err := listStoredThreads(dbPath, includeArchived)
-		if err != nil {
-			continue
-		}
-		for _, thread := range threads {
-			current, ok := byID[thread.ID]
-			if !ok || thread.UpdatedAt.After(current.UpdatedAt) {
+
+	// Recent Codex builds write rollout JSONL files even when the optional
+	// state database has not indexed them yet. Merge those files as a fallback
+	// so history remains complete across CLI versions and concurrent sessions.
+	if rollouts, err := listRolloutThreads(codexHome); err == nil {
+		for _, thread := range rollouts {
+			if _, ok := byID[thread.ID]; !ok {
 				byID[thread.ID] = thread
 			}
 		}
 	}
 	threads := make([]storedThread, 0, len(byID))
 	for _, thread := range byID {
+		if !includeArchived && thread.Archived {
+			continue
+		}
 		threads = append(threads, thread)
 	}
 	sort.Slice(threads, func(i, j int) bool { return threads[i].UpdatedAt.After(threads[j].UpdatedAt) })
 	return threads, nil
+}
+
+func listRolloutThreads(codexHome string) ([]storedThread, error) {
+	root := filepath.Join(codexHome, "sessions")
+	var result []storedThread
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		thread, err := readRolloutThread(path)
+		if err == nil && thread.ID != "" {
+			result = append(result, thread)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scanning Codex rollouts: %w", err)
+	}
+	return result, nil
+}
+
+func readRolloutThread(path string) (storedThread, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return storedThread{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return storedThread{}, err
+	}
+	defer file.Close()
+
+	thread := storedThread{RolloutPath: path, UpdatedAt: info.ModTime()}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var event map[string]interface{}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		payload, _ := event["payload"].(map[string]interface{})
+		if payload == nil {
+			payload = event
+		}
+		if thread.ID == "" {
+			thread.ID = firstStringValue(payload, "id", "session_id", "thread_id")
+		}
+		if thread.CWD == "" {
+			thread.CWD = firstStringValue(payload, "cwd", "working_directory")
+		}
+		if thread.Model == "" {
+			thread.Model = firstStringValue(payload, "model", "model_name")
+		}
+		if timestamp := firstStringValue(event, "timestamp"); timestamp != "" {
+			if parsed, err := time.Parse(time.RFC3339Nano, timestamp); err == nil && parsed.After(thread.UpdatedAt) {
+				thread.UpdatedAt = parsed
+			}
+		}
+		if stringValue(payload["type"]) == "session_meta" {
+			if timestamp := firstStringValue(payload, "timestamp"); timestamp != "" {
+				if parsed, err := time.Parse(time.RFC3339Nano, timestamp); err == nil && parsed.After(thread.UpdatedAt) {
+					thread.UpdatedAt = parsed
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return storedThread{}, err
+	}
+	if thread.ID == "" || thread.CWD == "" {
+		return storedThread{}, errors.New("rollout metadata is incomplete")
+	}
+
+	messages, err := readRolloutMessages(path)
+	if err == nil {
+		thread.MessageCount = len(messages)
+		for _, message := range messages {
+			if thread.Preview == "" && strings.TrimSpace(message.Content) != "" {
+				thread.Preview = strings.TrimSpace(message.Content)
+			}
+			if thread.Title == "" && message.Role == "user" && strings.TrimSpace(message.Content) != "" {
+				thread.Title = strings.TrimSpace(message.Content)
+			}
+		}
+	}
+	return thread, nil
+}
+
+func firstStringValue(values map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value := stringValue(values[key]); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func listStoredThreads(dbPath string, includeArchived bool) ([]storedThread, error) {
@@ -405,95 +524,4 @@ func configureSQLiteReadOnly(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("configuring Codex state DB query_only: %w", err)
 	}
 	return nil
-}
-
-func resolveRepoForThread(baseFolder, cwd string) (string, string, string, error) {
-	if strings.TrimSpace(baseFolder) == "" {
-		return "", "", "", fmt.Errorf("base folder is required")
-	}
-	if strings.TrimSpace(cwd) == "" {
-		return "", "", "", fmt.Errorf("thread cwd is required")
-	}
-
-	baseAbs, err := filepath.Abs(baseFolder)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving base folder: %w", err)
-	}
-	baseResolved, err := filepath.EvalSymlinks(baseAbs)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving base folder: %w", err)
-	}
-
-	cwdResolved, err := evalSymlinksAllowMissing(filepath.Clean(cwd))
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving thread cwd %q: %w", cwd, err)
-	}
-
-	relToBase, err := filepath.Rel(baseResolved, cwdResolved)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving thread cwd %q: %w", cwd, err)
-	}
-	if relToBase == ".." || strings.HasPrefix(relToBase, ".."+string(os.PathSeparator)) {
-		return "", "", "", fmt.Errorf("thread cwd %q must stay within rc.base_folder", cwd)
-	}
-
-	repoPath, err := findRepoRoot(baseResolved, cwdResolved)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	relName, err := filepath.Rel(baseResolved, repoPath)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving repo path %q: %w", repoPath, err)
-	}
-	relCWD, err := filepath.Rel(repoPath, cwdResolved)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving thread cwd %q: %w", cwd, err)
-	}
-	if relCWD == "." {
-		relCWD = ""
-	}
-
-	return repoPath, relName, relCWD, nil
-}
-
-func findRepoRoot(baseResolved, cwdResolved string) (string, error) {
-	current := cwdResolved
-	for {
-		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
-			return current, nil
-		}
-		if current == baseResolved {
-			return "", fmt.Errorf("thread cwd %q is not inside a git repository under rc.base_folder", cwdResolved)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("thread cwd %q is not inside a git repository under rc.base_folder", cwdResolved)
-		}
-		current = parent
-	}
-}
-
-func evalSymlinksAllowMissing(path string) (string, error) {
-	current := filepath.Clean(path)
-	var missing []string
-	for {
-		resolved, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			for i := len(missing) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, missing[i])
-			}
-			return resolved, nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", err
-		}
-		missing = append(missing, filepath.Base(current))
-		current = parent
-	}
 }

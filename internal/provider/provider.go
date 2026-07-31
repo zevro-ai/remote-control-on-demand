@@ -32,6 +32,7 @@ type AdoptableSession struct {
 	ThreadID  string    `json:"thread_id"`
 	RelName   string    `json:"rel_name"`
 	RelCWD    string    `json:"rel_cwd"`
+	Folder    string    `json:"-"`
 	Title     string    `json:"title"`
 	Model     string    `json:"model,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -61,6 +62,7 @@ type HistorySession struct {
 	ThreadID     string    `json:"thread_id"`
 	RelName      string    `json:"rel_name"`
 	RelCWD       string    `json:"rel_cwd,omitempty"`
+	Folder       string    `json:"-"`
 	Title        string    `json:"title,omitempty"`
 	Model        string    `json:"model,omitempty"`
 	Preview      string    `json:"preview,omitempty"`

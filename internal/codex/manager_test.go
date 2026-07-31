@@ -66,7 +66,7 @@ func TestSessionOptionsPersistModelAndReasoning(t *testing.T) {
 	}
 }
 
-func TestListAdoptableSessionsFiltersToReposInsideBaseFolder(t *testing.T) {
+func TestListAdoptableSessionsIncludesWorkspacesOutsideBaseFolder(t *testing.T) {
 	baseDir := t.TempDir()
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
@@ -103,17 +103,62 @@ func TestListAdoptableSessionsFiltersToReposInsideBaseFolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAdoptableSessions(): %v", err)
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("len(sessions) = %d, want 1", len(sessions))
+	if len(sessions) != 2 {
+		t.Fatalf("len(sessions) = %d, want 2", len(sessions))
 	}
-	if sessions[0].ThreadID != "thread-demo" {
-		t.Fatalf("sessions[0].ThreadID = %q", sessions[0].ThreadID)
+	if sessions[0].ThreadID != "thread-demo" || sessions[0].Folder != subDir {
+		t.Fatalf("sessions[0] = %#v", sessions[0])
 	}
 	if sessions[0].RelName != "demo" {
 		t.Fatalf("sessions[0].RelName = %q, want demo", sessions[0].RelName)
 	}
 	if sessions[0].RelCWD != "nested" {
 		t.Fatalf("sessions[0].RelCWD = %q, want nested", sessions[0].RelCWD)
+	}
+	if sessions[1].ThreadID != "thread-outside" || sessions[1].Folder != outsideDir {
+		t.Fatalf("sessions[1] = %#v", sessions[1])
+	}
+	adoptedOutside, err := mgr.AdoptSession("thread-outside")
+	if err != nil {
+		t.Fatalf("AdoptSession(outside): %v", err)
+	}
+	if adoptedOutside.Folder != outsideDir || adoptedOutside.RelName == "" {
+		t.Fatalf("adopted outside session = %#v", adoptedOutside)
+	}
+}
+
+func TestListHistoryDiscoversRolloutNotIndexedByStateDatabase(t *testing.T) {
+	baseDir := t.TempDir()
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	workspaceDir := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(filepath.Join(workspaceDir, ".git"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.git): %v", err)
+	}
+	rolloutDir := filepath.Join(codexHome, "sessions", "2026", "07")
+	if err := os.MkdirAll(rolloutDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(rollouts): %v", err)
+	}
+	rolloutPath := filepath.Join(rolloutDir, "rollout.jsonl")
+	data := strings.Join([]string{
+		`{"type":"session_meta","payload":{"id":"thread-rollout","cwd":"` + workspaceDir + `","timestamp":"2026-07-31T12:00:00Z"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":"find the missing session"}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":"I found it."}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(rolloutPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("WriteFile(rollout): %v", err)
+	}
+
+	history, err := NewManager(baseDir, "").ListHistory()
+	if err != nil {
+		t.Fatalf("ListHistory(): %v", err)
+	}
+	if len(history) != 1 || history[0].ThreadID != "thread-rollout" || history[0].Folder != workspaceDir {
+		t.Fatalf("history = %#v", history)
+	}
+	if history[0].Preview != "find the missing session" || history[0].MessageCount != 2 {
+		t.Fatalf("history metadata = %#v", history[0])
 	}
 }
 

@@ -854,7 +854,7 @@ func (m *Manager) ListAdoptableSessions() ([]provider.AdoptableSession, error) {
 			existing[sess.ThreadID] = struct{}{}
 		}
 	}
-	var result []provider.AdoptableSession
+	result := make([]provider.AdoptableSession, 0, len(paths))
 	for _, path := range paths {
 		id := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 		if _, ok := existing[id]; ok {
@@ -864,11 +864,11 @@ func (m *Manager) ListAdoptableSessions() ([]provider.AdoptableSession, error) {
 		if err != nil {
 			continue
 		}
-		_, relName, relCWD, err := resolveRepoForConversation(m.core.BaseFolder(), metadata.CWD)
-		if err != nil {
+		workspace, err := chat.ResolveWorkspacePath(m.core.BaseFolder(), metadata.CWD)
+		if err != nil || !workspace.Exists {
 			continue
 		}
-		result = append(result, provider.AdoptableSession{ThreadID: id, RelName: relName, RelCWD: relCWD, Title: metadata.Title, Model: metadata.Model, UpdatedAt: metadata.UpdatedAt})
+		result = append(result, provider.AdoptableSession{ThreadID: id, RelName: workspace.RelName, RelCWD: workspace.RelCWD, Folder: workspace.Folder, Title: metadata.Title, Model: metadata.Model, UpdatedAt: metadata.UpdatedAt})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt.After(result[j].UpdatedAt) })
 	return result, nil
@@ -894,7 +894,7 @@ func (m *Manager) ListHistory() ([]provider.HistorySession, error) {
 		if err != nil {
 			continue
 		}
-		_, relName, relCWD, err := resolveRepoForConversation(m.core.BaseFolder(), metadata.CWD)
+		workspace, err := chat.ResolveWorkspacePath(m.core.BaseFolder(), metadata.CWD)
 		if err != nil {
 			continue
 		}
@@ -903,7 +903,7 @@ func (m *Manager) ListHistory() ([]provider.HistorySession, error) {
 			preview = lastMessagePreview(sess.Messages)
 		}
 		history = append(history, provider.HistorySession{
-			ThreadID: id, RelName: relName, RelCWD: relCWD, Title: metadata.Title,
+			ThreadID: id, RelName: workspace.RelName, RelCWD: workspace.RelCWD, Folder: workspace.Folder, Title: metadata.Title,
 			Model: metadata.Model, Preview: firstNonEmpty(metadata.Preview, preview), UpdatedAt: metadata.UpdatedAt,
 			MessageCount: metadata.MessageCount,
 		})
@@ -958,13 +958,20 @@ func (m *Manager) AdoptSession(threadID string) (*chat.Session, error) {
 		if item.ThreadID != threadID {
 			continue
 		}
-		folder := item.RelName
-		if item.RelCWD != "" {
-			folder = filepath.Join(folder, item.RelCWD)
+		folder := item.Folder
+		if folder == "" {
+			folder = filepath.Join(item.RelName, item.RelCWD)
 		}
-		return m.core.CreateSessionWithOptions(folder, threadID, true, chat.SessionOptions{Model: item.Model})
+		return m.core.CreateSessionAtPath(folder, conversationDisplayName(item.RelName, item.RelCWD), threadID, true, chat.SessionOptions{Model: item.Model})
 	}
 	return nil, fmt.Errorf("adoptable Antigravity conversation %q not found", threadID)
+}
+
+func conversationDisplayName(relName, relCWD string) string {
+	if strings.TrimSpace(relCWD) == "" {
+		return relName
+	}
+	return filepath.Join(relName, relCWD)
 }
 
 func resolveAntigravityHome() (string, error) {
@@ -1130,49 +1137,4 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
-}
-
-func resolveRepoForConversation(baseFolder, cwd string) (string, string, string, error) {
-	if strings.TrimSpace(baseFolder) == "" || strings.TrimSpace(cwd) == "" {
-		return "", "", "", errors.New("base folder and conversation workspace are required")
-	}
-	base, err := filepath.EvalSymlinks(baseFolder)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving base folder: %w", err)
-	}
-	current, err := filepath.EvalSymlinks(cwd)
-	if err != nil {
-		return "", "", "", fmt.Errorf("resolving conversation workspace: %w", err)
-	}
-	workspace := current
-	var repo string
-	for {
-		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
-			repo = current
-			break
-		}
-		if current == base {
-			break
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-		current = parent
-	}
-	if repo == "" {
-		return "", "", "", errors.New("conversation workspace is not inside a git repository")
-	}
-	relRepo, err := filepath.Rel(base, repo)
-	if err != nil || relRepo == ".." || strings.HasPrefix(relRepo, ".."+string(os.PathSeparator)) {
-		return "", "", "", errors.New("conversation repository is outside base folder")
-	}
-	relCWD, err := filepath.Rel(repo, workspace)
-	if err != nil || relCWD == ".." || strings.HasPrefix(relCWD, ".."+string(os.PathSeparator)) {
-		return "", "", "", errors.New("conversation workspace is outside repository")
-	}
-	if relCWD == "." {
-		relCWD = ""
-	}
-	return repo, relRepo, relCWD, nil
 }
